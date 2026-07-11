@@ -130,6 +130,14 @@ impl StudioBridgeService {
         )
         .await
     }
+
+    pub async fn create_source(&self, name: &str) -> BridgeResult<()> {
+        backend_call("PipeWeaver", self.mixer.create_source(name)).await
+    }
+
+    pub async fn remove_source(&self, source_id: &str) -> BridgeResult<()> {
+        backend_call("PipeWeaver", self.mixer.remove_source(source_id)).await
+    }
 }
 
 async fn backend_call<T>(
@@ -275,6 +283,30 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("0 and 69"));
+    }
+
+    #[tokio::test]
+    async fn mixer_sources_can_be_added_and_removed() {
+        let service = service();
+        service.create_source("Aux 1").await.unwrap();
+        let state = service.snapshot().await.unwrap();
+        assert!(
+            state
+                .mixer
+                .channels
+                .iter()
+                .any(|channel| channel.id == "aux-1" && channel.name == "Aux 1")
+        );
+
+        service.remove_source("aux-1").await.unwrap();
+        let state = service.snapshot().await.unwrap();
+        assert!(
+            !state
+                .mixer
+                .channels
+                .iter()
+                .any(|channel| channel.id == "aux-1")
+        );
     }
 
     #[tokio::test]

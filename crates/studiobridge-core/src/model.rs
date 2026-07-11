@@ -181,6 +181,16 @@ pub struct SetRouteRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateMixerSourceRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemoveMixerSourceRequest {
+    pub source_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetMixerApplicationRequest {
     pub process: String,
     pub name: String,

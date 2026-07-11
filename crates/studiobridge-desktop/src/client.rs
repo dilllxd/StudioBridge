@@ -2,10 +2,10 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use studiobridge_core::{
-    AppSnapshot, DspWriteModule, LinkChannel, MicrophoneDspSnapshot, MicrophoneDspUpdate,
-    MicrophoneDspWriteResult, MixBus, MuteState, SetLinkAssignmentRequest,
-    SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest, SetTargetVolumeRequest,
-    SetVolumeLinkedRequest, SetVolumeRequest,
+    AppSnapshot, CreateMixerSourceRequest, DspWriteModule, LinkChannel, MicrophoneDspSnapshot,
+    MicrophoneDspUpdate, MicrophoneDspWriteResult, MixBus, MuteState, RemoveMixerSourceRequest,
+    SetLinkAssignmentRequest, SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest,
+    SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -168,6 +168,26 @@ impl DaemonClient {
                 source_id: source_id.into(),
                 target_id: target_id.into(),
                 enabled,
+            })
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub fn create_source(&self, name: &str) -> Result<(), reqwest::Error> {
+        self.client
+            .post(format!("{}/api/mixer/source", self.base_url))
+            .json(&CreateMixerSourceRequest { name: name.into() })
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub fn remove_source(&self, source_id: &str) -> Result<(), reqwest::Error> {
+        self.client
+            .post(format!("{}/api/mixer/source/remove", self.base_url))
+            .json(&RemoveMixerSourceRequest {
+                source_id: source_id.into(),
             })
             .send()?
             .error_for_status()?;

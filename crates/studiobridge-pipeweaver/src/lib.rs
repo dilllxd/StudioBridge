@@ -5,7 +5,9 @@ use pipeweaver_ipc::commands::{
     APICommand, DaemonRequest, DaemonResponse, DaemonStatus, PWCommandResponse,
 };
 use pipeweaver_profile::{PhysicalSourceDevice, VirtualSourceDevice};
-use pipeweaver_shared::{AppDefinition, DeviceType, Mix, MuteState as PwMuteState, MuteTarget};
+use pipeweaver_shared::{
+    AppDefinition, DeviceType, Mix, MuteState as PwMuteState, MuteTarget, NodeType,
+};
 use std::collections::HashMap;
 use studiobridge_core::{
     BackendStatus, BridgeError, BridgeResult, MixBus, MixerApplication, MixerBackend, MixerChannel,
@@ -115,6 +117,25 @@ impl MixerBackend for PipeweaverBackend {
             enabled,
         ))
         .await
+    }
+
+    async fn create_source(&self, name: &str) -> BridgeResult<()> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 64 {
+            return Err(BridgeError::InvalidValue(
+                "source name must contain 1 to 64 characters".into(),
+            ));
+        }
+        self.send(APICommand::CreateNode(
+            NodeType::VirtualSource,
+            name.to_owned(),
+        ))
+        .await
+    }
+
+    async fn remove_source(&self, source_id: &str) -> BridgeResult<()> {
+        self.send(APICommand::RemoveNodeByName(source_id.to_owned()))
+            .await
     }
 
     async fn set_application_route(
@@ -562,6 +583,8 @@ mod tests {
             .unwrap();
         backend.set_volume_linked("System", false).await.unwrap();
         backend.set_target_volume("Headphones", 77).await.unwrap();
+        backend.create_source("Aux 1").await.unwrap();
+        backend.remove_source("Aux 1").await.unwrap();
 
         let requests = fake.requests.lock().await;
         assert!(matches!(requests.get(1), Some(DaemonRequest::Pipewire(
@@ -593,6 +616,12 @@ mod tests {
         assert!(matches!(requests.get(8), Some(DaemonRequest::Pipewire(
             APICommand::SetVolumeByName(name, None, 77)
         )) if name == "Headphones"));
+        assert!(matches!(requests.get(9), Some(DaemonRequest::Pipewire(
+            APICommand::CreateNode(NodeType::VirtualSource, name)
+        )) if name == "Aux 1"));
+        assert!(matches!(requests.get(10), Some(DaemonRequest::Pipewire(
+            APICommand::RemoveNodeByName(name)
+        )) if name == "Aux 1"));
 
         server.abort();
     }

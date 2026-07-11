@@ -11,10 +11,11 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
 use studiobridge_beacn::{BeacnStudioBackend, DspWriteGate};
 use studiobridge_core::{
-    AppSnapshot, BridgeError, DspWriteModule, MicrophoneDspUpdate, MixerBackend, MockMixerBackend,
-    MockStudioBackend, SetLinkAssignmentRequest, SetMicrophoneRequest, SetMixerApplicationRequest,
-    SetMuteRequest, SetRouteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest,
-    SetVolumeRequest, StudioBackend, StudioBridgeService,
+    AppSnapshot, BridgeError, CreateMixerSourceRequest, DspWriteModule, MicrophoneDspUpdate,
+    MixerBackend, MockMixerBackend, MockStudioBackend, RemoveMixerSourceRequest,
+    SetLinkAssignmentRequest, SetMicrophoneRequest, SetMixerApplicationRequest, SetMuteRequest,
+    SetRouteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
+    StudioBackend, StudioBridgeService,
 };
 use studiobridge_pipeweaver::PipeweaverBackend;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
@@ -244,6 +245,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/mixer/volume-link", post(set_volume_linked))
         .route("/api/mixer/mute", post(set_mute))
         .route("/api/mixer/route", post(set_route))
+        .route("/api/mixer/source", post(create_mixer_source))
+        .route("/api/mixer/source/remove", post(remove_mixer_source))
         .route("/api/mixer/application", post(set_mixer_application))
         .fallback_service(ServeDir::new("web/dist").append_index_html_on_directories(true))
         .layer(
@@ -427,6 +430,22 @@ async fn set_route(
         .service
         .set_route(&request.source_id, &request.target_id, request.enabled)
         .await?;
+    Ok(ok())
+}
+
+async fn create_mixer_source(
+    State(state): State<AppState>,
+    Json(request): Json<CreateMixerSourceRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state.service.create_source(&request.name).await?;
+    Ok(ok())
+}
+
+async fn remove_mixer_source(
+    State(state): State<AppState>,
+    Json(request): Json<RemoveMixerSourceRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state.service.remove_source(&request.source_id).await?;
     Ok(ok())
 }
 

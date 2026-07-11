@@ -32,6 +32,8 @@ pub trait MixerBackend: Send + Sync {
     async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()>;
     async fn set_mute(&self, channel_id: &str, state: MuteState) -> BridgeResult<()>;
     async fn set_route(&self, source_id: &str, target_id: &str, enabled: bool) -> BridgeResult<()>;
+    async fn create_source(&self, name: &str) -> BridgeResult<()>;
+    async fn remove_source(&self, source_id: &str) -> BridgeResult<()>;
     async fn set_application_route(
         &self,
         process: &str,
@@ -445,6 +447,57 @@ impl MixerBackend for MockMixerBackend {
                 state.routes.remove(index);
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    async fn create_source(&self, name: &str) -> BridgeResult<()> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 64 {
+            return Err(BridgeError::InvalidValue(
+                "source name must contain 1 to 64 characters".into(),
+            ));
+        }
+        let mut state = self.state.write().await;
+        if state
+            .channels
+            .iter()
+            .any(|channel| channel.name.eq_ignore_ascii_case(name))
+        {
+            return Err(BridgeError::InvalidValue(format!(
+                "source already exists: {name}"
+            )));
+        }
+        let id = name.to_ascii_lowercase().replace(' ', "-");
+        state.channels.push(MixerChannel {
+            meter_id: format!("mock-source-{id}"),
+            id,
+            name: name.into(),
+            colour: "#54c6c0".into(),
+            personal_volume: 72,
+            audience_volume: 68,
+            mute_state: MuteState::Unmuted,
+            applications: Vec::new(),
+            source_kind: MixerSourceKind::Virtual,
+            volumes_linked: true,
+        });
+        Ok(())
+    }
+
+    async fn remove_source(&self, source_id: &str) -> BridgeResult<()> {
+        let mut state = self.state.write().await;
+        let before = state.channels.len();
+        state.channels.retain(|channel| channel.id != source_id);
+        if state.channels.len() == before {
+            return Err(BridgeError::InvalidValue(format!(
+                "unknown source channel: {source_id}"
+            )));
+        }
+        state.routes.retain(|route| route.source_id != source_id);
+        for application in &mut state.applications {
+            if application.channel_id.as_deref() == Some(source_id) {
+                application.channel_id = None;
+            }
         }
         Ok(())
     }

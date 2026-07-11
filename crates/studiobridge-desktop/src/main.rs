@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use slint::{Color, Model, ModelRc, SharedString, VecModel, Weak};
 use std::{
     collections::{HashMap, HashSet},
@@ -28,6 +28,101 @@ use client::DaemonClient;
 slint::include_modules!();
 
 const METER_URL: &str = "ws://127.0.0.1:14565/api/websocket/meter";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+struct AppPreferences {
+    start_at_login: bool,
+    close_to_tray: bool,
+    save_confirmation: bool,
+    beta_opt_in: bool,
+    mixing_suite_enabled: bool,
+    automatic_default_reset: bool,
+    meter_crossfade: bool,
+}
+
+impl Default for AppPreferences {
+    fn default() -> Self {
+        Self {
+            start_at_login: false,
+            close_to_tray: true,
+            save_confirmation: true,
+            beta_opt_in: false,
+            mixing_suite_enabled: true,
+            automatic_default_reset: true,
+            meter_crossfade: true,
+        }
+    }
+}
+
+fn config_root() -> std::path::PathBuf {
+    #[cfg(windows)]
+    if let Some(app_data) = std::env::var_os("APPDATA") {
+        return std::path::PathBuf::from(app_data).join("StudioBridge");
+    }
+    #[cfg(windows)]
+    if let Some(profile) = std::env::var_os("USERPROFILE") {
+        return std::path::PathBuf::from(profile)
+            .join("AppData")
+            .join("Roaming")
+            .join("StudioBridge");
+    }
+
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .map(|home| home.join(".config"))
+        })
+        .or_else(|| std::env::var_os("APPDATA").map(std::path::PathBuf::from))
+        .unwrap_or_else(std::env::temp_dir)
+        .join("studiobridge")
+}
+
+fn load_preferences() -> AppPreferences {
+    let path = config_root().join("settings.json");
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn save_preferences(preferences: &AppPreferences) -> Result<(), String> {
+    let root = config_root();
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let json = serde_json::to_vec_pretty(preferences).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("settings.json"), json).map_err(|error| error.to_string())?;
+    sync_linux_autostart(preferences.start_at_login).map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn sync_linux_autostart(enabled: bool) -> std::io::Result<()> {
+    let autostart = config_root()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("autostart");
+    let entry = autostart.join("studiobridge.desktop");
+    if !enabled {
+        match std::fs::remove_file(entry) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        }
+    }
+    std::fs::create_dir_all(&autostart)?;
+    let executable = std::env::current_exe()?;
+    let contents = format!(
+        "[Desktop Entry]\nType=Application\nName=StudioBridge\nExec=\"{}\" --background\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+        executable.display()
+    );
+    std::fs::write(entry, contents)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn sync_linux_autostart(_enabled: bool) -> std::io::Result<()> {
+    Ok(())
+}
 
 #[derive(Debug, Deserialize)]
 struct MeterEvent {
@@ -59,10 +154,10 @@ struct DspSession {
 
 #[derive(Clone, Copy, Default)]
 enum DspSelection {
-    #[default]
     Equalizer,
     Compressor,
     Expander,
+    #[default]
     NoiseSuppression,
     EnhancementSuite,
     HeadphoneEqualizer,
@@ -108,6 +203,14 @@ fn main() -> Result<(), slint::PlatformError> {
     };
     let client = DaemonClient::localhost().expect("failed to create daemon client");
     let dsp_session = Arc::new(Mutex::new(DspSession::default()));
+    let preferences = load_preferences();
+    window.set_start_at_login(preferences.start_at_login);
+    window.set_close_to_tray(preferences.close_to_tray);
+    window.set_save_confirmation(preferences.save_confirmation);
+    window.set_beta_opt_in(preferences.beta_opt_in);
+    window.set_mixing_suite_enabled(preferences.mixing_suite_enabled);
+    window.set_automatic_default_reset(preferences.automatic_default_reset);
+    window.set_meter_crossfade(preferences.meter_crossfade);
 
     window.set_sources(empty_sources());
     window.set_routes(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
@@ -122,6 +225,34 @@ fn main() -> Result<(), slint::PlatformError> {
         "Link 3".into(),
         "Link 4".into(),
     ]));
+
+    let preferences_window = window.as_weak();
+    window.on_save_preferences(
+        move |start_at_login,
+              close_to_tray,
+              save_confirmation,
+              beta_opt_in,
+              mixing_suite_enabled,
+              automatic_default_reset,
+              meter_crossfade| {
+            let preferences = AppPreferences {
+                start_at_login,
+                close_to_tray,
+                save_confirmation,
+                beta_opt_in,
+                mixing_suite_enabled,
+                automatic_default_reset,
+                meter_crossfade,
+            };
+            match save_preferences(&preferences) {
+                Ok(()) => set_status(preferences_window.clone(), "Settings saved".into()),
+                Err(error) => set_status(
+                    preferences_window.clone(),
+                    format!("Settings save failed: {error}"),
+                ),
+            }
+        },
+    );
 
     let refresh_window = window.as_weak();
     let refresh_client = client.clone();
@@ -238,6 +369,36 @@ fn main() -> Result<(), slint::PlatformError> {
             match client.set_route(&source_id, &target_id, enabled) {
                 Ok(()) => set_status(window.clone(), "Software route updated".into()),
                 Err(error) => set_status(window.clone(), format!("Route update failed: {error}")),
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let create_source_window = window.as_weak();
+    let create_source_client = client.clone();
+    window.on_create_source(move |name| {
+        let window = create_source_window.clone();
+        let client = create_source_client.clone();
+        let name = name.to_string();
+        thread::spawn(move || {
+            match client.create_source(&name) {
+                Ok(()) => set_status(window.clone(), format!("Added {name} mixer knob")),
+                Err(error) => set_status(window.clone(), format!("Add knob failed: {error}")),
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let remove_source_window = window.as_weak();
+    let remove_source_client = client.clone();
+    window.on_remove_source(move |source_id| {
+        let window = remove_source_window.clone();
+        let client = remove_source_client.clone();
+        let source_id = source_id.to_string();
+        thread::spawn(move || {
+            match client.remove_source(&source_id) {
+                Ok(()) => set_status(window.clone(), "Mixer knob removed".into()),
+                Err(error) => set_status(window.clone(), format!("Remove knob failed: {error}")),
             }
             refresh_all(window, client);
         });
@@ -555,6 +716,33 @@ fn refresh_all(window: Weak<MainWindow>, client: DaemonClient) {
 }
 
 fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot) {
+    window.set_device_name(snapshot.studio.identity.product.clone().into());
+    window.set_device_serial(
+        snapshot
+            .studio
+            .identity
+            .serial
+            .clone()
+            .unwrap_or_else(|| "Unavailable".into())
+            .into(),
+    );
+    window.set_device_firmware(
+        snapshot
+            .studio
+            .identity
+            .firmware
+            .clone()
+            .unwrap_or_else(|| "Unavailable".into())
+            .into(),
+    );
+    let mut ordered_targets = snapshot.mixer.targets.iter().collect::<Vec<_>>();
+    ordered_targets.sort_by_key(|target| match target.name.as_str() {
+        "Headphones" => 0,
+        "Audience Mix" => 1,
+        "Voice Chat Mic" => 2,
+        "VOD Track" => 3,
+        _ => 4,
+    });
     let active_routes = snapshot
         .mixer
         .routes
@@ -562,7 +750,7 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot) {
         .map(|route| (route.source_id.as_str(), route.target_id.as_str()))
         .collect::<HashSet<_>>();
     let mut routes = Vec::new();
-    for (row, target) in snapshot.mixer.targets.iter().enumerate() {
+    for (row, target) in ordered_targets.iter().enumerate() {
         for (column, channel) in snapshot.mixer.channels.iter().enumerate() {
             routes.push(RouteModel {
                 source_id: channel.id.clone().into(),
@@ -634,9 +822,7 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot) {
         .iter()
         .map(source)
         .collect::<Vec<_>>();
-    let targets = snapshot
-        .mixer
-        .targets
+    let targets = ordered_targets
         .iter()
         .map(|target| TargetModel {
             target_id: target.id.clone().into(),
