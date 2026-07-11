@@ -272,7 +272,7 @@ impl Default for MockMixerBackend {
             audience_volume: 68,
             mute_state: MuteState::Unmuted,
             applications: apps.iter().map(|value| (*value).into()).collect(),
-            source_kind: if id == "microphone" || id == "game" {
+            source_kind: if id == "microphone" || id == "game" || id == "link-in" {
                 MixerSourceKind::Physical
             } else {
                 MixerSourceKind::Virtual
@@ -286,12 +286,13 @@ impl Default for MockMixerBackend {
                 error: None,
                 engine: "PipeWeaver (mock)".into(),
                 channels: vec![
-                    channel("game", "Game PC", "#ef6f4d", &["Game", "Steam"]),
+                    channel("microphone", "Mic", "#e5e25a", &["BEACN Studio Mic"]),
                     channel("chat", "Chat", "#54a7d9", &["Discord"]),
                     channel("music", "Music", "#b780e0", &["Spotify"]),
+                    channel("browser", "Browser", "#64c493", &["Firefox"]),
+                    channel("game", "Game", "#e8ba58", &["Game", "Steam"]),
                     channel("system", "System", "#e8ba58", &["Desktop Audio"]),
-                    channel("alerts", "Alerts", "#64c493", &["OBS"]),
-                    channel("microphone", "Microphone", "#d95b52", &["BEACN Studio Mic"]),
+                    channel("link-in", "Link In", "#cf38d8", &["Gaming PC"]),
                 ],
                 targets: vec![
                     MixerTarget {

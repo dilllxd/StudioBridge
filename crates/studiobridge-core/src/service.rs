@@ -217,12 +217,18 @@ mod tests {
         service.set_target_volume("vod-track", 83).await.unwrap();
 
         let state = service.snapshot().await.unwrap();
-        assert_eq!(state.mixer.channels[0].audience_volume, 41);
+        let game = state
+            .mixer
+            .channels
+            .iter()
+            .find(|channel| channel.id == "game")
+            .expect("mock game channel should exist");
+        assert_eq!(game.audience_volume, 41);
         assert_eq!(
             state.studio.linked_applications[0].channel,
             LinkChannel::Link3
         );
-        assert!(!state.mixer.channels[0].volumes_linked);
+        assert!(!game.volumes_linked);
         assert_eq!(
             state.studio.linked_applications[1].channel,
             LinkChannel::Link1,
