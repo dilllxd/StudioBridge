@@ -11,9 +11,10 @@ use pipeweaver_shared::{
 use std::collections::HashMap;
 use studiobridge_core::{
     BackendStatus, BridgeError, BridgeResult, MixBus, MixerApplication, MixerBackend, MixerChannel,
-    MixerRoute, MixerSnapshot, MixerSourceKind, MixerTarget, MuteState,
+    MixerDeviceChoice, MixerRoute, MixerSnapshot, MixerSourceKind, MixerTarget, MuteState,
 };
 use tokio::sync::Mutex;
+use ulid::Ulid;
 
 /// Adapter for an independently running PipeWeaver daemon.
 ///
@@ -92,6 +93,16 @@ impl MixerBackend for PipeweaverBackend {
             volume,
         ))
         .await
+    }
+
+    async fn set_default_input(&self, device_id: &str) -> BridgeResult<()> {
+        self.send(APICommand::SetDefaultInput(parse_device_id(device_id)?))
+            .await
+    }
+
+    async fn set_default_output(&self, device_id: &str) -> BridgeResult<()> {
+        self.send(APICommand::SetDefaultOutput(parse_device_id(device_id)?))
+            .await
     }
 
     async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()> {
@@ -301,6 +312,7 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
             })
         })
         .collect();
+    let (default_inputs, default_outputs) = default_device_choices(status);
 
     MixerSnapshot {
         status: BackendStatus::Connected,
@@ -310,6 +322,91 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
         targets,
         routes,
         applications: mixer_applications(status),
+        default_input: status.audio.defaults_id[DeviceType::Source].map(|id| id.to_string()),
+        default_output: status.audio.defaults_id[DeviceType::Target].map(|id| id.to_string()),
+        default_inputs,
+        default_outputs,
+    }
+}
+
+fn parse_device_id(device_id: &str) -> BridgeResult<Ulid> {
+    device_id.parse::<Ulid>().map_err(|_| {
+        BridgeError::InvalidValue(format!("invalid PipeWeaver device id: {device_id}"))
+    })
+}
+
+fn default_device_choices(
+    status: &DaemonStatus,
+) -> (Vec<MixerDeviceChoice>, Vec<MixerDeviceChoice>) {
+    let profile = &status.audio.profile.devices;
+    let mut inputs = Vec::new();
+    let mut outputs = Vec::new();
+
+    for device in &profile.targets.virtual_devices {
+        push_device_choice(
+            &mut inputs,
+            device.description.id,
+            device.description.name.clone(),
+        );
+    }
+    for device in &profile.sources.physical_devices {
+        push_device_choice(
+            &mut inputs,
+            device.description.id,
+            device.description.name.clone(),
+        );
+    }
+    for device in &status.audio.devices[DeviceType::Source] {
+        if device.is_usable {
+            push_device_choice(
+                &mut inputs,
+                device.id,
+                device
+                    .description
+                    .clone()
+                    .or_else(|| device.name.clone())
+                    .unwrap_or_else(|| "Unnamed input".into()),
+            );
+        }
+    }
+
+    for device in &profile.sources.virtual_devices {
+        push_device_choice(
+            &mut outputs,
+            device.description.id,
+            device.description.name.clone(),
+        );
+    }
+    for device in &profile.targets.physical_devices {
+        push_device_choice(
+            &mut outputs,
+            device.description.id,
+            device.description.name.clone(),
+        );
+    }
+    for device in &status.audio.devices[DeviceType::Target] {
+        if device.is_usable {
+            push_device_choice(
+                &mut outputs,
+                device.id,
+                device
+                    .description
+                    .clone()
+                    .or_else(|| device.name.clone())
+                    .unwrap_or_else(|| "Unnamed output".into()),
+            );
+        }
+    }
+
+    inputs.sort_by_key(|device| device.name.to_lowercase());
+    outputs.sort_by_key(|device| device.name.to_lowercase());
+    (inputs, outputs)
+}
+
+fn push_device_choice(choices: &mut Vec<MixerDeviceChoice>, id: Ulid, name: String) {
+    let id = id.to_string();
+    if !choices.iter().any(|choice| choice.id == id) {
+        choices.push(MixerDeviceChoice { id, name });
     }
 }
 
@@ -544,6 +641,8 @@ mod tests {
         assert_eq!(snapshot.channels.len(), 3);
         assert_eq!(snapshot.targets.len(), 2);
         assert_eq!(snapshot.routes.len(), 3);
+        assert!(!snapshot.default_inputs.is_empty());
+        assert!(!snapshot.default_outputs.is_empty());
         assert!(
             snapshot
                 .targets
@@ -583,6 +682,16 @@ mod tests {
             .unwrap();
         backend.set_volume_linked("System", false).await.unwrap();
         backend.set_target_volume("Headphones", 77).await.unwrap();
+        let default_input = Ulid::new();
+        let default_output = Ulid::new();
+        backend
+            .set_default_input(&default_input.to_string())
+            .await
+            .unwrap();
+        backend
+            .set_default_output(&default_output.to_string())
+            .await
+            .unwrap();
         backend.create_source("Aux 1").await.unwrap();
         backend.remove_source("Aux 1").await.unwrap();
 
@@ -617,9 +726,15 @@ mod tests {
             APICommand::SetVolumeByName(name, None, 77)
         )) if name == "Headphones"));
         assert!(matches!(requests.get(9), Some(DaemonRequest::Pipewire(
+            APICommand::SetDefaultInput(id)
+        )) if id == &default_input));
+        assert!(matches!(requests.get(10), Some(DaemonRequest::Pipewire(
+            APICommand::SetDefaultOutput(id)
+        )) if id == &default_output));
+        assert!(matches!(requests.get(11), Some(DaemonRequest::Pipewire(
             APICommand::CreateNode(NodeType::VirtualSource, name)
         )) if name == "Aux 1"));
-        assert!(matches!(requests.get(10), Some(DaemonRequest::Pipewire(
+        assert!(matches!(requests.get(12), Some(DaemonRequest::Pipewire(
             APICommand::RemoveNodeByName(name)
         )) if name == "Aux 1"));
 

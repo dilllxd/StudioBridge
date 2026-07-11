@@ -5582,6 +5582,7 @@ dependencies = [
  "pipeweaver-shared",
  "studiobridge-core",
  "tokio",
+ "ulid",
 ]
 
 [[package]]

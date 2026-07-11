@@ -1,8 +1,9 @@
 use crate::dsp::*;
 use crate::{
     BackendStatus, BridgeError, BridgeResult, HeadphoneState, LinkChannel, LinkedApplication,
-    MicrophoneState, MixBus, MixerApplication, MixerChannel, MixerRoute, MixerSnapshot,
-    MixerSourceKind, MixerTarget, MuteState, SetMicrophoneRequest, StudioIdentity, StudioSnapshot,
+    MicrophoneState, MixBus, MixerApplication, MixerChannel, MixerDeviceChoice, MixerRoute,
+    MixerSnapshot, MixerSourceKind, MixerTarget, MuteState, SetMicrophoneRequest, StudioIdentity,
+    StudioSnapshot,
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -29,6 +30,8 @@ pub trait MixerBackend: Send + Sync {
     async fn snapshot(&self) -> BridgeResult<MixerSnapshot>;
     async fn set_volume(&self, channel_id: &str, mix: MixBus, volume: u8) -> BridgeResult<()>;
     async fn set_target_volume(&self, target_id: &str, volume: u8) -> BridgeResult<()>;
+    async fn set_default_input(&self, device_id: &str) -> BridgeResult<()>;
+    async fn set_default_output(&self, device_id: &str) -> BridgeResult<()>;
     async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()>;
     async fn set_mute(&self, channel_id: &str, state: MuteState) -> BridgeResult<()>;
     async fn set_route(&self, source_id: &str, target_id: &str, enabled: bool) -> BridgeResult<()>;
@@ -354,6 +357,32 @@ impl Default for MockMixerBackend {
                         channel_id: Some("music".into()),
                     },
                 ],
+                default_input: Some("voice-chat-mic".into()),
+                default_output: Some("headphones".into()),
+                default_inputs: vec![
+                    MixerDeviceChoice {
+                        id: "voice-chat-mic".into(),
+                        name: "Voice Chat Mic".into(),
+                    },
+                    MixerDeviceChoice {
+                        id: "vod-track".into(),
+                        name: "VOD Track".into(),
+                    },
+                    MixerDeviceChoice {
+                        id: "audience-mix".into(),
+                        name: "Audience Mix".into(),
+                    },
+                ],
+                default_outputs: vec![
+                    MixerDeviceChoice {
+                        id: "headphones".into(),
+                        name: "Headphones".into(),
+                    },
+                    MixerDeviceChoice {
+                        id: "system".into(),
+                        name: "System".into(),
+                    },
+                ],
             })),
         }
     }
@@ -397,6 +426,36 @@ impl MixerBackend for MockMixerBackend {
             .find(|target| target.id == target_id)
             .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
         target.volume = volume;
+        Ok(())
+    }
+
+    async fn set_default_input(&self, device_id: &str) -> BridgeResult<()> {
+        let mut state = self.state.write().await;
+        if !state
+            .default_inputs
+            .iter()
+            .any(|device| device.id == device_id)
+        {
+            return Err(BridgeError::InvalidValue(format!(
+                "unknown default input: {device_id}"
+            )));
+        }
+        state.default_input = Some(device_id.into());
+        Ok(())
+    }
+
+    async fn set_default_output(&self, device_id: &str) -> BridgeResult<()> {
+        let mut state = self.state.write().await;
+        if !state
+            .default_outputs
+            .iter()
+            .any(|device| device.id == device_id)
+        {
+            return Err(BridgeError::InvalidValue(format!(
+                "unknown default output: {device_id}"
+            )));
+        }
+        state.default_output = Some(device_id.into());
         Ok(())
     }
 

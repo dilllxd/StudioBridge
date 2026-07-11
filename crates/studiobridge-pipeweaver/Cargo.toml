@@ -11,6 +11,7 @@ pipeweaver-profile = { git = "https://github.com/pipeweaver/pipeweaver", tag = "
 pipeweaver-shared = { git = "https://github.com/pipeweaver/pipeweaver", tag = "v0.1.9", features = ["enum-map"] }
 studiobridge-core = { path = "../studiobridge-core" }
 tokio.workspace = true
+ulid = "1"
 
 [dev-dependencies]
 axum.workspace = true

@@ -112,6 +112,12 @@ pub struct MixerApplication {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MixerDeviceChoice {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MixerSnapshot {
     pub status: BackendStatus,
     pub error: Option<String>,
@@ -120,6 +126,14 @@ pub struct MixerSnapshot {
     pub targets: Vec<MixerTarget>,
     pub routes: Vec<MixerRoute>,
     pub applications: Vec<MixerApplication>,
+    #[serde(default)]
+    pub default_input: Option<String>,
+    #[serde(default)]
+    pub default_output: Option<String>,
+    #[serde(default)]
+    pub default_inputs: Vec<MixerDeviceChoice>,
+    #[serde(default)]
+    pub default_outputs: Vec<MixerDeviceChoice>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -159,6 +173,11 @@ pub struct SetVolumeRequest {
 pub struct SetTargetVolumeRequest {
     pub target_id: String,
     pub volume: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetDefaultDeviceRequest {
+    pub device_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

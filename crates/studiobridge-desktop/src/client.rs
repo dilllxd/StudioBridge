@@ -4,9 +4,9 @@ use std::time::Duration;
 use studiobridge_core::{
     AppSnapshot, CreateMixerSourceRequest, DspWriteModule, LinkChannel, MicrophoneDspSnapshot,
     MicrophoneDspUpdate, MicrophoneDspWriteResult, MixBus, MixerProfileRequest,
-    MixerProfilesResponse, MuteState, RemoveMixerSourceRequest, SetLinkAssignmentRequest,
-    SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest, SetTargetVolumeRequest,
-    SetVolumeLinkedRequest, SetVolumeRequest,
+    MixerProfilesResponse, MuteState, RemoveMixerSourceRequest, SetDefaultDeviceRequest,
+    SetLinkAssignmentRequest, SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest,
+    SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -84,6 +84,25 @@ impl DaemonClient {
             .json(&SetTargetVolumeRequest {
                 target_id: target_id.into(),
                 volume,
+            })
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub fn set_default_input(&self, device_id: &str) -> Result<(), reqwest::Error> {
+        self.set_default_device("input", device_id)
+    }
+
+    pub fn set_default_output(&self, device_id: &str) -> Result<(), reqwest::Error> {
+        self.set_default_device("output", device_id)
+    }
+
+    fn set_default_device(&self, kind: &str, device_id: &str) -> Result<(), reqwest::Error> {
+        self.client
+            .post(format!("{}/api/mixer/default-{kind}", self.base_url))
+            .json(&SetDefaultDeviceRequest {
+                device_id: device_id.into(),
             })
             .send()?
             .error_for_status()?;

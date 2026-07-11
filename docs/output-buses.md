@@ -5,6 +5,12 @@ not hard-code a two-target limit: Headphones, Audience Mix, Voice Chat Mic, VOD
 Track, and future recording targets all appear as master strips and as rows in
 the routing matrix.
 
+The Assignments panel reads PipeWeaver's current `defaults_id` state and lists
+every compatible managed or usable physical device. Changing the recording or
+playback selector sends PipeWeaver's typed `SetDefaultInput` or
+`SetDefaultOutput` command. The Personal Mix device hotkey cycles the same
+playback candidate list; it does not touch BEACN USB controls.
+
 ## VOD Track
 
 Create a PipeWeaver target named `VOD Track` and expose it to OBS as a separate

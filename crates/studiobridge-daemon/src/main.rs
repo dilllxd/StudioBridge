@@ -13,10 +13,10 @@ use studiobridge_beacn::{BeacnStudioBackend, DspWriteGate};
 use studiobridge_core::{
     AppSnapshot, BridgeError, CreateMixerSourceRequest, DspWriteModule, MicrophoneDspUpdate,
     MixerBackend, MixerProfileRequest, MixerProfileSummary, MixerProfilesResponse, MixerSnapshot,
-    MockMixerBackend, MockStudioBackend, RemoveMixerSourceRequest, SetLinkAssignmentRequest,
-    SetMicrophoneRequest, SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest,
-    SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest, StudioBackend,
-    StudioBridgeService,
+    MockMixerBackend, MockStudioBackend, RemoveMixerSourceRequest, SetDefaultDeviceRequest,
+    SetLinkAssignmentRequest, SetMicrophoneRequest, SetMixerApplicationRequest, SetMuteRequest,
+    SetRouteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
+    StudioBackend, StudioBridgeService,
 };
 use studiobridge_pipeweaver::PipeweaverBackend;
 use tokio::sync::RwLock;
@@ -380,6 +380,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/studio/link-assignment", post(set_link_assignment))
         .route("/api/mixer/volume", post(set_volume))
         .route("/api/mixer/target-volume", post(set_target_volume))
+        .route("/api/mixer/default-input", post(set_default_input))
+        .route("/api/mixer/default-output", post(set_default_output))
         .route("/api/mixer/volume-link", post(set_volume_linked))
         .route("/api/mixer/mute", post(set_mute))
         .route("/api/mixer/route", post(set_route))
@@ -540,6 +542,22 @@ async fn set_target_volume(
         .service
         .set_target_volume(&request.target_id, request.volume)
         .await?;
+    Ok(ok())
+}
+
+async fn set_default_input(
+    State(state): State<AppState>,
+    Json(request): Json<SetDefaultDeviceRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state.service.set_default_input(&request.device_id).await?;
+    Ok(ok())
+}
+
+async fn set_default_output(
+    State(state): State<AppState>,
+    Json(request): Json<SetDefaultDeviceRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state.service.set_default_output(&request.device_id).await?;
     Ok(ok())
 }
 

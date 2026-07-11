@@ -370,10 +370,36 @@ fn execute_hotkey_action(action: String, client: DaemonClient, window: Weak<Main
                 }
             }
         } else if action == "mix:toggle-personal-device" {
-            set_status(
-                window.clone(),
-                "Personal device cycling needs at least two PipeWeaver outputs".into(),
-            );
+            match client.snapshot() {
+                Ok(snapshot) if snapshot.mixer.default_outputs.len() >= 2 => {
+                    let current = snapshot
+                        .mixer
+                        .default_output
+                        .as_ref()
+                        .and_then(|id| {
+                            snapshot
+                                .mixer
+                                .default_outputs
+                                .iter()
+                                .position(|device| &device.id == id)
+                        })
+                        .unwrap_or(0);
+                    let next = &snapshot.mixer.default_outputs
+                        [(current + 1) % snapshot.mixer.default_outputs.len()];
+                    match client.set_default_output(&next.id) {
+                        Ok(()) => set_status(
+                            window.clone(),
+                            format!("Personal Mix device: {}", next.name),
+                        ),
+                        Err(error) => set_status(window.clone(), format!("Hotkey failed: {error}")),
+                    }
+                }
+                Ok(_) => set_status(
+                    window.clone(),
+                    "Personal Mix device cycling needs at least two outputs".into(),
+                ),
+                Err(error) => set_status(window.clone(), format!("Hotkey failed: {error}")),
+            }
         }
         refresh_all(window, client);
     });
@@ -474,6 +500,10 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_mixer_profiles(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_hotkeys(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_mixer_channel_names(string_model(vec!["Unassigned".into()]));
+    window.set_default_input_names(string_model(Vec::new()));
+    window.set_default_input_ids(string_model(Vec::new()));
+    window.set_default_output_names(string_model(Vec::new()));
+    window.set_default_output_ids(string_model(Vec::new()));
     window.set_link_channel_names(string_model(vec![
         "System".into(),
         "Link 1".into(),
@@ -578,6 +608,42 @@ fn main() -> Result<(), slint::PlatformError> {
                     window.clone(),
                     format!("Output volume update failed: {error}"),
                 );
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let default_input_window = window.as_weak();
+    let default_input_client = client.clone();
+    window.on_set_default_input(move |device_id| {
+        let window = default_input_window.clone();
+        let client = default_input_client.clone();
+        let device_id = device_id.to_string();
+        thread::spawn(move || {
+            match client.set_default_input(&device_id) {
+                Ok(()) => set_status(window.clone(), "Default recording device updated".into()),
+                Err(error) => set_status(
+                    window.clone(),
+                    format!("Default recording device failed: {error}"),
+                ),
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let default_output_window = window.as_weak();
+    let default_output_client = client.clone();
+    window.on_set_default_output(move |device_id| {
+        let window = default_output_window.clone();
+        let client = default_output_client.clone();
+        let device_id = device_id.to_string();
+        thread::spawn(move || {
+            match client.set_default_output(&device_id) {
+                Ok(()) => set_status(window.clone(), "Default playback device updated".into()),
+                Err(error) => set_status(
+                    window.clone(),
+                    format!("Default playback device failed: {error}"),
+                ),
             }
             refresh_all(window, client);
         });
@@ -1216,6 +1282,64 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
             muted: target.muted,
         })
         .collect::<Vec<_>>();
+    let default_input_index = snapshot
+        .mixer
+        .default_input
+        .as_ref()
+        .and_then(|id| {
+            snapshot
+                .mixer
+                .default_inputs
+                .iter()
+                .position(|device| &device.id == id)
+        })
+        .map_or(-1, |index| index as i32);
+    let default_output_index = snapshot
+        .mixer
+        .default_output
+        .as_ref()
+        .and_then(|id| {
+            snapshot
+                .mixer
+                .default_outputs
+                .iter()
+                .position(|device| &device.id == id)
+        })
+        .map_or(-1, |index| index as i32);
+    window.set_default_input_names(string_model(
+        snapshot
+            .mixer
+            .default_inputs
+            .iter()
+            .map(|device| device.name.clone())
+            .collect(),
+    ));
+    window.set_default_input_ids(string_model(
+        snapshot
+            .mixer
+            .default_inputs
+            .iter()
+            .map(|device| device.id.clone())
+            .collect(),
+    ));
+    window.set_default_output_names(string_model(
+        snapshot
+            .mixer
+            .default_outputs
+            .iter()
+            .map(|device| device.name.clone())
+            .collect(),
+    ));
+    window.set_default_output_ids(string_model(
+        snapshot
+            .mixer
+            .default_outputs
+            .iter()
+            .map(|device| device.id.clone())
+            .collect(),
+    ));
+    window.set_default_input_index(default_input_index);
+    window.set_default_output_index(default_output_index);
     window.set_sources(ModelRc::from(Rc::new(VecModel::from(sources))));
     window.set_routes(ModelRc::from(Rc::new(VecModel::from(routes))));
     window.set_linux_applications(ModelRc::from(Rc::new(VecModel::from(linux_applications))));

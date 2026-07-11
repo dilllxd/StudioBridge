@@ -572,6 +572,12 @@ export component MainWindow inherits Window {
     in property <[HotkeyModel]> hotkeys;
     in property <[string]> mixer-channel-names;
     in property <[string]> link-channel-names;
+    in property <[string]> default-input-names;
+    in property <[string]> default-input-ids;
+    in property <[string]> default-output-names;
+    in property <[string]> default-output-ids;
+    in property <int> default-input-index: -1;
+    in property <int> default-output-index: -1;
     in-out property <int> active-page: 0;
     in-out property <int> mixer-context-page: 0;
     in property <bool> daemon-connected: false;
@@ -622,6 +628,8 @@ export component MainWindow inherits Window {
     callback refresh;
     callback set-volume(string, string, float);
     callback set-target-volume(string, float);
+    callback set-default-input(string);
+    callback set-default-output(string);
     callback set-source-mute(string, string, bool);
     callback set-volume-linked(string, bool);
     callback set-route(string, string, bool);
@@ -777,11 +785,11 @@ export component MainWindow inherits Window {
                             padding: 9px; spacing: 7px;
                             Text { text: "RECORDING DEVICES"; color: Theme.text; font-size: 11px; font-weight: 800; }
                             Text { text: "DEFAULT"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                            Rectangle { height: 28px; background: Theme.raised; Text { x: 7px; text: "Voice Chat Mic"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Text { x: parent.width - 18px; text: "v"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; } }
+                            ComboBox { height: 30px; model: root.default-input-names; current-index: root.default-input-index; selected(value) => { if self.current-index >= 0 && self.current-index < root.default-input-ids.length { root.set-default-input(root.default-input-ids[self.current-index]); } } }
                             Text { text: "VOD / RECORDING"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                            Rectangle { height: 28px; background: Theme.raised; Text { x: 7px; text: "VOD Track"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Text { x: parent.width - 18px; text: "v"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; } }
-                            Text { text: "PLAYBACK DEVICE"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                            Rectangle { height: 28px; background: Theme.raised; Text { x: 7px; text: "Headphones"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Text { x: parent.width - 18px; text: "v"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; } }
+                            Rectangle { height: 28px; background: Theme.raised; Text { x: 7px; text: "VOD Track · configure in Routing Table"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
+                            Text { text: "DEFAULT PLAYBACK DEVICE"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
+                            ComboBox { height: 30px; model: root.default-output-names; current-index: root.default-output-index; selected(value) => { if self.current-index >= 0 && self.current-index < root.default-output-ids.length { root.set-default-output(root.default-output-ids[self.current-index]); } } }
                             Rectangle { vertical-stretch: 1; }
                         }
                     }

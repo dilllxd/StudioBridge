@@ -106,6 +106,14 @@ impl StudioBridgeService {
         .await
     }
 
+    pub async fn set_default_input(&self, device_id: &str) -> BridgeResult<()> {
+        backend_call("PipeWeaver", self.mixer.set_default_input(device_id)).await
+    }
+
+    pub async fn set_default_output(&self, device_id: &str) -> BridgeResult<()> {
+        backend_call("PipeWeaver", self.mixer.set_default_output(device_id)).await
+    }
+
     pub async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()> {
         backend_call(
             "PipeWeaver",
@@ -267,6 +275,10 @@ fn disconnected_mixer(error: crate::BridgeError) -> MixerSnapshot {
         targets: Vec::new(),
         routes: Vec::new(),
         applications: Vec::new(),
+        default_input: None,
+        default_output: None,
+        default_inputs: Vec::new(),
+        default_outputs: Vec::new(),
     }
 }
 
@@ -300,6 +312,8 @@ mod tests {
             .unwrap();
         service.set_volume_linked("game", false).await.unwrap();
         service.set_target_volume("vod-track", 83).await.unwrap();
+        service.set_default_input("vod-track").await.unwrap();
+        service.set_default_output("system").await.unwrap();
 
         let state = service.snapshot().await.unwrap();
         let game = state
@@ -347,6 +361,8 @@ mod tests {
                 .iter()
                 .any(|target| target.id == "voice-chat-mic")
         );
+        assert_eq!(state.mixer.default_input.as_deref(), Some("vod-track"));
+        assert_eq!(state.mixer.default_output.as_deref(), Some("system"));
     }
 
     #[tokio::test]

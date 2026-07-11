@@ -52,6 +52,7 @@ than copying its source or visual assets:
 - linked or independent submix faders;
 - a prominent Main Out section;
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
+- PipeWeaver-backed Linux default recording and playback device selectors;
 - drag-and-drop application assignment;
 - always-accessible voice EQ and enhancement controls;
 - secondary microphone processors grouped by module;
@@ -122,8 +123,9 @@ The native milestone now provides the original StudioBridge icon, native window
 and tray, launch-in-background and single-instance behavior, real daemon health,
 source discovery, independent Personal/Audience faders, 60 Hz interpolated live
 meters, arbitrary PipeWeaver output buses (including Voice Chat Mic and VOD
-Track), a BEACN-familiar assignment/routing workspace, and an attended guarded
-editor for all six validated microphone DSP modules. Application drag/drop and
-the final distribution validation remain in progress. The web assets continue
+Track), functional Linux default-device selectors and a cycling global hotkey,
+a BEACN-familiar assignment/routing workspace, and an attended guarded editor
+for all six validated microphone DSP modules. Application drag/drop and the
+final distribution validation remain in progress. The web assets continue
 to build and are served by the daemon until native parity and packaging complete
 physical validation.
