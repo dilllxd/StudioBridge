@@ -1,0 +1,2 @@
+# BEACN Studio USB1 (full control and audio interface)
+SUBSYSTEM=="usb", ATTR{idVendor}=="33ae", ATTR{idProduct}=="0003", TAG+="uaccess"

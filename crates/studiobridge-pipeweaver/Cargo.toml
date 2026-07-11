@@ -1,0 +1,16 @@
+[package]
+name = "studiobridge-pipeweaver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+pipeweaver-ipc = { git = "https://github.com/pipeweaver/pipeweaver", tag = "v0.1.9" }
+pipeweaver-profile = { git = "https://github.com/pipeweaver/pipeweaver", tag = "v0.1.9" }
+pipeweaver-shared = { git = "https://github.com/pipeweaver/pipeweaver", tag = "v0.1.9", features = ["enum-map"] }
+studiobridge-core = { path = "../studiobridge-core" }
+tokio.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
