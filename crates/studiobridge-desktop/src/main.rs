@@ -2,6 +2,13 @@ use serde::Deserialize;
 use slint::{Color, Model, ModelRc, SharedString, VecModel, Weak};
 use std::{
     collections::{HashMap, HashSet},
+    rc::Rc,
+    sync::{Arc, Mutex},
+    thread,
+    time::{Duration, Instant},
+};
+#[cfg(unix)]
+use std::{
     fs,
     io::{Read, Write},
     os::unix::{
@@ -9,14 +16,10 @@ use std::{
         net::{UnixListener, UnixStream},
     },
     path::PathBuf,
-    rc::Rc,
-    sync::{Arc, Mutex},
-    thread,
-    time::{Duration, Instant},
 };
 use studiobridge_core::{
     AppSnapshot, DspMode, DspWriteModule, LinkChannel, MicrophoneDspSnapshot, MicrophoneDspUpdate,
-    MixBus, MixerChannel,
+    MixBus, MixerChannel, MuteState,
 };
 
 mod client;
@@ -32,10 +35,15 @@ struct MeterEvent {
     percent: f32,
 }
 
+#[cfg(unix)]
 struct InstanceGuard {
     socket_path: PathBuf,
 }
 
+#[cfg(not(unix))]
+struct InstanceGuard;
+
+#[cfg(unix)]
 impl Drop for InstanceGuard {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.socket_path);
@@ -51,12 +59,12 @@ struct DspSession {
 
 #[derive(Clone, Copy, Default)]
 enum DspSelection {
+    #[default]
     Equalizer,
     Compressor,
     Expander,
     NoiseSuppression,
     EnhancementSuite,
-    #[default]
     HeadphoneEqualizer,
 }
 
@@ -105,6 +113,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_routes(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_linux_applications(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_link_applications(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
+    window.set_targets(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_mixer_channel_names(string_model(vec!["Unassigned".into()]));
     window.set_link_channel_names(string_model(vec![
         "System".into(),
@@ -133,6 +142,86 @@ fn main() -> Result<(), slint::PlatformError> {
             let volume = value.round().clamp(0.0, 100.0) as u8;
             if let Err(error) = client.set_volume(&channel_id, mix, volume) {
                 set_status(window.clone(), format!("Volume update failed: {error}"));
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let target_volume_window = window.as_weak();
+    let target_volume_client = client.clone();
+    window.on_set_target_volume(move |target_id, value| {
+        let window = target_volume_window.clone();
+        let client = target_volume_client.clone();
+        let target_id = target_id.to_string();
+        thread::spawn(move || {
+            let volume = value.round().clamp(0.0, 100.0) as u8;
+            if let Err(error) = client.set_target_volume(&target_id, volume) {
+                set_status(
+                    window.clone(),
+                    format!("Output volume update failed: {error}"),
+                );
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let mute_window = window.as_weak();
+    let mute_client = client.clone();
+    window.on_set_source_mute(move |channel_id, mix, muted| {
+        let window = mute_window.clone();
+        let client = mute_client.clone();
+        let channel_id = channel_id.to_string();
+        let mix = mix.to_string();
+        thread::spawn(move || {
+            let current = client.snapshot().ok().and_then(|snapshot| {
+                snapshot
+                    .mixer
+                    .channels
+                    .into_iter()
+                    .find(|channel| channel.id == channel_id)
+            });
+            let Some(current) = current else {
+                set_status(window, "Could not read the current mute state".into());
+                return;
+            };
+            let personal = if mix == "personal" {
+                muted
+            } else {
+                matches!(
+                    current.mute_state,
+                    MuteState::MutedAll | MuteState::MutedPersonal
+                )
+            };
+            let audience = if mix == "audience" {
+                muted
+            } else {
+                matches!(
+                    current.mute_state,
+                    MuteState::MutedAll | MuteState::MutedAudience
+                )
+            };
+            let state = match (personal, audience) {
+                (false, false) => MuteState::Unmuted,
+                (true, true) => MuteState::MutedAll,
+                (true, false) => MuteState::MutedPersonal,
+                (false, true) => MuteState::MutedAudience,
+            };
+            if let Err(error) = client.set_mute(&channel_id, state) {
+                set_status(window.clone(), format!("Mute update failed: {error}"));
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let link_volume_window = window.as_weak();
+    let link_volume_client = client.clone();
+    window.on_set_volume_linked(move |channel_id, linked| {
+        let window = link_volume_window.clone();
+        let client = link_volume_client.clone();
+        let channel_id = channel_id.to_string();
+        thread::spawn(move || {
+            if let Err(error) = client.set_volume_linked(&channel_id, linked) {
+                set_status(window.clone(), format!("Level link update failed: {error}"));
             }
             refresh_all(window, client);
         });
@@ -290,7 +379,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let safe_window = window.as_weak();
     tray.on_show_safe_mode(move || {
         if let Some(window) = safe_window.upgrade() {
-            window.set_active_page(3);
+            window.set_active_page(1);
             let _ = window.show();
         }
     });
@@ -312,6 +401,7 @@ fn main() -> Result<(), slint::PlatformError> {
     slint::run_event_loop()
 }
 
+#[cfg(unix)]
 fn instance_socket_path() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -319,6 +409,7 @@ fn instance_socket_path() -> PathBuf {
         .join("studiobridge-desktop.sock")
 }
 
+#[cfg(unix)]
 fn notify_existing_instance(start_in_background: bool) -> bool {
     let Ok(mut existing) = UnixStream::connect(instance_socket_path()) else {
         return false;
@@ -331,6 +422,12 @@ fn notify_existing_instance(start_in_background: bool) -> bool {
     existing.write_all(command).is_ok()
 }
 
+#[cfg(not(unix))]
+fn notify_existing_instance(_start_in_background: bool) -> bool {
+    false
+}
+
+#[cfg(unix)]
 fn claim_single_instance(
     window: Weak<MainWindow>,
     start_in_background: bool,
@@ -378,6 +475,14 @@ fn claim_single_instance(
     Some(InstanceGuard { socket_path })
 }
 
+#[cfg(not(unix))]
+fn claim_single_instance(
+    _window: Weak<MainWindow>,
+    _start_in_background: bool,
+) -> Option<InstanceGuard> {
+    Some(InstanceGuard)
+}
+
 fn source(channel: &MixerChannel) -> SourceModel {
     SourceModel {
         channel_id: SharedString::from(&channel.id),
@@ -388,7 +493,14 @@ fn source(channel: &MixerChannel) -> SourceModel {
         audience: channel.audience_volume as f32,
         meter: 0.0,
         linked: channel.volumes_linked,
-        muted: channel.mute_state == studiobridge_core::MuteState::MutedAll,
+        personal_muted: matches!(
+            channel.mute_state,
+            MuteState::MutedAll | MuteState::MutedPersonal
+        ),
+        audience_muted: matches!(
+            channel.mute_state,
+            MuteState::MutedAll | MuteState::MutedAudience
+        ),
         colour: parse_colour(&channel.colour),
     }
 }
@@ -449,12 +561,10 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot) {
         .iter()
         .map(|route| (route.source_id.as_str(), route.target_id.as_str()))
         .collect::<HashSet<_>>();
-    let routes = snapshot
-        .mixer
-        .channels
-        .iter()
-        .flat_map(|channel| {
-            snapshot.mixer.targets.iter().map(|target| RouteModel {
+    let mut routes = Vec::new();
+    for (row, target) in snapshot.mixer.targets.iter().enumerate() {
+        for (column, channel) in snapshot.mixer.channels.iter().enumerate() {
+            routes.push(RouteModel {
                 source_id: channel.id.clone().into(),
                 source_name: channel.name.clone().into(),
                 target_id: target.id.clone().into(),
@@ -465,9 +575,11 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot) {
                 },
                 colour: parse_colour(&channel.colour),
                 enabled: active_routes.contains(&(channel.id.as_str(), target.id.as_str())),
-            })
-        })
-        .collect::<Vec<_>>();
+                row: row as i32,
+                column: column as i32,
+            });
+        }
+    }
     let linux_applications = snapshot
         .mixer
         .applications
@@ -522,10 +634,28 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot) {
         .iter()
         .map(source)
         .collect::<Vec<_>>();
+    let targets = snapshot
+        .mixer
+        .targets
+        .iter()
+        .map(|target| TargetModel {
+            target_id: target.id.clone().into(),
+            meter_id: target.meter_id.clone().into(),
+            name: target.name.clone().into(),
+            mix: match target.mix {
+                MixBus::Personal => "Personal".into(),
+                MixBus::Audience => "Audience".into(),
+            },
+            volume: target.volume as f32,
+            meter: 0.0,
+            muted: target.muted,
+        })
+        .collect::<Vec<_>>();
     window.set_sources(ModelRc::from(Rc::new(VecModel::from(sources))));
     window.set_routes(ModelRc::from(Rc::new(VecModel::from(routes))));
     window.set_linux_applications(ModelRc::from(Rc::new(VecModel::from(linux_applications))));
     window.set_link_applications(ModelRc::from(Rc::new(VecModel::from(link_applications))));
+    window.set_targets(ModelRc::from(Rc::new(VecModel::from(targets))));
     window.set_mixer_channel_names(string_model(channel_names));
 }
 
@@ -939,6 +1069,16 @@ fn start_meter_stream(window: Weak<MainWindow>) {
                                 if let Some(level) = frame.get(source.meter_id.as_str()) {
                                     source.meter = *level;
                                     sources.set_row_data(index, source);
+                                }
+                            }
+                            let targets = window.get_targets();
+                            for index in 0..targets.row_count() {
+                                let Some(mut target) = targets.row_data(index) else {
+                                    continue;
+                                };
+                                if let Some(level) = frame.get(target.meter_id.as_str()) {
+                                    target.meter = *level;
+                                    targets.set_row_data(index, target);
                                 }
                             }
                         })

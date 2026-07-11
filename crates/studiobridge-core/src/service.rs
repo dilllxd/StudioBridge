@@ -98,6 +98,14 @@ impl StudioBridgeService {
         backend_call("PipeWeaver", self.mixer.set_volume(channel_id, mix, volume)).await
     }
 
+    pub async fn set_target_volume(&self, target_id: &str, volume: u8) -> BridgeResult<()> {
+        backend_call(
+            "PipeWeaver",
+            self.mixer.set_target_volume(target_id, volume),
+        )
+        .await
+    }
+
     pub async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()> {
         backend_call(
             "PipeWeaver",
@@ -206,6 +214,7 @@ mod tests {
             .await
             .unwrap();
         service.set_volume_linked("game", false).await.unwrap();
+        service.set_target_volume("vod-track", 83).await.unwrap();
 
         let state = service.snapshot().await.unwrap();
         assert_eq!(state.mixer.channels[0].audience_volume, 41);
@@ -229,6 +238,23 @@ mod tests {
         assert_eq!(
             state.mixer.applications[0].channel_id.as_deref(),
             Some("game")
+        );
+        assert_eq!(
+            state
+                .mixer
+                .targets
+                .iter()
+                .find(|target| target.id == "vod-track")
+                .unwrap()
+                .volume,
+            83
+        );
+        assert!(
+            state
+                .mixer
+                .targets
+                .iter()
+                .any(|target| target.id == "voice-chat-mic")
         );
     }
 

@@ -28,6 +28,7 @@ pub trait StudioBackend: Send + Sync {
 pub trait MixerBackend: Send + Sync {
     async fn snapshot(&self) -> BridgeResult<MixerSnapshot>;
     async fn set_volume(&self, channel_id: &str, mix: MixBus, volume: u8) -> BridgeResult<()>;
+    async fn set_target_volume(&self, target_id: &str, volume: u8) -> BridgeResult<()>;
     async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()>;
     async fn set_mute(&self, channel_id: &str, state: MuteState) -> BridgeResult<()>;
     async fn set_route(&self, source_id: &str, target_id: &str, enabled: bool) -> BridgeResult<()>;
@@ -302,6 +303,22 @@ impl Default for MockMixerBackend {
                         muted: false,
                     },
                     MixerTarget {
+                        id: "voice-chat-mic".into(),
+                        meter_id: "mock-target-voice-chat".into(),
+                        name: "Voice Chat Mic".into(),
+                        mix: MixBus::Audience,
+                        volume: 100,
+                        muted: false,
+                    },
+                    MixerTarget {
+                        id: "vod-track".into(),
+                        meter_id: "mock-target-vod".into(),
+                        name: "VOD Track".into(),
+                        mix: MixBus::Audience,
+                        volume: 100,
+                        muted: false,
+                    },
+                    MixerTarget {
                         id: "audience-mix".into(),
                         meter_id: "mock-target-audience".into(),
                         name: "Audience Mix".into(),
@@ -361,6 +378,22 @@ impl MixerBackend for MockMixerBackend {
             MixBus::Personal => channel.personal_volume = volume,
             MixBus::Audience => channel.audience_volume = volume,
         }
+        Ok(())
+    }
+
+    async fn set_target_volume(&self, target_id: &str, volume: u8) -> BridgeResult<()> {
+        if volume > 100 {
+            return Err(BridgeError::InvalidValue(
+                "volume must be between 0 and 100".into(),
+            ));
+        }
+        let mut state = self.state.write().await;
+        let target = state
+            .targets
+            .iter_mut()
+            .find(|target| target.id == target_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
+        target.volume = volume;
         Ok(())
     }
 

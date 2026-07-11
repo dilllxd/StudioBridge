@@ -10,7 +10,8 @@ export struct SourceModel {
     audience: float,
     meter: float,
     linked: bool,
-    muted: bool,
+    personal-muted: bool,
+    audience-muted: bool,
 }
 
 export struct RouteModel {
@@ -21,6 +22,8 @@ export struct RouteModel {
     target-mix: string,
     colour: color,
     enabled: bool,
+    row: int,
+    column: int,
 }
 
 export struct ApplicationModel {
@@ -35,69 +38,74 @@ export struct LinkApplicationModel {
     channel-index: int,
 }
 
-global Theme {
-    in property <color> background: #0d1214;
-    in property <color> panel: #151d21;
-    in property <color> raised: #1b252a;
-    in property <color> border: #334047;
-    in property <color> text: #eeeae2;
-    in property <color> quiet: #899399;
-    in property <color> teal: #58d5cb;
-    in property <color> amber: #f0b55c;
-    in property <color> green: #6bd596;
-    in property <color> red: #e66d62;
+export struct TargetModel {
+    target-id: string,
+    meter-id: string,
+    name: string,
+    mix: string,
+    volume: float,
+    meter: float,
+    muted: bool,
 }
 
-component NavTab inherits Rectangle {
-    in property <string> label;
-    in property <bool> active;
-    callback clicked;
-    width: 132px;
-    background: active ? #1b292d : transparent;
-    border-width: active ? 0px : 0px;
-
-    Text {
-        text: root.label;
-        color: root.active ? Theme.teal : Theme.quiet;
-        font-size: 14px;
-        font-weight: 700;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-    Rectangle {
-        y: parent.height - 3px;
-        height: 3px;
-        background: root.active ? Theme.teal : transparent;
-    }
-    TouchArea { clicked => { root.clicked(); } }
+global Theme {
+    in property <color> background: #0b1012;
+    in property <color> panel: #141b1e;
+    in property <color> raised: #1b2428;
+    in property <color> border: #303b40;
+    in property <color> text: #f0eee8;
+    in property <color> quiet: #8c979b;
+    in property <color> teal: #52d2c9;
+    in property <color> amber: #e9ad4f;
+    in property <color> green: #69d195;
+    in property <color> red: #e4665e;
 }
 
 component StatusPill inherits Rectangle {
     in property <string> label;
     in property <bool> good;
-    height: 28px;
-    min-width: 110px;
-    border-radius: 14px;
+    height: 26px;
+    min-width: 104px;
+    border-radius: 13px;
     border-width: 1px;
-    border-color: good ? #397c5a : #754942;
-    background: good ? #173326 : #321d1b;
+    border-color: good ? #397b59 : #77463f;
+    background: good ? #152e22 : #301c1a;
     HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
-        spacing: 7px;
+        padding-left: 9px;
+        padding-right: 9px;
+        spacing: 6px;
         Rectangle { width: 7px; height: 7px; border-radius: 4px; background: good ? Theme.green : Theme.red; }
-        Text { text: root.label; color: good ? #bce9cd : #f0b4ad; font-size: 11px; font-weight: 700; }
+        Text { text: root.label; color: good ? #bae8ca : #efb0aa; font-size: 10px; font-weight: 700; }
     }
 }
 
-component Meter inherits Rectangle {
+component RailButton inherits Rectangle {
+    in property <string> glyph;
+    in property <string> label;
+    in property <bool> active;
+    callback clicked;
+    height: 74px;
+    border-radius: 5px;
+    background: active ? #173237 : transparent;
+    border-width: active ? 1px : 0px;
+    border-color: active ? Theme.teal : transparent;
+    VerticalLayout {
+        padding: 8px;
+        spacing: 3px;
+        Text { text: root.glyph; color: root.active ? Theme.teal : Theme.quiet; font-size: 24px; font-weight: 800; horizontal-alignment: center; }
+        Text { text: root.label; color: root.active ? Theme.text : Theme.quiet; font-size: 9px; font-weight: 700; horizontal-alignment: center; }
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+component LevelMeter inherits Rectangle {
     in property <float> value;
     in property <color> colour: Theme.teal;
-    width: 10px;
-    border-radius: 2px;
-    background: #0a0f11;
+    width: 9px;
+    background: #070b0c;
     border-width: 1px;
-    border-color: #3a464b;
+    border-color: #354146;
+    border-radius: 2px;
     Rectangle {
         x: 2px;
         width: parent.width - 4px;
@@ -110,132 +118,164 @@ component Meter inherits Rectangle {
     }
 }
 
+component MixFader inherits Rectangle {
+    in property <string> label;
+    in property <float> value;
+    in property <float> meter;
+    in property <bool> muted;
+    in property <color> accent;
+    callback changed(float);
+    callback mute-clicked;
+    background: transparent;
+    VerticalLayout {
+        spacing: 5px;
+        Text { text: root.label; color: root.accent; font-size: 9px; font-weight: 800; horizontal-alignment: center; }
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            spacing: 4px;
+            Rectangle { horizontal-stretch: 1; }
+            LevelMeter { value: root.muted ? 0 : root.meter; colour: root.accent; }
+            Slider { value: root.value; minimum: 0; maximum: 100; orientation: vertical; changed(value) => { root.changed(value); } }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        Text { text: round(root.value) + "%"; color: Theme.text; font-size: 10px; horizontal-alignment: center; }
+        Rectangle {
+            height: 34px;
+            border-radius: 3px;
+            border-width: 1px;
+            border-color: root.muted ? Theme.red : Theme.border;
+            background: root.muted ? #6e2925 : #20292d;
+            Text { text: root.muted ? "MUTED" : "MUTE"; color: Theme.text; font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { root.mute-clicked(); } }
+        }
+    }
+}
+
 component SourceStrip inherits Rectangle {
     in property <SourceModel> source;
     callback personal-changed(float);
     callback audience-changed(float);
-    width: 154px;
-    min-height: 560px;
-    background: Theme.panel;
+    callback personal-mute;
+    callback audience-mute;
+    callback link-changed(bool);
+    width: 174px;
+    min-height: 420px;
+    border-radius: 4px;
     border-width: 1px;
     border-color: Theme.border;
-    border-radius: 4px;
-
+    background: Theme.panel;
     VerticalLayout {
-        padding: 10px;
-        spacing: 8px;
-        Rectangle {
-            height: 4px;
-            border-radius: 2px;
-            background: root.source.colour;
-        }
-        Text { text: root.source.name; color: Theme.text; font-size: 17px; font-weight: 700; horizontal-alignment: center; }
-        Text { text: root.source.detail; color: Theme.quiet; font-size: 10px; horizontal-alignment: center; overflow: elide; }
+        padding: 9px;
+        spacing: 7px;
+        Text { text: root.source.name; color: Theme.text; font-size: 16px; font-weight: 800; horizontal-alignment: center; }
+        Rectangle { height: 4px; border-radius: 2px; background: root.source.colour; }
+        Text { text: root.source.detail; color: Theme.quiet; font-size: 9px; horizontal-alignment: center; overflow: elide; }
         HorizontalLayout {
-            spacing: 9px;
+            spacing: 7px;
             vertical-stretch: 1;
-            VerticalLayout {
-                spacing: 6px;
-                Text { text: "YOU"; color: Theme.teal; font-size: 10px; horizontal-alignment: center; }
-                HorizontalLayout {
-                    Rectangle { horizontal-stretch: 1; }
-                    Meter { value: root.source.meter; colour: Theme.teal; }
-                    Slider { value: root.source.personal; minimum: 0; maximum: 100; orientation: vertical; changed(value) => { root.personal-changed(value); } }
-                    Rectangle { horizontal-stretch: 1; }
-                }
-                Text { text: round(root.source.personal) + "%"; color: Theme.text; font-size: 12px; horizontal-alignment: center; }
+            MixFader {
+                label: "PERSONAL";
+                value: root.source.personal;
+                meter: root.source.meter;
+                muted: root.source.personal-muted;
+                accent: Theme.teal;
+                changed(value) => { root.personal-changed(value); }
+                mute-clicked => { root.personal-mute(); }
             }
-            VerticalLayout {
-                spacing: 6px;
-                Text { text: "STREAM"; color: Theme.amber; font-size: 10px; horizontal-alignment: center; }
-                HorizontalLayout {
-                    Rectangle { horizontal-stretch: 1; }
-                    Meter { value: root.source.meter * root.source.audience / 100.0; colour: Theme.amber; }
-                    Slider { value: root.source.audience; minimum: 0; maximum: 100; orientation: vertical; changed(value) => { root.audience-changed(value); } }
-                    Rectangle { horizontal-stretch: 1; }
-                }
-                Text { text: round(root.source.audience) + "%"; color: Theme.text; font-size: 12px; horizontal-alignment: center; }
+            MixFader {
+                label: "AUDIENCE";
+                value: root.source.audience;
+                meter: root.source.meter * root.source.audience / 100.0;
+                muted: root.source.audience-muted;
+                accent: Theme.amber;
+                changed(value) => { root.audience-changed(value); }
+                mute-clicked => { root.audience-mute(); }
             }
         }
         Rectangle {
-            height: 32px;
+            height: 28px;
             border-radius: 3px;
             border-width: 1px;
             border-color: root.source.linked ? Theme.teal : Theme.border;
-            background: root.source.linked ? #17302f : #111719;
-            Text { text: root.source.linked ? "LEVELS LINKED" : "LEVELS INDEPENDENT"; color: root.source.linked ? Theme.teal : Theme.quiet; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-        }
-        Rectangle {
-            height: 38px;
-            border-radius: 3px;
-            background: root.source.muted ? #7d2d29 : #202a2f;
-            border-width: 1px;
-            border-color: root.source.muted ? Theme.red : #46535a;
-            Text { text: root.source.muted ? "MUTED" : "MUTE"; color: Theme.text; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+            background: root.source.linked ? #15302e : #101619;
+            Text { text: root.source.linked ? "LEVELS LINKED" : "LINK LEVELS"; color: root.source.linked ? Theme.teal : Theme.quiet; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { root.link-changed(!root.source.linked); } }
         }
     }
 }
 
-component ProcessingCard inherits Rectangle {
-    in property <string> title;
-    in property <string> subtitle;
-    in property <string> value;
-    in property <bool> enabled: true;
-    min-height: 150px;
-    border-radius: 4px;
+component ContextTab inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    callback clicked;
+    width: 160px;
+    background: active ? #1b292d : transparent;
+    Text { text: root.label; color: root.active ? Theme.teal : Theme.quiet; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+    Rectangle { y: parent.height - 3px; height: 3px; background: root.active ? Theme.teal : transparent; }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+component TargetStrip inherits Rectangle {
+    in property <TargetModel> target;
+    callback volume-changed(float);
+    width: 238px;
+    border-radius: 3px;
     border-width: 1px;
     border-color: Theme.border;
-    background: Theme.panel;
-    VerticalLayout {
-        padding: 16px;
-        spacing: 9px;
-        HorizontalLayout {
-            Text { text: root.title; color: Theme.text; font-size: 18px; font-weight: 700; horizontal-stretch: 1; }
-            Text { text: root.enabled ? "ACTIVE" : "BYPASSED"; color: root.enabled ? Theme.green : Theme.quiet; font-size: 10px; font-weight: 700; }
+    background: Theme.raised;
+    HorizontalLayout {
+        padding: 9px;
+        spacing: 8px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            Text { text: root.target.name; color: Theme.text; font-size: 12px; font-weight: 800; overflow: elide; }
+            Text { text: root.target.mix + (root.target.muted ? " · MUTED" : " output"); color: root.target.muted ? Theme.red : Theme.quiet; font-size: 9px; }
+            Slider { value: root.target.volume; minimum: 0; maximum: 100; changed(value) => { root.volume-changed(value); } }
         }
-        Text { text: root.subtitle; color: Theme.quiet; font-size: 11px; }
-        Rectangle { height: 1px; background: Theme.border; }
-        Text { text: root.value; color: Theme.teal; font-size: 26px; font-weight: 700; }
+        LevelMeter { width: 12px; value: root.target.muted ? 0 : root.target.meter; colour: root.target.mix == "Personal" ? Theme.teal : Theme.amber; }
+        Text { text: round(root.target.volume) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; }
     }
 }
 
-component ModuleButton inherits Rectangle {
+component AssignmentRow inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    height: 58px;
+    border-radius: 3px;
+    background: Theme.raised;
+}
+
+component ModuleTab inherits Rectangle {
     in property <string> label;
     in property <string> module;
     in property <string> selected;
     callback clicked(string);
-    height: 34px;
-    border-radius: 3px;
-    background: root.module == root.selected ? #17302f : transparent;
-    border-width: root.module == root.selected ? 1px : 0px;
-    border-color: Theme.teal;
-    Text {
-        text: root.label;
-        color: root.module == root.selected ? Theme.teal : Theme.quiet;
-        font-size: 11px;
-        font-weight: root.module == root.selected ? 700 : 500;
-        vertical-alignment: center;
-        x: 9px;
-    }
+    min-width: 126px;
+    background: root.module == root.selected ? #1c2b2f : #111719;
+    border-width: 1px;
+    border-color: root.module == root.selected ? Theme.teal : Theme.border;
+    Text { text: root.label; color: root.module == root.selected ? Theme.teal : Theme.quiet; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
     TouchArea { clicked => { root.clicked(root.module); } }
 }
 
 export component MainWindow inherits Window {
     title: "StudioBridge";
     icon: @image-url("../assets/studiobridge.svg");
-    preferred-width: 1280px;
-    preferred-height: 760px;
-    min-width: 940px;
-    min-height: 620px;
+    preferred-width: 1360px;
+    preferred-height: 820px;
+    min-width: 1024px;
+    min-height: 680px;
     background: Theme.background;
 
     in property <[SourceModel]> sources;
     in property <[RouteModel]> routes;
     in property <[ApplicationModel]> linux-applications;
     in property <[LinkApplicationModel]> link-applications;
+    in property <[TargetModel]> targets;
     in property <[string]> mixer-channel-names;
     in property <[string]> link-channel-names;
     in-out property <int> active-page: 0;
+    in-out property <int> mixer-context-page: 0;
     in property <bool> daemon-connected: false;
     in property <bool> hardware-safe: true;
     in property <bool> link-active: false;
@@ -258,54 +298,62 @@ export component MainWindow inherits Window {
     in property <float> dsp-min-c: -12;
     in property <float> dsp-max-c: 12;
     in property <string> status-text: "Connecting to StudioBridge daemon";
+
     callback refresh;
     callback set-volume(string, string, float);
+    callback set-target-volume(string, float);
+    callback set-source-mute(string, string, bool);
+    callback set-volume-linked(string, bool);
+    callback set-route(string, string, bool);
+    callback assign-linux-application(string, string, int);
+    callback assign-link-application(string, int);
     callback select-dsp-module(string);
     callback load-dsp;
     callback arm-dsp;
     callback disarm-dsp;
     callback apply-dsp(float, float, float);
     callback revert-dsp;
-    callback set-route(string, string, bool);
-    callback assign-linux-application(string, string, int);
-    callback assign-link-application(string, int);
 
-    VerticalLayout {
+    HorizontalLayout {
         spacing: 0px;
         Rectangle {
-            height: 62px;
-            background: #0b1012;
+            width: 82px;
+            background: #080d0f;
             border-width: 1px;
             border-color: Theme.border;
-            HorizontalLayout {
-                padding-left: 18px;
-                padding-right: 16px;
-                spacing: 0px;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 8px;
+                Image { source: @image-url("../assets/studiobridge.svg"); width: 54px; height: 54px; horizontal-alignment: center; }
+                RailButton { glyph: "≡"; label: "MIXER"; active: root.active-page == 0; clicked => { root.active-page = 0; } }
+                RailButton { glyph: "◉"; label: "MIC"; active: root.active-page == 1; clicked => { root.active-page = 1; } }
+                Rectangle { vertical-stretch: 1; }
+                RailButton { glyph: "⚙"; label: "STATUS"; active: root.active-page == 2; clicked => { root.active-page = 2; } }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 0px;
+            Rectangle {
+                height: 54px;
+                background: #0b1012;
+                border-width: 1px;
+                border-color: Theme.border;
                 HorizontalLayout {
-                    width: 220px;
-                    spacing: 10px;
-                    Image { source: @image-url("../assets/studiobridge.svg"); width: 34px; height: 34px; }
-                    Text { text: "STUDIOBRIDGE"; color: Theme.text; font-size: 20px; font-weight: 800; }
-                }
-                NavTab { label: "MIXER"; active: root.active-page == 0; clicked => { root.active-page = 0; } }
-                NavTab { label: "ROUTING"; active: root.active-page == 1; clicked => { root.active-page = 1; } }
-                NavTab { label: "APPLICATIONS"; active: root.active-page == 2; clicked => { root.active-page = 2; } }
-                NavTab { label: "MIC CHAIN"; active: root.active-page == 3; clicked => { root.active-page = 3; } }
-                Rectangle { horizontal-stretch: 1; }
-                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 12px;
                     spacing: 8px;
+                    Text { text: root.active-page == 0 ? "MIXER" : root.active-page == 1 ? "MICROPHONE" : "STUDIOBRIDGE STATUS"; color: Theme.text; font-size: 18px; font-weight: 800; horizontal-stretch: 1; }
                     StatusPill { label: root.daemon-connected ? "STUDIO CONNECTED" : "DISCONNECTED"; good: root.daemon-connected; }
                     StatusPill { label: root.hardware-safe ? "HARDWARE SAFE" : "WRITES ACTIVE"; good: root.hardware-safe; }
                 }
             }
-        }
 
-        if root.active-page == 0: Rectangle {
-            background: Theme.background;
-            HorizontalLayout {
-                padding: 12px;
-                spacing: 12px;
+            if root.active-page == 0: VerticalLayout {
+                padding: 10px;
+                spacing: 8px;
                 ScrollView {
+                    min-height: 430px;
                     horizontal-stretch: 1;
                     HorizontalLayout {
                         spacing: 8px;
@@ -313,248 +361,182 @@ export component MainWindow inherits Window {
                             source: source;
                             personal-changed(value) => { root.set-volume(source.channel-id, "personal", value); }
                             audience-changed(value) => { root.set-volume(source.channel-id, "audience", value); }
+                            personal-mute => { root.set-source-mute(source.channel-id, "personal", !source.personal-muted); }
+                            audience-mute => { root.set-source-mute(source.channel-id, "audience", !source.audience-muted); }
+                            link-changed(linked) => { root.set-volume-linked(source.channel-id, linked); }
                         }
                     }
                 }
+
                 Rectangle {
-                    width: 220px;
-                    background: Theme.panel;
+                    height: 82px;
+                    border-radius: 4px;
                     border-width: 1px;
                     border-color: Theme.border;
-                    border-radius: 4px;
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 14px;
-                        Text { text: "MAIN OUT"; color: Theme.amber; font-size: 15px; font-weight: 800; }
-                        Text { text: "Personal listening"; color: Theme.quiet; font-size: 11px; }
-                        HorizontalLayout {
-                            vertical-stretch: 1;
-                            Rectangle { horizontal-stretch: 1; }
-                            Meter { width: 18px; value: 48; colour: Theme.teal; }
-                            Rectangle { horizontal-stretch: 1; }
-                        }
-                        Text { text: "HEADPHONES"; color: Theme.text; font-size: 15px; font-weight: 700; horizontal-alignment: center; }
-                        Text { text: "100%"; color: Theme.teal; font-size: 24px; font-weight: 700; horizontal-alignment: center; }
-                        Rectangle { height: 1px; background: Theme.border; }
-                        Text { text: "Audience mix  ·  100%"; color: Theme.amber; font-size: 12px; horizontal-alignment: center; }
+                    background: Theme.panel;
+                    HorizontalLayout {
+                        padding: 8px;
+                        spacing: 7px;
+                        for target in root.targets: TargetStrip { target: target; volume-changed(value) => { root.set-target-volume(target.target-id, value); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
                 }
-            }
-        }
 
-        if root.active-page == 1: Rectangle {
-            background: Theme.background;
-            VerticalLayout {
-                padding: 20px;
-                spacing: 12px;
-                Text { text: "SIGNAL ROUTING"; color: Theme.text; font-size: 25px; font-weight: 800; }
-                Text { text: "Choose exactly where each source is heard. These are PipeWeaver software routes; Personal and Audience levels remain independent."; color: Theme.quiet; font-size: 12px; }
-                ScrollView {
+                Rectangle {
+                    height: 40px;
+                    background: #0f1517;
+                    HorizontalLayout {
+                        spacing: 0px;
+                        ContextTab { label: "ASSIGNMENTS"; active: root.mixer-context-page == 0; clicked => { root.mixer-context-page = 0; } }
+                        ContextTab { label: "ROUTING TABLE"; active: root.mixer-context-page == 1; clicked => { root.mixer-context-page = 1; } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                }
+
+                if root.mixer-context-page == 0: HorizontalLayout {
+                    spacing: 8px;
                     vertical-stretch: 1;
-                    VerticalLayout {
-                        spacing: 6px;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-width: 1px; border-color: Theme.border; background: Theme.panel;
+                        VerticalLayout {
+                            padding: 12px; spacing: 8px;
+                            Text { text: "WINDOWS · BEACN LINK"; color: Theme.text; font-size: 14px; font-weight: 800; }
+                            Text { text: "Multiple applications may share a Link channel"; color: Theme.quiet; font-size: 10px; }
+                            ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 6px; for app in root.link-applications: AssignmentRow { title: app.name; HorizontalLayout { padding-left: 10px; padding-right: 8px; Text { text: app.name; color: Theme.text; font-size: 12px; font-weight: 700; horizontal-stretch: 1; } ComboBox { width: 140px; model: root.link-channel-names; current-index: app.channel-index; selected(value) => { root.assign-link-application(app.name, self.current-index); } } } } } }
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-width: 1px; border-color: Theme.border; background: Theme.panel;
+                        VerticalLayout {
+                            padding: 12px; spacing: 8px;
+                            Text { text: "LINUX · PIPEWIRE"; color: Theme.text; font-size: 14px; font-weight: 800; }
+                            Text { text: "Assign running applications to a mixer source"; color: Theme.quiet; font-size: 10px; }
+                            ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 6px; for app in root.linux-applications: AssignmentRow { title: app.title; HorizontalLayout { padding-left: 10px; padding-right: 8px; VerticalLayout { horizontal-stretch: 1; Text { text: app.title; color: Theme.text; font-size: 12px; font-weight: 700; overflow: elide; } Text { text: app.process; color: Theme.quiet; font-size: 9px; overflow: elide; } } ComboBox { width: 160px; model: root.mixer-channel-names; current-index: app.channel-index; selected(value) => { root.assign-linux-application(app.process, app.name, self.current-index); } } } } } }
+                        }
+                    }
+                }
+
+                if root.mixer-context-page == 1: ScrollView {
+                    vertical-stretch: 1;
+                    GridLayout {
+                        spacing: 4px;
                         for route in root.routes: Rectangle {
-                            height: 58px;
-                            border-radius: 4px;
+                            row: route.row + 1;
+                            col: route.column + 1;
+                            width: 116px;
+                            height: 44px;
+                            border-radius: 3px;
                             border-width: 1px;
-                            border-color: route.enabled ? Theme.teal : Theme.border;
-                            background: route.enabled ? #142b2b : Theme.panel;
-                            HorizontalLayout {
-                                padding-left: 14px;
-                                padding-right: 10px;
-                                spacing: 12px;
-                                Rectangle { width: 5px; height: 32px; border-radius: 2px; background: route.colour; }
-                                Text { text: route.source-name; color: Theme.text; font-size: 15px; font-weight: 700; width: 210px; vertical-alignment: center; }
-                                Text { text: "→"; color: Theme.quiet; font-size: 18px; vertical-alignment: center; }
-                                VerticalLayout {
-                                    horizontal-stretch: 1;
-                                    Text { text: route.target-name; color: route.enabled ? Theme.teal : Theme.text; font-size: 14px; font-weight: 700; }
-                                    Text { text: route.target-mix + " output"; color: Theme.quiet; font-size: 10px; }
-                                }
-                                Button { text: route.enabled ? "Connected" : "Connect"; clicked => { root.set-route(route.source-id, route.target-id, !route.enabled); } }
-                            }
+                            border-color: route.enabled ? Theme.teal : #653b37;
+                            background: route.enabled ? #153230 : #251a19;
+                            Text { text: route.enabled ? "✓" : "⊘"; color: route.enabled ? Theme.teal : Theme.red; font-size: 20px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { clicked => { root.set-route(route.source-id, route.target-id, !route.enabled); } }
+                        }
+                        for route in root.routes: Rectangle {
+                            visible: route.row == 0;
+                            row: 0; col: route.column + 1; width: 116px; height: 44px; background: Theme.raised;
+                            Rectangle { y: parent.height - 4px; height: 4px; background: route.colour; }
+                            Text { text: route.source-name; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+                        }
+                        for route in root.routes: Rectangle {
+                            visible: route.column == 0;
+                            row: route.row + 1; col: 0; width: 170px; height: 44px; background: Theme.raised;
+                            VerticalLayout { padding-left: 10px; Text { text: route.target-name; color: Theme.text; font-size: 11px; font-weight: 800; } Text { text: route.target-mix; color: Theme.quiet; font-size: 9px; } }
                         }
                     }
                 }
             }
-        }
 
-        if root.active-page == 2: Rectangle {
-            background: Theme.background;
-            HorizontalLayout {
-                padding: 20px;
-                spacing: 14px;
-                Rectangle {
-                    horizontal-stretch: 1;
-                    border-radius: 4px;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    background: Theme.panel;
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 10px;
-                        Text { text: "WINDOWS APPS"; color: Theme.text; font-size: 21px; font-weight: 800; }
-                        Text { text: "BEACN Link · Gaming PC · multiple apps per Link channel"; color: Theme.quiet; font-size: 11px; }
-                        ScrollView {
-                            vertical-stretch: 1;
-                            VerticalLayout {
-                                spacing: 7px;
-                                for app in root.link-applications: Rectangle {
-                                    height: 62px;
-                                    background: Theme.raised;
-                                    border-radius: 3px;
-                                    HorizontalLayout {
-                                        padding-left: 12px;
-                                        padding-right: 10px;
-                                        spacing: 10px;
-                                        Text { text: app.name; color: Theme.text; font-size: 13px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                                        ComboBox {
-                                            width: 150px;
-                                            model: root.link-channel-names;
-                                            current-index: app.channel-index;
-                                            selected(value) => { root.assign-link-application(app.name, self.current-index); }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+            if root.active-page == 1: VerticalLayout {
+                padding: 10px;
+                spacing: 8px;
+                HorizontalLayout {
+                    min-height: 370px;
+                    spacing: 8px;
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        border-width: 1px; border-color: Theme.border; background: #0d1214;
+                        Rectangle { x: 0px; y: parent.height * .5; width: parent.width; height: 1px; background: #354045; }
+                        Rectangle { x: parent.width * .25; width: 1px; height: parent.height; background: #222c30; }
+                        Rectangle { x: parent.width * .5; width: 1px; height: parent.height; background: #222c30; }
+                        Rectangle { x: parent.width * .75; width: 1px; height: parent.height; background: #222c30; }
+                        Rectangle { x: parent.width * .12; y: parent.height * .63; width: 16px; height: 16px; border-radius: 8px; background: Theme.red; }
+                        Rectangle { x: parent.width * .34; y: parent.height * .44; width: 16px; height: 16px; border-radius: 8px; background: Theme.teal; }
+                        Rectangle { x: parent.width * .58; y: parent.height * .57; width: 16px; height: 16px; border-radius: 8px; background: Theme.amber; }
+                        Rectangle { x: parent.width * .78; y: parent.height * .42; width: 16px; height: 16px; border-radius: 8px; background: #ef4c8c; }
+                        Text { x: 14px; y: 12px; text: "VOICE EQ · LIVE READ-BACK"; color: Theme.quiet; font-size: 10px; font-weight: 800; }
+                    }
+                    Rectangle {
+                        width: 150px;
+                        border-width: 1px; border-color: Theme.border; background: Theme.panel;
+                        VerticalLayout { padding: 12px; spacing: 8px; Text { text: "MIC OUTPUT"; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; } LevelMeter { width: 24px; value: 36; colour: Theme.teal; horizontal-alignment: center; vertical-stretch: 1; } Text { text: "−18 dB"; color: Theme.teal; font-size: 18px; font-weight: 800; horizontal-alignment: center; } }
                     }
                 }
-                Rectangle {
-                    horizontal-stretch: 1;
-                    border-radius: 4px;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    background: Theme.panel;
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 10px;
-                        Text { text: "LINUX APPS"; color: Theme.text; font-size: 21px; font-weight: 800; }
-                        Text { text: "PipeWire · Streaming PC · persistent PipeWeaver assignment"; color: Theme.quiet; font-size: 11px; }
-                        ScrollView {
-                            vertical-stretch: 1;
-                            VerticalLayout {
-                                spacing: 7px;
-                                for app in root.linux-applications: Rectangle {
-                                    height: 62px;
-                                    background: Theme.raised;
-                                    border-radius: 3px;
-                                    HorizontalLayout {
-                                        padding-left: 12px;
-                                        padding-right: 10px;
-                                        spacing: 10px;
-                                        VerticalLayout {
-                                            horizontal-stretch: 1;
-                                            Text { text: app.title; color: Theme.text; font-size: 13px; font-weight: 700; overflow: elide; }
-                                            Text { text: app.process; color: Theme.quiet; font-size: 9px; overflow: elide; }
-                                        }
-                                        ComboBox {
-                                            width: 175px;
-                                            model: root.mixer-channel-names;
-                                            current-index: app.channel-index;
-                                            selected(value) => { root.assign-linux-application(app.process, app.name, self.current-index); }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
-        if root.active-page == 3: Rectangle {
-            background: Theme.background;
-            HorizontalLayout {
-                padding: 12px;
-                spacing: 12px;
                 Rectangle {
-                    width: 190px;
-                    background: #10171a;
-                    border-width: 1px;
-                    border-color: Theme.border;
-                    VerticalLayout {
-                        padding: 12px;
-                        spacing: 5px;
-                        Text { text: "BEACN STUDIO"; color: Theme.text; font-size: 17px; font-weight: 800; }
-                        Text { text: "USB1  ·  ONBOARD DSP"; color: Theme.quiet; font-size: 9px; }
-                        Rectangle { height: 1px; background: Theme.border; }
-                        Text { text: "PROCESSING"; color: Theme.teal; font-size: 10px; font-weight: 700; }
-                        ModuleButton { label: "NOISE SUPPRESSION"; module: "noise_suppression"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
-                        ModuleButton { label: "EQUALIZER"; module: "equalizer"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
-                        ModuleButton { label: "COMPRESSOR"; module: "compressor"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
-                        ModuleButton { label: "EXPANDER / GATE"; module: "expander"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
-                        ModuleButton { label: "ENHANCEMENT SUITE"; module: "enhancement_suite"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
-                        ModuleButton { label: "HEADPHONE EQ"; module: "headphone_equalizer"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
-                        Rectangle { vertical-stretch: 1; }
-                        StatusPill { label: root.dsp-gate-count == 0 ? "DSP DISARMED" : root.dsp-gate-count + " MODULE ARMED"; good: root.dsp-gate-count == 0; }
+                    height: 42px;
+                    HorizontalLayout {
+                        spacing: 2px;
+                        ModuleTab { label: "VOICE EQ"; module: "equalizer"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
+                        ModuleTab { label: "NOISE SUPPRESSION"; module: "noise_suppression"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
+                        ModuleTab { label: "EXPANDER"; module: "expander"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
+                        ModuleTab { label: "COMPRESSOR"; module: "compressor"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
+                        ModuleTab { label: "ENHANCEMENT"; module: "enhancement_suite"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
+                        ModuleTab { label: "HEADPHONES"; module: "headphone_equalizer"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
                     }
                 }
-                ScrollView {
-                    horizontal-stretch: 1;
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    border-width: 1px; border-color: Theme.border; background: Theme.panel;
                     VerticalLayout {
-                        spacing: 12px;
+                        padding: 14px; spacing: 9px;
+                        HorizontalLayout { Text { text: root.dsp-editor-title; color: Theme.text; font-size: 18px; font-weight: 800; horizontal-stretch: 1; } StatusPill { label: root.dsp-active-module == root.dsp-selected-module ? "EDITING " + root.dsp-lease-seconds + "s" : "READ ONLY"; good: root.dsp-active-module == root.dsp-selected-module; } }
+                        Text { text: "Stage locally, then apply one validated module with complete read-back verification."; color: Theme.quiet; font-size: 10px; }
                         HorizontalLayout {
-                            spacing: 12px;
-                            ProcessingCard { title: "MIC INPUT"; subtitle: "Phantom power is never changed automatically"; value: "41 dB"; horizontal-stretch: 1; }
-                            ProcessingCard { title: "LIVE LEVEL"; subtitle: "Target speaking range: −25 to −10 dB"; value: "READY"; horizontal-stretch: 1; }
+                            spacing: 14px;
+                            VerticalLayout { horizontal-stretch: 1; Text { text: root.dsp-label-a + "  " + round(root.dsp-value-a * 10) / 10; color: Theme.text; font-size: 11px; } Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } } }
+                            VerticalLayout { horizontal-stretch: 1; Text { text: root.dsp-label-b + "  " + round(root.dsp-value-b * 10) / 10; color: Theme.text; font-size: 11px; } Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } } }
+                            VerticalLayout { horizontal-stretch: 1; Text { text: root.dsp-label-c + "  " + round(root.dsp-value-c * 10) / 10; color: Theme.text; font-size: 11px; } Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; changed(value) => { root.dsp-value-c = value; } } }
                         }
-                        Rectangle {
-                            min-height: 350px;
-                            border-radius: 4px;
-                            border-width: 1px;
-                            border-color: Theme.border;
-                            background: Theme.panel;
-                            VerticalLayout {
-                                padding: 18px;
-                                spacing: 14px;
-                                HorizontalLayout {
-                                    Text { text: root.dsp-editor-title; color: Theme.text; font-size: 22px; font-weight: 800; horizontal-stretch: 1; }
-                                    StatusPill {
-                                        label: root.dsp-active-module == root.dsp-selected-module ? "EDITING  " + root.dsp-lease-seconds + "s" : "READ ONLY";
-                                        good: root.dsp-active-module == root.dsp-selected-module;
-                                    }
-                                }
-                                Text { text: "Changes are staged locally. Apply writes one validated module, reads the entire chain back, and reports success only after verification."; color: Theme.quiet; font-size: 11px; }
-                                VerticalLayout {
-                                    spacing: 7px;
-                                    Text { text: root.dsp-label-a + "   " + round(root.dsp-value-a * 10) / 10; color: Theme.text; font-size: 12px; }
-                                    Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } }
-                                    Text { text: root.dsp-label-b + "   " + round(root.dsp-value-b * 10) / 10; color: Theme.text; font-size: 12px; }
-                                    Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } }
-                                    Text { text: root.dsp-label-c + "   " + round(root.dsp-value-c * 10) / 10; color: Theme.text; font-size: 12px; }
-                                    Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; changed(value) => { root.dsp-value-c = value; } }
-                                }
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    Button { text: "Reload read-back"; clicked => { root.load-dsp(); } }
-                                    if root.dsp-active-module == root.dsp-selected-module: Button { text: "Apply + verify"; clicked => { root.apply-dsp(root.dsp-value-a, root.dsp-value-b, root.dsp-value-c); } }
-                                    if root.dsp-active-module == root.dsp-selected-module: Button { text: "Revert captured"; clicked => { root.revert-dsp(); } }
-                                    if root.dsp-active-module != root.dsp-selected-module && !root.arm-confirm-pending: Button { text: "Enable editing for 5 minutes"; clicked => { root.arm-confirm-pending = true; } }
-                                    if root.dsp-active-module != root.dsp-selected-module && root.arm-confirm-pending: Button { text: "Confirm: this changes audio"; clicked => { root.arm-dsp(); } }
-                                    if root.arm-confirm-pending: Button { text: "Cancel"; clicked => { root.arm-confirm-pending = false; } }
-                                    if root.dsp-active-module != "": Button { text: "Disarm now"; clicked => { root.disarm-dsp(); } }
-                                    Rectangle { horizontal-stretch: 1; }
-                                }
-                                Text { text: "General hardware writes remain OFF. Phantom power, firmware, factory reset, lighting, limiter guesses, and storage are outside this editor."; color: Theme.amber; font-size: 10px; }
-                            }
+                        HorizontalLayout {
+                            spacing: 7px;
+                            Button { text: "Reload read-back"; clicked => { root.load-dsp(); } }
+                            if root.dsp-active-module == root.dsp-selected-module: Button { text: "Apply + verify"; clicked => { root.apply-dsp(root.dsp-value-a, root.dsp-value-b, root.dsp-value-c); } }
+                            if root.dsp-active-module == root.dsp-selected-module: Button { text: "Revert captured"; clicked => { root.revert-dsp(); } }
+                            if root.dsp-active-module != root.dsp-selected-module && !root.arm-confirm-pending: Button { text: "Enable editing for 5 minutes"; clicked => { root.arm-confirm-pending = true; } }
+                            if root.dsp-active-module != root.dsp-selected-module && root.arm-confirm-pending: Button { text: "Confirm: this changes audio"; clicked => { root.arm-dsp(); } }
+                            if root.arm-confirm-pending: Button { text: "Cancel"; clicked => { root.arm-confirm-pending = false; } }
+                            if root.dsp-active-module != "": Button { text: "Disarm now"; clicked => { root.disarm-dsp(); } }
+                            Rectangle { horizontal-stretch: 1; }
                         }
+                        Text { text: "General hardware writes remain OFF. Phantom power, firmware, reset, lighting, limiter guesses, and storage are excluded."; color: Theme.amber; font-size: 9px; }
                     }
                 }
             }
-        }
 
-        Rectangle {
-            height: 34px;
-            background: #0b1012;
-            border-width: 1px;
-            border-color: Theme.border;
-            HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 14px;
-                Text { text: root.status-text; color: root.daemon-connected ? Theme.quiet : Theme.red; font-size: 10px; vertical-alignment: center; horizontal-stretch: 1; }
-                Text { text: root.link-active ? "LINK CONTROL ACTIVE" : "LINK CONTROL OFF"; color: root.link-active ? Theme.green : Theme.quiet; font-size: 10px; font-weight: 700; vertical-alignment: center; }
-                Button { text: "Refresh"; clicked => { root.refresh(); } }
+            if root.active-page == 2: Rectangle {
+                background: Theme.background;
+                VerticalLayout {
+                    padding: 28px; spacing: 14px;
+                    Text { text: "STUDIOBRIDGE STATUS"; color: Theme.text; font-size: 24px; font-weight: 800; }
+                    StatusPill { label: root.daemon-connected ? "DAEMON CONNECTED" : "DAEMON DISCONNECTED"; good: root.daemon-connected; }
+                    StatusPill { label: root.link-active ? "LINK CONTROL ACTIVE" : "LINK CONTROL OFF"; good: root.link-active; }
+                    StatusPill { label: root.dsp-gate-count == 0 ? "DSP DISARMED" : root.dsp-gate-count + " DSP MODULE ARMED"; good: root.dsp-gate-count == 0; }
+                    Text { text: "Closing the window keeps StudioBridge in the tray. Login startup is opt-in and never enables hardware writes."; color: Theme.quiet; font-size: 12px; }
+                    Button { text: "Refresh status"; clicked => { root.refresh(); } }
+                    Rectangle { vertical-stretch: 1; }
+                }
+            }
+
+            Rectangle {
+                height: 30px;
+                background: #080d0f;
+                border-width: 1px;
+                border-color: Theme.border;
+                HorizontalLayout { padding-left: 12px; padding-right: 12px; Text { text: root.status-text; color: root.daemon-connected ? Theme.quiet : Theme.red; font-size: 9px; horizontal-stretch: 1; vertical-alignment: center; } Text { text: "StudioBridge · unofficial Linux control"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; } }
             }
         }
     }
@@ -570,7 +552,7 @@ export component StudioBridgeTray inherits SystemTrayIcon {
     clicked => { root.show-app(); }
     Menu {
         MenuItem { title: "Open StudioBridge"; activated => { root.show-app(); } }
-        MenuItem { title: "Open Mic Chain / Safe Mode"; activated => { root.show-safe-mode(); } }
+        MenuItem { title: "Open Microphone / Safe Mode"; activated => { root.show-safe-mode(); } }
         MenuSeparator { }
         MenuItem { title: "Quit StudioBridge"; activated => { root.quit-app(); } }
     }

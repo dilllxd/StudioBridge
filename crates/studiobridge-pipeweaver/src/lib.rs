@@ -78,6 +78,20 @@ impl MixerBackend for PipeweaverBackend {
         .await
     }
 
+    async fn set_target_volume(&self, target_id: &str, volume: u8) -> BridgeResult<()> {
+        if volume > 100 {
+            return Err(BridgeError::InvalidValue(
+                "volume must be between 0 and 100".into(),
+            ));
+        }
+        self.send(APICommand::SetVolumeByName(
+            target_id.to_string(),
+            None,
+            volume,
+        ))
+        .await
+    }
+
     async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()> {
         self.send(APICommand::SetSourceVolumeLinkedByName(
             channel_id.to_owned(),
@@ -547,6 +561,7 @@ mod tests {
             .await
             .unwrap();
         backend.set_volume_linked("System", false).await.unwrap();
+        backend.set_target_volume("Headphones", 77).await.unwrap();
 
         let requests = fake.requests.lock().await;
         assert!(matches!(requests.get(1), Some(DaemonRequest::Pipewire(
@@ -575,6 +590,9 @@ mod tests {
         assert!(matches!(requests.get(7), Some(DaemonRequest::Pipewire(
             APICommand::SetSourceVolumeLinkedByName(name, false)
         )) if name == "System"));
+        assert!(matches!(requests.get(8), Some(DaemonRequest::Pipewire(
+            APICommand::SetVolumeByName(name, None, 77)
+        )) if name == "Headphones"));
 
         server.abort();
     }

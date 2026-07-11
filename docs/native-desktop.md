@@ -51,6 +51,7 @@ than copying its source or visual assets:
 - a source-first mixer with Personal and Audience controls;
 - linked or independent submix faders;
 - a prominent Main Out section;
+- additional target strips and routing rows for Voice Chat Mic and VOD Track;
 - drag-and-drop application assignment;
 - always-accessible voice EQ and enhancement controls;
 - secondary microphone processors grouped by module;
@@ -90,17 +91,39 @@ for:
 | Arch / Manjaro | `PKGBUILD` | `fontconfig` |
 | Other glibc Linux | portable bundle | Fontconfig runtime plus Wayland or X11 |
 
-The planned portable build is AppImage because direct USB, user systemd, and a
-separately installed PipeWeaver service do not map cleanly to Flatpak's sandbox.
-Flatpak remains under evaluation as a client-only package that talks to a host
-daemon through a narrowly exposed socket or localhost permission.
+`scripts/package-linux.sh` produces a conventional `.deb` and a portable
+root-filesystem `.tar.gz`; the latter is intentionally transparent and works on
+other glibc distributions without relying on AppImage mount support. An RPM
+spec and Arch `PKGBUILD` live under `packaging/`. Every format installs the
+daemon, desktop client, web fallback, user systemd unit, desktop metadata, icon,
+and udev rule from the same staging script.
+
+Flatpak is not currently shipped. Direct USB access, a persistent host user
+service, PipeWeaver IPC, and udev installation conflict with Flatpak's sandbox
+and immutable packaging model. A future Flatpak should be client-only and talk
+to a separately installed host daemon through a narrowly scoped D-Bus API;
+granting the GUI broad device or host filesystem access would weaken the safety
+boundary. AppImage has similar lifecycle and udev limitations, so the portable
+tar bundle is the supported portable format for now.
+
+Package commands:
+
+```bash
+# Build portable tar and .deb (when dpkg-deb is installed)
+bash scripts/package-linux.sh
+
+# Reuse existing release/web builds
+bash scripts/package-linux.sh --format tar --skip-build
+```
 
 ## Migration status
 
 The native milestone now provides the original StudioBridge icon, native window
 and tray, launch-in-background and single-instance behavior, real daemon health,
 source discovery, independent Personal/Audience faders, 60 Hz interpolated live
-meters, and an attended guarded editor for all six validated microphone DSP
-modules. Routing and application drag/drop remain the largest native parity
-items. The web assets continue to build and are served by the daemon until
-those views and packaging complete physical validation.
+meters, arbitrary PipeWeaver output buses (including Voice Chat Mic and VOD
+Track), a BEACN-familiar assignment/routing workspace, and an attended guarded
+editor for all six validated microphone DSP modules. Application drag/drop and
+the final distribution validation remain in progress. The web assets continue
+to build and are served by the daemon until native parity and packaging complete
+physical validation.

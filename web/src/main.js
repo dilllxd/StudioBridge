@@ -196,6 +196,7 @@ function targetMarkup(target) {
       <header><h2>${escapeHtml(target.name)}</h2><span>${escapeHtml(target.mix)}</span></header>
       <div class="target-meter meter-${target.mix}" data-meter-id="${escapeHtml(target.meter_id)}" data-volume="${target.volume}"><b></b></div>
       <strong>${target.volume}%</strong>
+      <input type="range" min="0" max="100" value="${target.volume}" data-action="target-volume" data-target="${escapeHtml(target.id)}" aria-label="${escapeHtml(target.name)} output volume" />
       <small>${target.muted ? "Muted" : `${target.mix} output`}</small>
     </section>`;
 }
@@ -559,6 +560,14 @@ function bindEvents() {
         source_id: button.dataset.source,
         target_id: button.dataset.target,
         enabled: button.dataset.enabled !== "true",
+      });
+    });
+  });
+  document.querySelectorAll('[data-action="target-volume"]').forEach((input) => {
+    input.addEventListener("change", async () => {
+      await update("/api/mixer/target-volume", {
+        target_id: input.dataset.target,
+        volume: Number(input.value),
       });
     });
   });

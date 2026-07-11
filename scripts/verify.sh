@@ -28,6 +28,15 @@ bash -n scripts/disarm-dsp-writes.sh
 bash -n scripts/validate-headphone-eq-write.sh
 bash -n scripts/enable-desktop-autostart.sh
 bash -n scripts/disable-desktop-autostart.sh
+bash -n scripts/stage-package-root.sh
+bash -n scripts/package-linux.sh
+bash -n packaging/debian/postinst
+bash -n packaging/debian/postrm
+test -r packaging/README.md
+test -r packaging/arch/PKGBUILD
+test -r packaging/rpm/studiobridge.spec
+test -r packaging/debian/control.in
+test -r packaging/metainfo/io.github.dilllxd.StudioBridge.metainfo.xml
 
 if grep -Fq -- '--enable-link-host' packaging/systemd/studiobridge.service; then
   printf 'The base service must remain fully read-only.\n' >&2
@@ -35,6 +44,10 @@ if grep -Fq -- '--enable-link-host' packaging/systemd/studiobridge.service; then
 fi
 if grep -Fq -- '--allow-hardware-writes' packaging/systemd/studiobridge.service scripts/enable-link-host.sh; then
   printf 'A packaged service path enables general hardware writes.\n' >&2
+  exit 1
+fi
+if grep -Fq -- '--allow-hardware-writes' packaging/systemd/studiobridge-packaged.service; then
+  printf 'The distro-packaged service enables general hardware writes.\n' >&2
   exit 1
 fi
 

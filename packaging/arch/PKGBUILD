@@ -1,0 +1,24 @@
+pkgname=studiobridge
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Native Linux control surface for BEACN Studio and PipeWeaver'
+arch=('x86_64')
+url='https://github.com/dilllxd/StudioBridge'
+license=('MIT')
+depends=('fontconfig' 'libusb' 'wayland' 'libx11')
+makedepends=('rust>=1.92' 'npm' 'git')
+source=("git+$url.git#tag=v$pkgver")
+sha256sums=('SKIP')
+_srcdir='StudioBridge'
+
+build() {
+  cd "$_srcdir"
+  npm --prefix web ci
+  npm --prefix web run build
+  cargo build --workspace --release --locked
+}
+
+package() {
+  cd "$_srcdir"
+  bash scripts/stage-package-root.sh "$pkgdir"
+}

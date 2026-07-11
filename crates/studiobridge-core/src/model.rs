@@ -156,6 +156,12 @@ pub struct SetVolumeRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetTargetVolumeRequest {
+    pub target_id: String,
+    pub volume: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetVolumeLinkedRequest {
     pub channel_id: String,
     pub linked: bool,

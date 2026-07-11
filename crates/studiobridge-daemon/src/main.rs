@@ -13,8 +13,8 @@ use studiobridge_beacn::{BeacnStudioBackend, DspWriteGate};
 use studiobridge_core::{
     AppSnapshot, BridgeError, DspWriteModule, MicrophoneDspUpdate, MixerBackend, MockMixerBackend,
     MockStudioBackend, SetLinkAssignmentRequest, SetMicrophoneRequest, SetMixerApplicationRequest,
-    SetMuteRequest, SetRouteRequest, SetVolumeLinkedRequest, SetVolumeRequest, StudioBackend,
-    StudioBridgeService,
+    SetMuteRequest, SetRouteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest,
+    SetVolumeRequest, StudioBackend, StudioBridgeService,
 };
 use studiobridge_pipeweaver::PipeweaverBackend;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
@@ -240,6 +240,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/studio/dsp-disarm", post(disarm_dsp_write))
         .route("/api/studio/link-assignment", post(set_link_assignment))
         .route("/api/mixer/volume", post(set_volume))
+        .route("/api/mixer/target-volume", post(set_target_volume))
         .route("/api/mixer/volume-link", post(set_volume_linked))
         .route("/api/mixer/mute", post(set_mute))
         .route("/api/mixer/route", post(set_route))
@@ -381,6 +382,17 @@ async fn set_volume(
     state
         .service
         .set_volume(&request.channel_id, request.mix, request.volume)
+        .await?;
+    Ok(ok())
+}
+
+async fn set_target_volume(
+    State(state): State<AppState>,
+    Json(request): Json<SetTargetVolumeRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state
+        .service
+        .set_target_volume(&request.target_id, request.volume)
         .await?;
     Ok(ok())
 }

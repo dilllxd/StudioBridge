@@ -2,9 +2,10 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use studiobridge_core::{
-    AppSnapshot, DspWriteModule, MicrophoneDspSnapshot, MicrophoneDspUpdate,
-    MicrophoneDspWriteResult, LinkChannel, MixBus, SetLinkAssignmentRequest,
-    SetMixerApplicationRequest, SetRouteRequest, SetVolumeRequest,
+    AppSnapshot, DspWriteModule, LinkChannel, MicrophoneDspSnapshot, MicrophoneDspUpdate,
+    MicrophoneDspWriteResult, MixBus, MuteState, SetLinkAssignmentRequest,
+    SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest, SetTargetVolumeRequest,
+    SetVolumeLinkedRequest, SetVolumeRequest,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -68,6 +69,42 @@ impl DaemonClient {
                 channel_id: channel_id.into(),
                 mix,
                 volume,
+            })
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub fn set_target_volume(&self, target_id: &str, volume: u8) -> Result<(), reqwest::Error> {
+        self.client
+            .post(format!("{}/api/mixer/target-volume", self.base_url))
+            .json(&SetTargetVolumeRequest {
+                target_id: target_id.into(),
+                volume,
+            })
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub fn set_mute(&self, channel_id: &str, state: MuteState) -> Result<(), reqwest::Error> {
+        self.client
+            .post(format!("{}/api/mixer/mute", self.base_url))
+            .json(&SetMuteRequest {
+                channel_id: channel_id.into(),
+                state,
+            })
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub fn set_volume_linked(&self, channel_id: &str, linked: bool) -> Result<(), reqwest::Error> {
+        self.client
+            .post(format!("{}/api/mixer/volume-link", self.base_url))
+            .json(&SetVolumeLinkedRequest {
+                channel_id: channel_id.into(),
+                linked,
             })
             .send()?
             .error_for_status()?;
