@@ -5,6 +5,10 @@ repository="https://github.com/dilllxd/StudioBridge.git"
 workspace="$HOME/StudioBridge"
 report="$HOME/studiobridge-live-report.txt"
 
+redact_report() {
+  sed -E 's/(usb-BEACN_BEACN_Studio_)[[:alnum:]]+(-[0-9]+)/\1REDACTED\2/g'
+}
+
 if [[ "$(uname -s)" != "Linux" ]]; then
   printf 'This bootstrap must run inside a Linux live session.\n' >&2
   exit 1
@@ -84,7 +88,7 @@ cd "$workspace"
 
   printf '\n===== PIPEWIRE STATUS =====\n'
   wpctl status || true
-} 2>&1 | tee "$report"
+} 2>&1 | redact_report | tee "$report"
 
 cat <<MESSAGE
 
