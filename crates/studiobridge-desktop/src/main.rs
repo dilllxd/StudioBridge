@@ -392,8 +392,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
     refresh_all(window.as_weak(), client.clone());
     load_dsp(window.as_weak(), client.clone(), dsp_session, false);
-    start_health_monitor(window.as_weak(), client);
-    start_meter_stream(window.as_weak());
+    start_health_monitor(window.as_weak(), client.clone());
+    start_meter_stream(window.as_weak(), client);
     if !start_in_background {
         window.show()?;
     }
@@ -1031,8 +1031,46 @@ fn start_health_monitor(window: Weak<MainWindow>, client: DaemonClient) {
     });
 }
 
-fn start_meter_stream(window: Weak<MainWindow>) {
+fn mock_meter_level(tick: u64, index: usize, target: bool) -> f32 {
+    let phase = tick as f32 * 0.21 + index as f32 * 0.83;
+    let carrier = (phase.sin() + 1.0) * 0.5;
+    let detail = ((phase * 2.37).sin() + 1.0) * 0.5;
+    let level = if target {
+        16.0 + carrier * 37.0 + detail * 9.0
+    } else {
+        12.0 + carrier * 46.0 + detail * 12.0
+    };
+    level.clamp(0.0, 100.0)
+}
+
+fn show_mock_meter_frame(window: Weak<MainWindow>, tick: u64) -> bool {
+    slint::invoke_from_event_loop(move || {
+        let Some(window) = window.upgrade() else {
+            return;
+        };
+        let sources = window.get_sources();
+        for index in 0..sources.row_count() {
+            let Some(mut source) = sources.row_data(index) else {
+                continue;
+            };
+            source.meter = mock_meter_level(tick, index, false);
+            sources.set_row_data(index, source);
+        }
+        let targets = window.get_targets();
+        for index in 0..targets.row_count() {
+            let Some(mut target) = targets.row_data(index) else {
+                continue;
+            };
+            target.meter = mock_meter_level(tick, index, true);
+            targets.set_row_data(index, target);
+        }
+    })
+    .is_ok()
+}
+
+fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
     thread::spawn(move || {
+        let mut mock_tick = 0_u64;
         loop {
             match tungstenite::connect(METER_URL) {
                 Ok((mut socket, _)) => {
@@ -1088,9 +1126,38 @@ fn start_meter_stream(window: Weak<MainWindow>) {
                         }
                     }
                 }
-                Err(_) => thread::sleep(Duration::from_millis(1_500)),
+                Err(_) => {
+                    while client
+                        .health()
+                        .is_ok_and(|health| health.mixer_mode == "mock")
+                    {
+                        for _ in 0..30 {
+                            if !show_mock_meter_frame(window.clone(), mock_tick) {
+                                return;
+                            }
+                            mock_tick = mock_tick.wrapping_add(1);
+                            thread::sleep(Duration::from_millis(50));
+                        }
+                    }
+                }
             }
             thread::sleep(Duration::from_millis(1_500));
         }
     });
+}
+
+#[cfg(test)]
+mod desktop_tests {
+    use super::mock_meter_level;
+
+    #[test]
+    fn mock_meter_motion_is_bounded_and_changes_over_time() {
+        for target in [false, true] {
+            let samples = (0..120)
+                .map(|tick| mock_meter_level(tick, 2, target))
+                .collect::<Vec<_>>();
+            assert!(samples.iter().all(|level| (0.0..=100.0).contains(level)));
+            assert!(samples.windows(2).any(|pair| pair[0] != pair[1]));
+        }
+    }
 }
