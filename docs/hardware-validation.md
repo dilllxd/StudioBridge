@@ -115,3 +115,16 @@ state and Link application list match the existing Windows configuration.
 Backend operations are capped at five seconds. If USB access or PipeWeaver
 stalls, `/api/state` reports that backend as timed out while the daemon and UI
 remain responsive.
+
+## Fedora Live first pass
+
+When testing from Fedora Live without modifying the Windows installation, the
+public-repository bootstrap performs package setup and the read-only collection
+in one step:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dilllxd/StudioBridge/main/scripts/bootstrap-fedora-live.sh | bash
+```
+
+Paste `~/studiobridge-live-report.txt` back into the development conversation
+before installing PipeWeaver or starting the real Studio backend.
