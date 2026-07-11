@@ -150,4 +150,5 @@ fi
 
 printf '\nStudioBridge installed in read-only hardware mode.\n'
 printf 'Open http://127.0.0.1:17840 after BEACN Studio USB1 and PipeWeaver are running.\n'
-printf 'Do not enable hardware writes until the read-only validation checklist passes.\n'
+printf 'Run scripts/validate-readonly.sh before scripts/enable-link-host.sh.\n'
+printf 'Do not enable general hardware writes during this validation.\n'

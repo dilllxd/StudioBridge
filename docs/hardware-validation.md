@@ -109,8 +109,97 @@ chmod +x scripts/validate-readonly.sh
 ./scripts/validate-readonly.sh
 ```
 
-Run the daemon manually with `--allow-hardware-writes` only after the read-only
-state and Link application list match the existing Windows configuration.
+Do not use `--allow-hardware-writes` during this workflow. After the fully
+read-only baseline passes, use the separately gated Link-host step documented
+below.
+
+## Continue an Ubuntu Live validation
+
+The following sequence is for Ubuntu 26.04 after USB1, PipeWire 1.6 or later,
+the BEACN UCM `Link` profile, Rust, and Node have already passed preflight.
+PipeWeaver 0.1.9 is the version used by StudioBridge's locked IPC dependencies.
+
+Install PipeWeaver from its upstream APT repository. The installer is
+interactive; select `Debian/Ubuntu (.deb via apt)` if it offers more than one
+method:
+
+```bash
+curl -fsSL https://pipeweaver.github.io/pipeweaver-repo/scripts/install.sh | bash
+pipeweaver-daemon --version
+```
+
+Start the daemon for this live session, wait for its API, and verify that TCP
+port 14565 is listening:
+
+```bash
+pipeweaver-daemon --background >~/pipeweaver.log 2>&1 &
+for attempt in {1..20}; do
+  curl -fsS http://127.0.0.1:14565/api/get-devices >/dev/null && break
+  sleep 0.5
+done
+curl -fsS http://127.0.0.1:14565/api/get-devices >/dev/null
+ss -ltnp | grep ':14565'
+```
+
+Open <http://127.0.0.1:14565>. In PipeWeaver, keep its default Personal/Audience
+mapping (`Mix A` is Personal and `Mix B` is Audience), then configure:
+
+1. Add the four BEACN capture endpoints `Line5` through `Line8` as physical
+   sources. These are the four Windows-to-Linux Link channels.
+2. Give those sources clear names matching the Windows BEACN Link assignments.
+3. Add `Headphones` as a physical target on Personal / Mix A.
+4. Keep or create a virtual target such as `Audience Mix` on Audience / Mix B.
+5. Route at least one test source to both targets. Do not change Studio hardware
+   settings during this check.
+
+Return to the StudioBridge checkout and install it. The base systemd unit
+contains neither write-enabling flag:
+
+```bash
+cd ~/StudioBridge
+if grep -Fq -- '--allow-hardware-writes' packaging/systemd/studiobridge.service; then
+  echo 'Unsafe service argument found; stopping' >&2
+  exit 1
+fi
+if grep -Fq -- '--enable-link-host' packaging/systemd/studiobridge.service; then
+  echo 'Link host control must not be enabled before the baseline; stopping' >&2
+  exit 1
+fi
+chmod +x scripts/install-linux.sh scripts/validate-readonly.sh
+./scripts/install-linux.sh
+systemctl --user status studiobridge.service --no-pager
+curl -fsS http://127.0.0.1:17840/api/health
+./scripts/validate-readonly.sh
+```
+
+The validator is GET-only. It requires Headphones, Mic, Link Line1-Line8, the
+real BEACN/PipeWeaver backends, both USB write gates disabled, valid mixer graph
+references, and at least one route to each of the Personal and Audience buses.
+
+Only after that passes, enable the narrowly scoped USB1 heartbeat and Link
+assignments. The helper reruns the baseline before installing its systemd
+drop-in, then verifies that the broad hardware-write gate is still disabled:
+
+```bash
+chmod +x scripts/enable-link-host.sh
+./scripts/enable-link-host.sh
+curl -fsS http://127.0.0.1:17840/api/health
+```
+
+The health response must report `hardware_writes_enabled:false` and
+`link_control_enabled:true`. The Link heartbeat is the fixed packet
+`00 00 00 AC` sent at one-second intervals. Firmware update, factory reset,
+raw storage, gain, phantom-power, and other unrestricted hardware writes remain
+disabled.
+
+For the audible test, play a known source on the Windows gaming PC and assign it
+to each BEACN Link channel in turn. Confirm activity on the corresponding
+PipeWeaver source and the real StudioBridge meter, plus audio in Headphones. Then
+monitor or record `Audience Mix`
+in OBS and confirm the same signal follows its independent Audience level. Keep
+the broad Studio hardware controls disabled during this pass. PipeWeaver volume
+and routing controls remain software-only; StudioBridge exposes just the four
+application selectors through the constrained Link-control gate.
 
 Backend operations are capped at five seconds. If USB access or PipeWeaver
 stalls, `/api/state` reports that backend as timed out while the daemon and UI

@@ -20,6 +20,16 @@ bash -n scripts/bootstrap-linux-live.sh
 bash -n scripts/collect-linux-audio-info.sh
 bash -n scripts/install-linux.sh
 bash -n scripts/validate-readonly.sh
+bash -n scripts/enable-link-host.sh
+
+if grep -Fq -- '--enable-link-host' packaging/systemd/studiobridge.service; then
+  printf 'The base service must remain fully read-only.\n' >&2
+  exit 1
+fi
+if grep -Fq -- '--allow-hardware-writes' packaging/systemd/studiobridge.service scripts/enable-link-host.sh; then
+  printf 'A packaged service path enables general hardware writes.\n' >&2
+  exit 1
+fi
 
 if [[ "$(uname -s)" == "Linux" ]]; then
   stage_root="$(mktemp -d /tmp/studiobridge-stage.XXXXXX)"

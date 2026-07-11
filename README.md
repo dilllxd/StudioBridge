@@ -22,9 +22,10 @@ BEACN firmware or code copied from the official application.
 
 The alpha contains mock and real backends behind the same local daemon. The real
 Studio adapter discovers USB1, reads serial/firmware, microphone gain, phantom
-power, headphone level, mic-monitor level, and Windows Link assignments. Its
-writes are limited to gain, phantom power, and Link assignment and remain
-disabled unless `--allow-hardware-writes` is supplied. The real PipeWeaver
+power, headphone level, mic-monitor level, and Windows Link assignments. General
+hardware writes remain disabled unless `--allow-hardware-writes` is supplied.
+After the read-only baseline passes, `--enable-link-host` independently enables
+only the fixed USB1 host heartbeat and Link application assignments. The real PipeWeaver
 adapter reads and controls channels, Personal/Audience volumes, mute targets,
 applications, output targets, and routes.
 
@@ -46,8 +47,10 @@ GET  /api/state
 POST /api/studio/microphone
 POST /api/studio/link-assignment
 POST /api/mixer/volume
+POST /api/mixer/volume-link
 POST /api/mixer/mute
 POST /api/mixer/route
+POST /api/mixer/application
 ```
 
 Run the interface in a second terminal:
@@ -59,8 +62,12 @@ npm run dev
 ```
 
 Then open `http://127.0.0.1:5173`. Production builds are served directly by the
-daemon at `http://127.0.0.1:17840`. The frontend currently mirrors the generated
-operator-console reference at [docs/design/mixer-reference.png](docs/design/mixer-reference.png).
+daemon at `http://127.0.0.1:17840`. The interface follows PipeWeaver's clear
+Sources/Targets/Routing model, adds a unified Windows/Linux Applications view,
+and consumes PipeWeaver's read-only meter WebSocket for real source and target
+levels. Personal/Audience faders can be linked or independent and each mix has a
+separate mute. Windows applications can be dragged onto Link 1–4; multiple
+applications may share a Link channel.
 
 On Linux, after completing the read-only checks, start with real read-only
 Studio access and PipeWeaver:
@@ -71,8 +78,10 @@ cargo run -p studiobridge-daemon -- \
   --mixer pipeweaver
 ```
 
-Only after state reads and Link discovery have been validated, opt into gain,
-phantom-power, and Link-assignment writes with `--allow-hardware-writes`.
+After this fully read-only baseline passes, run `scripts/enable-link-host.sh` to
+enable the constrained Link heartbeat and assignments. This does not enable gain,
+phantom-power, firmware, factory-reset, or storage writes. The broader
+`--allow-hardware-writes` mode is not required for the dual-PC Link workflow.
 
 See [docs/architecture.md](docs/architecture.md) for the implementation plan.
 
@@ -88,9 +97,10 @@ is provided at `scripts/collect-linux-audio-info.sh`; once the service is
 running, `scripts/validate-readonly.sh` verifies the real backend state and
 confirms that hardware writes are still disabled.
 
-`scripts/install-linux.sh` builds and installs a systemd user service in
-read-only hardware mode plus a desktop launcher. It expects PipeWeaver to be
-installed separately.
+`scripts/install-linux.sh` builds and installs a fully read-only systemd user
+service plus a desktop launcher. It expects PipeWeaver to be installed
+separately. The guarded `scripts/enable-link-host.sh` step refuses to proceed
+unless that read-only baseline validates first.
 Run `scripts/preflight-linux.sh` first for Ubuntu/Debian or Arch-family dependency,
 PipeWire, UCM-profile, USB1, and PipeWeaver API checks.
 
@@ -114,3 +124,7 @@ The script installs build/diagnostic packages only in the disposable live
 session, clones this repository, and writes a sanitized report to
 `~/studiobridge-live-report.txt`. It deliberately does not install PipeWeaver,
 start StudioBridge, or enable hardware writes.
+
+After the sanitized bootstrap report passes, continue with the PipeWeaver
+installation, port 14565 check, read-only StudioBridge install, and Link route
+test in [docs/hardware-validation.md](docs/hardware-validation.md#continue-an-ubuntu-live-validation).

@@ -6,7 +6,8 @@ use beacn_lib::audio::{
     BeacnAudioDevice, LinkChannel as BeacnLinkChannel, LinkedApp, open_audio_device,
 };
 use beacn_lib::manager::get_beacn_studio_devices;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::time::{Duration, Instant};
 use studiobridge_core::{
     BackendStatus, BridgeError, BridgeResult, HeadphoneState, LinkChannel, LinkedApplication,
     MicrophoneState, SetMicrophoneRequest, StudioBackend, StudioIdentity, StudioSnapshot,
@@ -21,18 +22,20 @@ use tokio::sync::oneshot;
 pub struct BeacnStudioBackend {
     commands: Sender<DeviceCommand>,
     allow_writes: bool,
+    link_control_enabled: bool,
 }
 
 impl BeacnStudioBackend {
-    pub fn spawn(allow_writes: bool) -> BridgeResult<Self> {
+    pub fn spawn(allow_writes: bool, link_control_enabled: bool) -> BridgeResult<Self> {
         let (commands, receiver) = mpsc::channel();
         std::thread::Builder::new()
             .name("studiobridge-beacn-usb".into())
-            .spawn(move || device_worker(receiver))
+            .spawn(move || device_worker(receiver, link_control_enabled))
             .map_err(|error| BridgeError::Backend(error.to_string()))?;
         Ok(Self {
             commands,
             allow_writes,
+            link_control_enabled,
         })
     }
 
@@ -69,7 +72,7 @@ impl StudioBackend for BeacnStudioBackend {
         application: &str,
         channel: LinkChannel,
     ) -> BridgeResult<()> {
-        self.ensure_writes_enabled()?;
+        self.ensure_link_control_enabled()?;
         let (response_tx, response_rx) = oneshot::channel();
         self.commands
             .send(DeviceCommand::SetLink(
@@ -95,7 +98,22 @@ impl BeacnStudioBackend {
             ))
         }
     }
+
+    fn ensure_link_control_enabled(&self) -> BridgeResult<()> {
+        if self.link_control_enabled || self.allow_writes {
+            Ok(())
+        } else {
+            Err(BridgeError::Backend(
+                "Link control is disabled; restart with --enable-link-host after read-only validation"
+                    .into(),
+            ))
+        }
+    }
 }
+
+const LINK_HEARTBEAT: [u8; 4] = [0x00, 0x00, 0x00, 0xAC];
+const LINK_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(1);
+const LINK_HEARTBEAT_TIMEOUT: Duration = Duration::from_millis(500);
 
 enum DeviceCommand {
     Snapshot(oneshot::Sender<BridgeResult<StudioSnapshot>>),
@@ -103,9 +121,35 @@ enum DeviceCommand {
     SetLink(String, LinkChannel, oneshot::Sender<BridgeResult<()>>),
 }
 
-fn device_worker(receiver: Receiver<DeviceCommand>) {
+fn device_worker(receiver: Receiver<DeviceCommand>, link_control_enabled: bool) {
     let mut device: Option<Box<dyn BeacnAudioDevice>> = None;
-    while let Ok(command) = receiver.recv() {
+    let mut last_heartbeat = Instant::now() - LINK_HEARTBEAT_INTERVAL;
+    loop {
+        let command = if link_control_enabled {
+            match receiver.recv_timeout(Duration::from_millis(250)) {
+                Ok(command) => Some(command),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        } else {
+            match receiver.recv() {
+                Ok(command) => Some(command),
+                Err(_) => break,
+            }
+        };
+
+        let Some(command) = command else {
+            if device.is_none() {
+                device = connect().ok();
+            }
+            if device.is_some()
+                && last_heartbeat.elapsed() >= LINK_HEARTBEAT_INTERVAL
+                && with_device(&mut device, send_link_heartbeat).is_ok()
+            {
+                last_heartbeat = Instant::now();
+            }
+            continue;
+        };
         // A service timeout drops the oneshot receiver. Do not let an expired
         // request—especially a write queued behind a stalled USB operation—run
         // later when the device becomes available again.
@@ -146,7 +190,29 @@ fn device_worker(receiver: Receiver<DeviceCommand>) {
                 let _ = response.send(result);
             }
         }
+
+        if link_control_enabled
+            && device.is_some()
+            && last_heartbeat.elapsed() >= LINK_HEARTBEAT_INTERVAL
+            && with_device(&mut device, send_link_heartbeat).is_ok()
+        {
+            last_heartbeat = Instant::now();
+        }
     }
+}
+
+fn send_link_heartbeat(device: &dyn BeacnAudioDevice) -> BridgeResult<()> {
+    let written = device
+        .get_usb_handle()
+        .write_bulk(0x03, &LINK_HEARTBEAT, LINK_HEARTBEAT_TIMEOUT)
+        .map_err(|error| BridgeError::BackendUnavailable(format!("BEACN USB error: {error}")))?;
+    if written != LINK_HEARTBEAT.len() {
+        return Err(BridgeError::Backend(format!(
+            "short Link heartbeat write: {written}/{} bytes",
+            LINK_HEARTBEAT.len()
+        )));
+    }
+    Ok(())
 }
 
 impl DeviceCommand {
@@ -346,7 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_gate_rejects_requests_before_usb_access() {
-        let backend = BeacnStudioBackend::spawn(false).unwrap();
+        let backend = BeacnStudioBackend::spawn(false, false).unwrap();
         let error = backend
             .set_microphone(SetMicrophoneRequest {
                 gain_db: Some(40),
@@ -356,6 +422,21 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("hardware writes are disabled"));
+    }
+
+    #[tokio::test]
+    async fn link_gate_is_independent_from_general_hardware_writes() {
+        let backend = BeacnStudioBackend::spawn(false, false).unwrap();
+        let error = backend
+            .set_link_assignment("Game", LinkChannel::Link1)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("Link control is disabled"));
+    }
+
+    #[test]
+    fn link_heartbeat_is_a_zero_payload_companion_packet() {
+        assert_eq!(LINK_HEARTBEAT, [0x00, 0x00, 0x00, 0xAC]);
     }
 
     #[tokio::test]

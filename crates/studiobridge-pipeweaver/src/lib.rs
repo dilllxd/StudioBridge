@@ -5,11 +5,11 @@ use pipeweaver_ipc::commands::{
     APICommand, DaemonRequest, DaemonResponse, DaemonStatus, PWCommandResponse,
 };
 use pipeweaver_profile::{PhysicalSourceDevice, VirtualSourceDevice};
-use pipeweaver_shared::{DeviceType, Mix, MuteState as PwMuteState, MuteTarget};
+use pipeweaver_shared::{AppDefinition, DeviceType, Mix, MuteState as PwMuteState, MuteTarget};
 use std::collections::HashMap;
 use studiobridge_core::{
-    BackendStatus, BridgeError, BridgeResult, MixBus, MixerBackend, MixerChannel, MixerRoute,
-    MixerSnapshot, MixerTarget, MuteState,
+    BackendStatus, BridgeError, BridgeResult, MixBus, MixerApplication, MixerBackend, MixerChannel,
+    MixerRoute, MixerSnapshot, MixerSourceKind, MixerTarget, MuteState,
 };
 use tokio::sync::Mutex;
 
@@ -78,6 +78,14 @@ impl MixerBackend for PipeweaverBackend {
         .await
     }
 
+    async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()> {
+        self.send(APICommand::SetSourceVolumeLinkedByName(
+            channel_id.to_owned(),
+            linked,
+        ))
+        .await
+    }
+
     async fn set_mute(&self, channel_id: &str, state: MuteState) -> BridgeResult<()> {
         let (personal, audience) = mute_targets(state);
         self.set_mute_target(channel_id, MuteTarget::TargetA, personal)
@@ -93,6 +101,26 @@ impl MixerBackend for PipeweaverBackend {
             enabled,
         ))
         .await
+    }
+
+    async fn set_application_route(
+        &self,
+        process: &str,
+        application: &str,
+        channel_id: Option<&str>,
+    ) -> BridgeResult<()> {
+        let definition = AppDefinition {
+            device_type: DeviceType::Source,
+            process: process.to_owned(),
+            name: application.to_owned(),
+        };
+        let command = match channel_id {
+            Some(channel_id) => {
+                APICommand::SetApplicationRouteByName(definition, channel_id.to_owned())
+            }
+            None => APICommand::ClearApplicationRoute(definition),
+        };
+        self.send(command).await
     }
 }
 
@@ -169,6 +197,7 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
         .iter()
         .map(|device| MixerTarget {
             id: device.description.name.clone(),
+            meter_id: device.description.id.to_string(),
             name: device.description.name.clone(),
             mix: from_pipeweaver_mix(device.mix),
             volume: device.volume,
@@ -184,6 +213,7 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
                 .iter()
                 .map(|device| MixerTarget {
                     id: device.description.name.clone(),
+                    meter_id: device.description.id.to_string(),
                     name: device.description.name.clone(),
                     mix: from_pipeweaver_mix(device.mix),
                     volume: device.volume,
@@ -244,7 +274,48 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
         channels,
         targets,
         routes,
+        applications: mixer_applications(status),
     }
+}
+
+fn mixer_applications(status: &DaemonStatus) -> Vec<MixerApplication> {
+    let sources = &status.audio.profile.devices.sources;
+    let source_names: HashMap<_, _> = sources
+        .physical_devices
+        .iter()
+        .map(|device| (device.description.id, device.description.name.clone()))
+        .chain(
+            sources
+                .virtual_devices
+                .iter()
+                .map(|device| (device.description.id, device.description.name.clone())),
+        )
+        .collect();
+    let mut result = Vec::new();
+    for (process, named_applications) in &status.audio.applications[DeviceType::Source] {
+        for (name, instances) in named_applications {
+            let title = instances
+                .iter()
+                .find_map(|application| application.title.clone());
+            let channel_id = instances
+                .iter()
+                .find_map(|application| application.target_id)
+                .and_then(|target| source_names.get(&target).cloned());
+            result.push(MixerApplication {
+                process: process.clone(),
+                name: name.clone(),
+                title,
+                channel_id,
+            });
+        }
+    }
+    result.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.process.cmp(&right.process))
+    });
+    result
 }
 
 fn applications_by_target(status: &DaemonStatus) -> HashMap<String, Vec<String>> {
@@ -278,6 +349,8 @@ fn map_physical(
         device.volumes.volume[Mix::B],
         &device.mute_states.mute_state,
         applications,
+        MixerSourceKind::Physical,
+        device.volumes.volumes_linked.is_some(),
     )
 }
 
@@ -291,6 +364,8 @@ fn map_virtual(
         device.volumes.volume[Mix::B],
         &device.mute_states.mute_state,
         applications,
+        MixerSourceKind::Virtual,
+        device.volumes.volumes_linked.is_some(),
     )
 }
 
@@ -300,6 +375,8 @@ fn make_channel(
     audience_volume: u8,
     mute_targets: &std::collections::HashSet<MuteTarget>,
     applications: &HashMap<String, Vec<String>>,
+    source_kind: MixerSourceKind,
+    volumes_linked: bool,
 ) -> MixerChannel {
     let personal_muted = mute_targets.contains(&MuteTarget::TargetA);
     let audience_muted = mute_targets.contains(&MuteTarget::TargetB);
@@ -313,6 +390,7 @@ fn make_channel(
     MixerChannel {
         // Commands use PipeWeaver's stable, user-visible channel name.
         id: description.name.clone(),
+        meter_id: description.id.to_string(),
         name: description.name.clone(),
         colour: format!(
             "#{:02x}{:02x}{:02x}",
@@ -325,6 +403,8 @@ fn make_channel(
             .get(&description.id.to_string())
             .cloned()
             .unwrap_or_default(),
+        source_kind,
+        volumes_linked,
     }
 }
 
@@ -458,6 +538,15 @@ mod tests {
             .set_mute("System", MuteState::MutedAudience)
             .await
             .unwrap();
+        backend
+            .set_application_route("discord", "Discord", Some("System"))
+            .await
+            .unwrap();
+        backend
+            .set_application_route("discord", "Discord", None)
+            .await
+            .unwrap();
+        backend.set_volume_linked("System", false).await.unwrap();
 
         let requests = fake.requests.lock().await;
         assert!(matches!(requests.get(1), Some(DaemonRequest::Pipewire(
@@ -471,6 +560,20 @@ mod tests {
         )) if name == "System"));
         assert!(matches!(requests.get(4), Some(DaemonRequest::Pipewire(
             APICommand::AddSourceMuteTargetByName(name, MuteTarget::TargetB)
+        )) if name == "System"));
+        assert!(matches!(requests.get(5), Some(DaemonRequest::Pipewire(
+            APICommand::SetApplicationRouteByName(definition, target)
+        )) if definition.device_type == DeviceType::Source
+            && definition.process == "discord"
+            && definition.name == "Discord"
+            && target == "System"));
+        assert!(matches!(requests.get(6), Some(DaemonRequest::Pipewire(
+            APICommand::ClearApplicationRoute(definition)
+        )) if definition.device_type == DeviceType::Source
+            && definition.process == "discord"
+            && definition.name == "Discord"));
+        assert!(matches!(requests.get(7), Some(DaemonRequest::Pipewire(
+            APICommand::SetSourceVolumeLinkedByName(name, false)
         )) if name == "System"));
 
         server.abort();

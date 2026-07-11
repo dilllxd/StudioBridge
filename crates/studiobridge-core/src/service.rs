@@ -44,8 +44,30 @@ impl StudioBridgeService {
         .await
     }
 
+    pub async fn set_application_route(
+        &self,
+        process: &str,
+        application: &str,
+        channel_id: Option<&str>,
+    ) -> BridgeResult<()> {
+        backend_call(
+            "PipeWeaver",
+            self.mixer
+                .set_application_route(process, application, channel_id),
+        )
+        .await
+    }
+
     pub async fn set_volume(&self, channel_id: &str, mix: MixBus, volume: u8) -> BridgeResult<()> {
         backend_call("PipeWeaver", self.mixer.set_volume(channel_id, mix, volume)).await
+    }
+
+    pub async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()> {
+        backend_call(
+            "PipeWeaver",
+            self.mixer.set_volume_linked(channel_id, linked),
+        )
+        .await
     }
 
     pub async fn set_mute(&self, channel_id: &str, state: MuteState) -> BridgeResult<()> {
@@ -115,6 +137,7 @@ fn disconnected_mixer(error: crate::BridgeError) -> MixerSnapshot {
         channels: Vec::new(),
         targets: Vec::new(),
         routes: Vec::new(),
+        applications: Vec::new(),
     }
 }
 
@@ -142,6 +165,11 @@ mod tests {
             .await
             .unwrap();
         service.set_route("chat", "headphones", true).await.unwrap();
+        service
+            .set_application_route("discord", "Discord", Some("game"))
+            .await
+            .unwrap();
+        service.set_volume_linked("game", false).await.unwrap();
 
         let state = service.snapshot().await.unwrap();
         assert_eq!(state.mixer.channels[0].audience_volume, 41);
@@ -149,12 +177,22 @@ mod tests {
             state.studio.linked_applications[0].channel,
             LinkChannel::Link3
         );
+        assert!(!state.mixer.channels[0].volumes_linked);
+        assert_eq!(
+            state.studio.linked_applications[1].channel,
+            LinkChannel::Link1,
+            "moving one Windows application must not displace another",
+        );
         assert!(
             state
                 .mixer
                 .routes
                 .iter()
                 .any(|route| { route.source_id == "chat" && route.target_id == "headphones" })
+        );
+        assert_eq!(
+            state.mixer.applications[0].channel_id.as_deref(),
+            Some("game")
         );
     }
 

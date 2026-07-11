@@ -12,8 +12,8 @@ use std::{net::SocketAddr, sync::Arc};
 use studiobridge_beacn::BeacnStudioBackend;
 use studiobridge_core::{
     AppSnapshot, BridgeError, MixerBackend, MockMixerBackend, MockStudioBackend,
-    SetLinkAssignmentRequest, SetMicrophoneRequest, SetMuteRequest, SetRouteRequest,
-    SetVolumeRequest, StudioBackend, StudioBridgeService,
+    SetLinkAssignmentRequest, SetMicrophoneRequest, SetMixerApplicationRequest, SetMuteRequest,
+    SetRouteRequest, SetVolumeLinkedRequest, SetVolumeRequest, StudioBackend, StudioBridgeService,
 };
 use studiobridge_pipeweaver::PipeweaverBackend;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
@@ -37,6 +37,12 @@ struct Args {
         help = "Enable BEACN gain, phantom-power, and Link assignment writes"
     )]
     allow_hardware_writes: bool,
+
+    #[arg(
+        long,
+        help = "Enable the zero-payload USB1 Link host heartbeat and Link assignments"
+    )]
+    enable_link_host: bool,
 
     #[arg(
         long,
@@ -81,6 +87,7 @@ struct RuntimeInfo {
     studio_mode: &'static str,
     mixer_mode: &'static str,
     hardware_writes_enabled: bool,
+    link_control_enabled: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,7 +131,10 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let studio: Arc<dyn StudioBackend> = match args.studio {
         StudioMode::Mock => Arc::new(MockStudioBackend::default()),
-        StudioMode::Beacn => Arc::new(BeacnStudioBackend::spawn(args.allow_hardware_writes)?),
+        StudioMode::Beacn => Arc::new(BeacnStudioBackend::spawn(
+            args.allow_hardware_writes,
+            args.enable_link_host,
+        )?),
     };
     let mixer: Arc<dyn MixerBackend> = match args.mixer {
         MixerMode::Mock => Arc::new(MockMixerBackend::default()),
@@ -143,6 +153,7 @@ async fn main() -> anyhow::Result<()> {
                 MixerMode::Pipeweaver => "pipeweaver",
             },
             hardware_writes_enabled: args.allow_hardware_writes,
+            link_control_enabled: args.enable_link_host || args.allow_hardware_writes,
         },
     };
 
@@ -152,8 +163,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/studio/microphone", post(set_microphone))
         .route("/api/studio/link-assignment", post(set_link_assignment))
         .route("/api/mixer/volume", post(set_volume))
+        .route("/api/mixer/volume-link", post(set_volume_linked))
         .route("/api/mixer/mute", post(set_mute))
         .route("/api/mixer/route", post(set_route))
+        .route("/api/mixer/application", post(set_mixer_application))
         .fallback_service(ServeDir::new("web/dist").append_index_html_on_directories(true))
         .layer(
             CorsLayer::new()
@@ -176,6 +189,7 @@ async fn main() -> anyhow::Result<()> {
         studio = ?args.studio,
         mixer = ?args.mixer,
         hardware_writes = args.allow_hardware_writes,
+        link_control = args.enable_link_host || args.allow_hardware_writes,
         "StudioBridge daemon listening"
     );
     axum::serve(listener, app).await?;
@@ -224,6 +238,17 @@ async fn set_volume(
     Ok(ok())
 }
 
+async fn set_volume_linked(
+    State(state): State<AppState>,
+    Json(request): Json<SetVolumeLinkedRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state
+        .service
+        .set_volume_linked(&request.channel_id, request.linked)
+        .await?;
+    Ok(ok())
+}
+
 async fn set_mute(
     State(state): State<AppState>,
     Json(request): Json<SetMuteRequest>,
@@ -242,6 +267,21 @@ async fn set_route(
     state
         .service
         .set_route(&request.source_id, &request.target_id, request.enabled)
+        .await?;
+    Ok(ok())
+}
+
+async fn set_mixer_application(
+    State(state): State<AppState>,
+    Json(request): Json<SetMixerApplicationRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state
+        .service
+        .set_application_route(
+            &request.process,
+            &request.name,
+            request.channel_id.as_deref(),
+        )
         .await?;
     Ok(ok())
 }
@@ -266,11 +306,13 @@ mod tests {
                 studio_mode: "beacn",
                 mixer_mode: "pipeweaver",
                 hardware_writes_enabled: false,
+                link_control_enabled: true,
             },
         };
         let json = serde_json::to_value(response).unwrap();
         assert_eq!(json["studio_mode"], "beacn");
         assert_eq!(json["mixer_mode"], "pipeweaver");
         assert_eq!(json["hardware_writes_enabled"], false);
+        assert_eq!(json["link_control_enabled"], true);
     }
 }

@@ -66,20 +66,31 @@ pub enum MuteState {
     MutedPersonal,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MixerSourceKind {
+    Physical,
+    Virtual,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MixerChannel {
     pub id: String,
+    pub meter_id: String,
     pub name: String,
     pub colour: String,
     pub personal_volume: u8,
     pub audience_volume: u8,
     pub mute_state: MuteState,
     pub applications: Vec<String>,
+    pub source_kind: MixerSourceKind,
+    pub volumes_linked: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MixerTarget {
     pub id: String,
+    pub meter_id: String,
     pub name: String,
     pub mix: MixBus,
     pub volume: u8,
@@ -93,6 +104,14 @@ pub struct MixerRoute {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MixerApplication {
+    pub process: String,
+    pub name: String,
+    pub title: Option<String>,
+    pub channel_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MixerSnapshot {
     pub status: BackendStatus,
     pub error: Option<String>,
@@ -100,6 +119,7 @@ pub struct MixerSnapshot {
     pub channels: Vec<MixerChannel>,
     pub targets: Vec<MixerTarget>,
     pub routes: Vec<MixerRoute>,
+    pub applications: Vec<MixerApplication>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -136,6 +156,12 @@ pub struct SetVolumeRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetVolumeLinkedRequest {
+    pub channel_id: String,
+    pub linked: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetMuteRequest {
     pub channel_id: String,
     pub state: MuteState,
@@ -146,6 +172,13 @@ pub struct SetRouteRequest {
     pub source_id: String,
     pub target_id: String,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetMixerApplicationRequest {
+    pub process: String,
+    pub name: String,
+    pub channel_id: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]

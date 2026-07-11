@@ -1,7 +1,7 @@
 use crate::{
     BackendStatus, BridgeError, BridgeResult, HeadphoneState, LinkChannel, LinkedApplication,
-    MicrophoneState, MixBus, MixerChannel, MixerRoute, MixerSnapshot, MixerTarget, MuteState,
-    SetMicrophoneRequest, StudioIdentity, StudioSnapshot,
+    MicrophoneState, MixBus, MixerApplication, MixerChannel, MixerRoute, MixerSnapshot,
+    MixerSourceKind, MixerTarget, MuteState, SetMicrophoneRequest, StudioIdentity, StudioSnapshot,
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -22,8 +22,15 @@ pub trait StudioBackend: Send + Sync {
 pub trait MixerBackend: Send + Sync {
     async fn snapshot(&self) -> BridgeResult<MixerSnapshot>;
     async fn set_volume(&self, channel_id: &str, mix: MixBus, volume: u8) -> BridgeResult<()>;
+    async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()>;
     async fn set_mute(&self, channel_id: &str, state: MuteState) -> BridgeResult<()>;
     async fn set_route(&self, source_id: &str, target_id: &str, enabled: bool) -> BridgeResult<()>;
+    async fn set_application_route(
+        &self,
+        process: &str,
+        application: &str,
+        channel_id: Option<&str>,
+    ) -> BridgeResult<()>;
 }
 
 pub struct MockStudioBackend {
@@ -122,12 +129,19 @@ impl Default for MockMixerBackend {
     fn default() -> Self {
         let channel = |id: &str, name: &str, colour: &str, apps: &[&str]| MixerChannel {
             id: id.into(),
+            meter_id: format!("mock-source-{id}"),
             name: name.into(),
             colour: colour.into(),
             personal_volume: 72,
             audience_volume: 68,
             mute_state: MuteState::Unmuted,
             applications: apps.iter().map(|value| (*value).into()).collect(),
+            source_kind: if id == "microphone" || id == "game" {
+                MixerSourceKind::Physical
+            } else {
+                MixerSourceKind::Virtual
+            },
+            volumes_linked: true,
         };
 
         Self {
@@ -146,6 +160,7 @@ impl Default for MockMixerBackend {
                 targets: vec![
                     MixerTarget {
                         id: "headphones".into(),
+                        meter_id: "mock-target-headphones".into(),
                         name: "Headphones".into(),
                         mix: MixBus::Personal,
                         volume: 62,
@@ -153,6 +168,7 @@ impl Default for MockMixerBackend {
                     },
                     MixerTarget {
                         id: "audience-mix".into(),
+                        meter_id: "mock-target-audience".into(),
                         name: "Audience Mix".into(),
                         mix: MixBus::Audience,
                         volume: 100,
@@ -167,6 +183,20 @@ impl Default for MockMixerBackend {
                     MixerRoute {
                         source_id: "game".into(),
                         target_id: "audience-mix".into(),
+                    },
+                ],
+                applications: vec![
+                    MixerApplication {
+                        process: "discord".into(),
+                        name: "Discord".into(),
+                        title: Some("Voice chat".into()),
+                        channel_id: Some("chat".into()),
+                    },
+                    MixerApplication {
+                        process: "spotify".into(),
+                        name: "Spotify".into(),
+                        title: None,
+                        channel_id: Some("music".into()),
                     },
                 ],
             })),
@@ -196,6 +226,17 @@ impl MixerBackend for MockMixerBackend {
             MixBus::Personal => channel.personal_volume = volume,
             MixBus::Audience => channel.audience_volume = volume,
         }
+        Ok(())
+    }
+
+    async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()> {
+        let mut state = self.state.write().await;
+        let channel = state
+            .channels
+            .iter_mut()
+            .find(|channel| channel.id == channel_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown channel: {channel_id}")))?;
+        channel.volumes_linked = linked;
         Ok(())
     }
 
@@ -235,6 +276,44 @@ impl MixerBackend for MockMixerBackend {
                 state.routes.remove(index);
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    async fn set_application_route(
+        &self,
+        process: &str,
+        application: &str,
+        channel_id: Option<&str>,
+    ) -> BridgeResult<()> {
+        let mut state = self.state.write().await;
+        if let Some(channel_id) = channel_id
+            && !state
+                .channels
+                .iter()
+                .any(|channel| channel.id == channel_id)
+        {
+            return Err(BridgeError::InvalidValue(format!(
+                "unknown channel: {channel_id}"
+            )));
+        }
+        let app = state
+            .applications
+            .iter_mut()
+            .find(|item| item.process == process && item.name == application)
+            .ok_or_else(|| {
+                BridgeError::InvalidValue(format!(
+                    "unknown mixer application: {process}/{application}"
+                ))
+            })?;
+        app.channel_id = channel_id.map(str::to_owned);
+        for channel in &mut state.channels {
+            channel.applications.retain(|name| name != application);
+            if Some(channel.id.as_str()) == channel_id {
+                channel.applications.push(application.to_owned());
+                channel.applications.sort();
+                channel.applications.dedup();
+            }
         }
         Ok(())
     }
