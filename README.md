@@ -15,6 +15,12 @@ StudioBridge combines three existing Linux capabilities behind one interface:
 - Streaming-oriented PipeWire routing and submixes through PipeWeaver's public API.
 - Remote assignment of Windows gaming applications to the four Studio Link channels.
 
+The primary interface is now being migrated to a native Rust/Slint Linux
+application with a system tray and XDG autostart. The existing web interface is
+kept as a migration fallback. See
+[docs/native-desktop.md](docs/native-desktop.md) for architecture and current
+status.
+
 This repository is independent of BEACN and PipeWeaver. It does not contain
 BEACN firmware or code copied from the official application.
 

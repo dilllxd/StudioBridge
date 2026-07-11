@@ -2,8 +2,8 @@
 Type=Application
 Name=StudioBridge
 Comment=Control BEACN Studio and streaming audio routing
-Exec=xdg-open http://127.0.0.1:17840
-Icon=audio-card
+Exec=studiobridge-desktop
+Icon=studiobridge
 Terminal=false
 Categories=AudioVideo;Audio;
 StartupNotify=true

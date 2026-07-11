@@ -11,15 +11,18 @@ fail() { printf '[fail] %s\n' "$1" >&2; errors=$((errors + 1)); }
 print_install_guidance() {
   case " $os_id $os_like " in
     *" arch "*|*" cachyos "*|*" manjaro "*)
-      printf '       System packages: sudo pacman -S --needed base-devel rust nodejs npm pkgconf libusb pipewire alsa-ucm-conf usbutils\n'
+      printf '       System packages: sudo pacman -S --needed base-devel rust nodejs npm pkgconf libusb pipewire alsa-ucm-conf usbutils fontconfig\n'
+      ;;
+    *" fedora "*|*" rhel "*|*" centos "*)
+      printf '       System packages: sudo dnf install gcc gcc-c++ make rust cargo nodejs npm pkgconf-pkg-config libusb1-devel pipewire alsa-ucm usbutils fontconfig-devel\n'
       ;;
     *" ubuntu "*|*" debian "*)
-      printf '       System packages: sudo apt install build-essential curl pkg-config libusb-1.0-0-dev pipewire alsa-ucm-conf usbutils\n'
-      printf '       Rust >=1.85: install rustup from https://rustup.rs (Ubuntu 24.04 apt provides Rust 1.75).\n'
+      printf '       System packages: sudo apt install build-essential curl pkg-config libusb-1.0-0-dev pipewire alsa-ucm-conf usbutils libfontconfig1-dev\n'
+      printf '       Rust >=1.92: install rustup from https://rustup.rs when the distro toolchain is older.\n'
       printf '       Node >=20.19: install a current Node.js LTS release; do not rely on an older distro package.\n'
       ;;
     *)
-      printf '       Install Rust >=1.85, Node.js >=20.19/npm, pkg-config, libusb development files, PipeWire, alsa-ucm-conf, and usbutils.\n'
+      printf '       Install Rust >=1.92, Node.js >=20.19/npm, pkg-config, libusb and fontconfig development files, PipeWire, alsa-ucm-conf, and usbutils.\n'
       ;;
   esac
 }
@@ -61,10 +64,10 @@ version_at_least() {
 
 if command -v rustc >/dev/null 2>&1; then
   rust_version="$(rustc --version | awk '{print $2}')"
-  if version_at_least "$rust_version" "1.85.0"; then
-    ok "Rust $rust_version supports Edition 2024"
+  if version_at_least "$rust_version" "1.92.0"; then
+    ok "Rust $rust_version supports the native Slint desktop client"
   else
-    fail "Rust $rust_version is too old; StudioBridge requires Rust 1.85 or later"
+    fail "Rust $rust_version is too old; the native client requires Rust 1.92 or later"
     print_install_guidance
   fi
 fi

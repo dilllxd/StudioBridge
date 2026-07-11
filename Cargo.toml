@@ -5,6 +5,7 @@ members = [
     "crates/studiobridge-daemon",
     "crates/studiobridge-beacn",
     "crates/studiobridge-pipeweaver",
+    "crates/studiobridge-desktop",
 ]
 
 [workspace.package]

@@ -7,9 +7,9 @@ use axum::{
     routing::{get, post},
 };
 use clap::{Parser, ValueEnum};
-use serde::Serialize;
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
-use studiobridge_beacn::BeacnStudioBackend;
+use serde::{Deserialize, Serialize};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
+use studiobridge_beacn::{BeacnStudioBackend, DspWriteGate};
 use studiobridge_core::{
     AppSnapshot, BridgeError, DspWriteModule, MicrophoneDspUpdate, MixerBackend, MockMixerBackend,
     MockStudioBackend, SetLinkAssignmentRequest, SetMicrophoneRequest, SetMixerApplicationRequest,
@@ -106,6 +106,8 @@ impl From<DspWriteModuleArg> for DspWriteModule {
 struct AppState {
     service: StudioBridgeService,
     runtime: RuntimeInfo,
+    static_dsp_writes: HashSet<DspWriteModule>,
+    dsp_write_gate: DspWriteGate,
 }
 
 #[derive(Debug, Serialize)]
@@ -121,7 +123,26 @@ struct RuntimeInfo {
     hardware_writes_enabled: bool,
     link_control_enabled: bool,
     dsp_write_modules: Vec<&'static str>,
+    dsp_write_lease_seconds: Option<u64>,
 }
+
+#[derive(Debug, Deserialize)]
+struct ArmDspRequest {
+    module: DspWriteModule,
+    acknowledgement: String,
+    lease_seconds: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct DspGateResponse {
+    armed: bool,
+    module: Option<&'static str>,
+    lease_seconds: Option<u64>,
+}
+
+const DSP_WRITE_ACKNOWLEDGEMENT: &str = "I_UNDERSTAND_THIS_CHANGES_AUDIO";
+const MIN_DSP_LEASE_SECONDS: u64 = 30;
+const MAX_DSP_LEASE_SECONDS: u64 = 300;
 
 #[derive(Debug, Serialize)]
 struct HealthResponse {
@@ -168,12 +189,14 @@ async fn main() -> anyhow::Result<()> {
         .copied()
         .map(Into::into)
         .collect();
+    let dsp_write_gate = DspWriteGate::default();
     let studio: Arc<dyn StudioBackend> = match args.studio {
         StudioMode::Mock => Arc::new(MockStudioBackend::default()),
         StudioMode::Beacn => Arc::new(BeacnStudioBackend::spawn(
             args.allow_hardware_writes,
             args.enable_link_host,
             enabled_dsp_writes.clone(),
+            dsp_write_gate.clone(),
         )?),
     };
     let mixer: Arc<dyn MixerBackend> = match args.mixer {
@@ -199,7 +222,10 @@ async fn main() -> anyhow::Result<()> {
                 .filter(|module| enabled_dsp_writes.contains(module))
                 .map(DspWriteModule::as_str)
                 .collect(),
+            dsp_write_lease_seconds: None,
         },
+        static_dsp_writes: enabled_dsp_writes,
+        dsp_write_gate,
     };
 
     let app = Router::new()
@@ -210,6 +236,8 @@ async fn main() -> anyhow::Result<()> {
             "/api/studio/microphone-dsp",
             get(microphone_dsp).post(set_microphone_dsp),
         )
+        .route("/api/studio/dsp-arm", post(arm_dsp_write))
+        .route("/api/studio/dsp-disarm", post(disarm_dsp_write))
         .route("/api/studio/link-assignment", post(set_link_assignment))
         .route("/api/mixer/volume", post(set_volume))
         .route("/api/mixer/volume-link", post(set_volume_linked))
@@ -246,10 +274,17 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
+    let mut runtime = state.runtime.clone();
+    if let Ok(Some((module, remaining))) = state.dsp_write_gate.active_lease() {
+        if !state.static_dsp_writes.contains(&module) {
+            runtime.dsp_write_modules.push(module.as_str());
+        }
+        runtime.dsp_write_lease_seconds = Some(remaining.as_secs().max(1));
+    }
     Json(HealthResponse {
         ok: true,
         message: "studiobridge is ready",
-        runtime: state.runtime.clone(),
+        runtime,
     })
 }
 
@@ -268,6 +303,56 @@ async fn set_microphone_dsp(
     Json(update): Json<MicrophoneDspUpdate>,
 ) -> Result<Json<studiobridge_core::MicrophoneDspWriteResult>, ApiError> {
     Ok(Json(state.service.set_microphone_dsp(update).await?))
+}
+
+async fn arm_dsp_write(
+    State(state): State<AppState>,
+    Json(request): Json<ArmDspRequest>,
+) -> Result<Json<DspGateResponse>, ApiError> {
+    if request.acknowledgement != DSP_WRITE_ACKNOWLEDGEMENT {
+        return Err(ApiError(BridgeError::InvalidValue(
+            "DSP editing acknowledgement did not match".into(),
+        )));
+    }
+    if !(MIN_DSP_LEASE_SECONDS..=MAX_DSP_LEASE_SECONDS).contains(&request.lease_seconds) {
+        return Err(ApiError(BridgeError::InvalidValue(format!(
+            "DSP lease must be between {MIN_DSP_LEASE_SECONDS} and {MAX_DSP_LEASE_SECONDS} seconds"
+        ))));
+    }
+    if state.runtime.hardware_writes_enabled {
+        return Err(ApiError(BridgeError::InvalidValue(
+            "in-app DSP leases require general hardware writes to remain disabled".into(),
+        )));
+    }
+    if state.runtime.studio_mode != "beacn" || state.runtime.mixer_mode != "pipeweaver" {
+        return Err(ApiError(BridgeError::BackendUnavailable(
+            "DSP editing requires the real BEACN and PipeWeaver backends".into(),
+        )));
+    }
+
+    // Require both backends and every known DSP reader to succeed immediately before arming.
+    state.service.snapshot().await?;
+    state.service.microphone_dsp_snapshot().await?;
+    state
+        .dsp_write_gate
+        .arm_exclusive(request.module, Duration::from_secs(request.lease_seconds))?;
+
+    Ok(Json(DspGateResponse {
+        armed: true,
+        module: Some(request.module.as_str()),
+        lease_seconds: Some(request.lease_seconds),
+    }))
+}
+
+async fn disarm_dsp_write(
+    State(state): State<AppState>,
+) -> Result<Json<DspGateResponse>, ApiError> {
+    state.dsp_write_gate.disarm()?;
+    Ok(Json(DspGateResponse {
+        armed: false,
+        module: None,
+        lease_seconds: None,
+    }))
 }
 
 async fn set_microphone(
@@ -370,6 +455,7 @@ mod tests {
                 hardware_writes_enabled: false,
                 link_control_enabled: true,
                 dsp_write_modules: vec!["headphone_equalizer"],
+                dsp_write_lease_seconds: Some(120),
             },
         };
         let json = serde_json::to_value(response).unwrap();
@@ -378,5 +464,6 @@ mod tests {
         assert_eq!(json["hardware_writes_enabled"], false);
         assert_eq!(json["link_control_enabled"], true);
         assert_eq!(json["dsp_write_modules"][0], "headphone_equalizer");
+        assert_eq!(json["dsp_write_lease_seconds"], 120);
     }
 }

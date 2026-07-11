@@ -10,6 +10,7 @@ use beacn_lib::audio::{
 use beacn_lib::manager::get_beacn_studio_devices;
 use std::collections::HashSet;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use studiobridge_core::{
     BackendStatus, BridgeError, BridgeResult, DspWriteModule, HeadphoneState, LinkChannel,
@@ -28,6 +29,48 @@ pub struct BeacnStudioBackend {
     allow_writes: bool,
     link_control_enabled: bool,
     enabled_dsp_writes: HashSet<DspWriteModule>,
+    leased_dsp_writes: DspWriteGate,
+}
+
+#[derive(Clone, Default)]
+pub struct DspWriteGate {
+    lease: Arc<Mutex<Option<(DspWriteModule, Instant)>>>,
+}
+
+impl DspWriteGate {
+    pub fn arm_exclusive(&self, module: DspWriteModule, duration: Duration) -> BridgeResult<()> {
+        let mut lease = self
+            .lease
+            .lock()
+            .map_err(|_| BridgeError::Backend("DSP write gate lock was poisoned".into()))?;
+        *lease = Some((module, Instant::now() + duration));
+        Ok(())
+    }
+
+    pub fn disarm(&self) -> BridgeResult<()> {
+        let mut lease = self
+            .lease
+            .lock()
+            .map_err(|_| BridgeError::Backend("DSP write gate lock was poisoned".into()))?;
+        *lease = None;
+        Ok(())
+    }
+
+    pub fn enabled_module(&self) -> BridgeResult<Option<DspWriteModule>> {
+        Ok(self.active_lease()?.map(|(module, _)| module))
+    }
+
+    pub fn active_lease(&self) -> BridgeResult<Option<(DspWriteModule, Duration)>> {
+        let mut lease = self
+            .lease
+            .lock()
+            .map_err(|_| BridgeError::Backend("DSP write gate lock was poisoned".into()))?;
+        if lease.is_some_and(|(_, expires)| Instant::now() >= expires) {
+            *lease = None;
+        }
+        Ok(lease
+            .map(|(module, expires)| (module, expires.saturating_duration_since(Instant::now()))))
+    }
 }
 
 impl BeacnStudioBackend {
@@ -35,6 +78,7 @@ impl BeacnStudioBackend {
         allow_writes: bool,
         link_control_enabled: bool,
         enabled_dsp_writes: HashSet<DspWriteModule>,
+        leased_dsp_writes: DspWriteGate,
     ) -> BridgeResult<Self> {
         let (commands, receiver) = mpsc::channel();
         std::thread::Builder::new()
@@ -46,6 +90,7 @@ impl BeacnStudioBackend {
             allow_writes,
             link_control_enabled,
             enabled_dsp_writes,
+            leased_dsp_writes,
         })
     }
 
@@ -150,7 +195,9 @@ impl BeacnStudioBackend {
     }
 
     fn ensure_dsp_write_enabled(&self, module: DspWriteModule) -> BridgeResult<()> {
-        if self.enabled_dsp_writes.contains(&module) {
+        if self.enabled_dsp_writes.contains(&module)
+            || self.leased_dsp_writes.enabled_module()? == Some(module)
+        {
             Ok(())
         } else {
             Err(BridgeError::Backend(format!(
@@ -464,6 +511,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dsp_write_gate_is_exclusive_and_can_be_disarmed() {
+        let gate = DspWriteGate::default();
+        gate.arm_exclusive(DspWriteModule::Equalizer, Duration::from_secs(60))
+            .unwrap();
+        assert_eq!(
+            gate.enabled_module().unwrap(),
+            Some(DspWriteModule::Equalizer)
+        );
+
+        gate.arm_exclusive(DspWriteModule::Compressor, Duration::from_secs(60))
+            .unwrap();
+        assert_eq!(
+            gate.enabled_module().unwrap(),
+            Some(DspWriteModule::Compressor)
+        );
+
+        gate.disarm().unwrap();
+        assert_eq!(gate.enabled_module().unwrap(), None);
+    }
+
+    #[test]
+    fn dsp_write_gate_expires() {
+        let gate = DspWriteGate::default();
+        gate.arm_exclusive(DspWriteModule::Equalizer, Duration::ZERO)
+            .unwrap();
+        assert_eq!(gate.enabled_module().unwrap(), None);
+    }
+
+    #[test]
     fn decibels_convert_to_ui_percentages() {
         assert_eq!(db_to_percent(-70.0, -70.0, 0.0), 0);
         assert_eq!(db_to_percent(0.0, -70.0, 0.0), 100);
@@ -485,7 +561,9 @@ mod tests {
 
     #[tokio::test]
     async fn write_gate_rejects_requests_before_usb_access() {
-        let backend = BeacnStudioBackend::spawn(false, false, HashSet::new()).unwrap();
+        let backend =
+            BeacnStudioBackend::spawn(false, false, HashSet::new(), DspWriteGate::default())
+                .unwrap();
         let error = backend
             .set_microphone(SetMicrophoneRequest {
                 gain_db: Some(40),
@@ -499,7 +577,9 @@ mod tests {
 
     #[tokio::test]
     async fn link_gate_is_independent_from_general_hardware_writes() {
-        let backend = BeacnStudioBackend::spawn(false, false, HashSet::new()).unwrap();
+        let backend =
+            BeacnStudioBackend::spawn(false, false, HashSet::new(), DspWriteGate::default())
+                .unwrap();
         let error = backend
             .set_link_assignment("Game", LinkChannel::Link1)
             .await
@@ -513,6 +593,7 @@ mod tests {
             false,
             false,
             HashSet::from([DspWriteModule::HeadphoneEqualizer]),
+            DspWriteGate::default(),
         )
         .unwrap();
         backend

@@ -26,6 +26,8 @@ bash -n scripts/enable-link-host.sh
 bash -n scripts/arm-dsp-module.sh
 bash -n scripts/disarm-dsp-writes.sh
 bash -n scripts/validate-headphone-eq-write.sh
+bash -n scripts/enable-desktop-autostart.sh
+bash -n scripts/disable-desktop-autostart.sh
 
 if grep -Fq -- '--enable-link-host' packaging/systemd/studiobridge.service; then
   printf 'The base service must remain fully read-only.\n' >&2
@@ -52,9 +54,11 @@ if [[ "$(uname -s)" == "Linux" ]]; then
   trap cleanup_stage EXIT
   bash scripts/install-linux.sh --stage "$stage_root" --skip-build
   test -x "$stage_root$HOME/.local/bin/studiobridge-daemon"
+  test -x "$stage_root$HOME/.local/bin/studiobridge-desktop"
   test -r "$stage_root$HOME/.local/share/studiobridge/web/dist/index.html"
   test -r "$stage_root$HOME/.config/systemd/user/studiobridge.service"
   test -r "$stage_root$HOME/.local/share/applications/studiobridge.desktop"
+  test -r "$stage_root$HOME/.local/share/icons/hicolor/scalable/apps/studiobridge.svg"
   test -r "$stage_root/etc/udev/rules.d/70-studiobridge.rules"
 
   verify_port=$((20000 + ($$ % 20000)))
