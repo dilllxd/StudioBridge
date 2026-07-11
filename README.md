@@ -100,3 +100,17 @@ PipeWeaver's 1.4+ recommendation. The Ubuntu-specific UCM compatibility steps
 are documented in `docs/hardware-validation.md`.
 
 Run the complete repeatable build and test suite with `scripts/verify.sh`.
+
+## Linux Live read-only bootstrap
+
+For a temporary Fedora or Ubuntu Live hardware check that does not install
+Linux or change BEACN settings, run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dilllxd/StudioBridge/main/scripts/bootstrap-linux-live.sh | bash
+```
+
+The script installs build/diagnostic packages only in the disposable live
+session, clones this repository, and writes a sanitized report to
+`~/studiobridge-live-report.txt`. It deliberately does not install PipeWeaver,
+start StudioBridge, or enable hardware writes.
