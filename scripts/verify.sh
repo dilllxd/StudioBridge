@@ -16,7 +16,7 @@ npm --prefix web audit --omit=dev
 node --test scripts/validate-readonly.test.mjs
 
 bash -n scripts/preflight-linux.sh
-bash -n scripts/bootstrap-fedora-live.sh
+bash -n scripts/bootstrap-linux-live.sh
 bash -n scripts/collect-linux-audio-info.sh
 bash -n scripts/install-linux.sh
 bash -n scripts/validate-readonly.sh

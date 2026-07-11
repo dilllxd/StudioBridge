@@ -101,13 +101,13 @@ are documented in `docs/hardware-validation.md`.
 
 Run the complete repeatable build and test suite with `scripts/verify.sh`.
 
-## Fedora Live read-only bootstrap
+## Linux Live read-only bootstrap
 
-For a temporary Fedora Live hardware check that does not install Fedora or
-change BEACN settings, run:
+For a temporary Fedora or Ubuntu Live hardware check that does not install
+Linux or change BEACN settings, run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dilllxd/StudioBridge/main/scripts/bootstrap-fedora-live.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dilllxd/StudioBridge/main/scripts/bootstrap-linux-live.sh | bash
 ```
 
 The script installs build/diagnostic packages only in the disposable live

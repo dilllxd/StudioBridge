@@ -116,14 +116,14 @@ Backend operations are capped at five seconds. If USB access or PipeWeaver
 stalls, `/api/state` reports that backend as timed out while the daemon and UI
 remain responsive.
 
-## Fedora Live first pass
+## Linux Live first pass
 
-When testing from Fedora Live without modifying the Windows installation, the
-public-repository bootstrap performs package setup and the read-only collection
-in one step:
+When testing from Fedora or Ubuntu Live without modifying the Windows
+installation, the public-repository bootstrap performs package setup and the
+read-only collection in one step:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dilllxd/StudioBridge/main/scripts/bootstrap-fedora-live.sh | bash
+curl -fsSL https://raw.githubusercontent.com/dilllxd/StudioBridge/main/scripts/bootstrap-linux-live.sh | bash
 ```
 
 Paste `~/studiobridge-live-report.txt` back into the development conversation
