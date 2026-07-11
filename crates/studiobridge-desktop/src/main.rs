@@ -1594,7 +1594,7 @@ fn start_health_monitor(window: Weak<MainWindow>, client: DaemonClient) {
         loop {
             match client.health() {
                 Ok(health) => {
-                    let active = health.dsp_write_modules.last().cloned();
+                    let active = health.dsp_write_active_module.clone();
                     let seconds = health.dsp_write_lease_seconds;
                     let update_window = window.clone();
                     let _ = slint::invoke_from_event_loop(move || {

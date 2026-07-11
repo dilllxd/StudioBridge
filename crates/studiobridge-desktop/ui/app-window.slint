@@ -912,7 +912,7 @@ export component MainWindow inherits Window {
                         width: 420px;
                         background: Theme.panel;
                         border-width: 1px;
-                        border-color: Theme.border;
+                        border-color: root.dsp-selected-module == "equalizer" ? Theme.teal : Theme.border;
                         HorizontalLayout {
                             padding: 8px;
                             spacing: 8px;
@@ -941,29 +941,32 @@ export component MainWindow inherits Window {
                                 Text { text: "Q       ◀   0.8     ▶"; color: Theme.text; font-size: 10px; font-weight: 700; }
                             }
                         }
+                        TouchArea { clicked => { root.select-dsp-module("equalizer"); } }
                     }
                     Rectangle {
                         width: 202px;
                         background: Theme.panel;
                         border-width: 1px;
-                        border-color: Theme.border;
+                        border-color: root.dsp-selected-module == "enhancement_suite" ? Theme.teal : Theme.border;
                         VerticalLayout {
                             padding: 8px;
                             Text { text: "BASS ENHANCE"; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
                             HorizontalLayout { height: 34px; spacing: 5px; Rectangle { width: 34px; background: Theme.teal; Text { text: "1"; color: Theme.text; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; } } Rectangle { width: 34px; background: #18181b; Text { text: "2"; color: Theme.quiet; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; } } Rectangle { width: 34px; background: #18181b; Text { text: "3"; color: Theme.quiet; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; } } Rectangle { width: 34px; background: #18181b; Text { text: "4"; color: Theme.quiet; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; } } }
                             HorizontalLayout { Dial { label: "DE-ESSER"; value-label: ""; } Dial { label: "AMOUNT"; value-label: ""; } }
                         }
+                        TouchArea { clicked => { root.select-dsp-module("enhancement_suite"); } }
                     }
                     Rectangle {
                         width: 202px;
                         background: Theme.panel;
                         border-width: 1px;
-                        border-color: Theme.border;
+                        border-color: root.dsp-selected-module == "enhancement_suite" ? Theme.teal : Theme.border;
                         VerticalLayout {
                             padding: 8px;
                             Text { text: "EXCITER"; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
                             HorizontalLayout { Dial { label: "AMOUNT"; value-label: ""; } Dial { label: "FREQUENCY"; value-label: "4000Hz"; } }
                         }
+                        TouchArea { clicked => { root.select-dsp-module("enhancement_suite"); } }
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
                 }
@@ -1021,6 +1024,48 @@ export component MainWindow inherits Window {
                         HorizontalLayout {
                             Text { text: root.dsp-editor-title; color: Theme.text; font-size: 15px; font-weight: 800; horizontal-stretch: 1; }
                             StatusPill { label: root.dsp-active-module == root.dsp-selected-module ? "EDITING " + root.dsp-lease-seconds + "s" : "READ ONLY"; good: root.dsp-active-module == root.dsp-selected-module; }
+                        }
+
+                        if root.dsp-selected-module == "equalizer": HorizontalLayout {
+                            spacing: 16px;
+                            VerticalLayout {
+                                width: 330px; spacing: 7px;
+                                Text { text: root.dsp-label-a.to-uppercase() + "   " + round(root.dsp-value-a * 10) / 10 + " dB"; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } }
+                                Text { text: root.dsp-label-b.to-uppercase() + "   " + round(root.dsp-value-b * 10) / 10 + " dB"; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } }
+                                Text { text: root.dsp-label-c.to-uppercase() + "   " + round(root.dsp-value-c * 10) / 10 + " dB"; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; changed(value) => { root.dsp-value-c = value; } }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1; background: #111518; border-width: 1px; border-color: Theme.border;
+                                Rectangle { x: parent.width * 0.25; width: 1px; height: parent.height; background: #242a2d; }
+                                Rectangle { x: parent.width * 0.50; width: 1px; height: parent.height; background: #242a2d; }
+                                Rectangle { x: parent.width * 0.75; width: 1px; height: parent.height; background: #242a2d; }
+                                Rectangle { y: parent.height * 0.50; width: parent.width; height: 1px; background: #343a3d; }
+                                Path { width: parent.width; height: parent.height; commands: "M 0 94 C 120 94 150 48 245 54 C 340 60 370 118 470 105 C 570 92 625 58 720 62 C 800 66 850 70 900 70"; fill: transparent; stroke: Theme.teal; stroke-width: 2px; }
+                                Text { x: 8px; y: 8px; text: "Guarded read-back voice EQ"; color: Theme.quiet; font-size: 9px; }
+                            }
+                        }
+
+                        if root.dsp-selected-module == "enhancement_suite": HorizontalLayout {
+                            spacing: 16px;
+                            VerticalLayout {
+                                width: 330px; spacing: 7px;
+                                Text { text: root.dsp-label-a.to-uppercase() + "   " + round(root.dsp-value-a * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } }
+                                Text { text: root.dsp-label-b.to-uppercase() + "   " + round(root.dsp-value-b * 10) / 10 + "%"; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } }
+                                Text { text: root.dsp-label-c.to-uppercase() + "   " + round(root.dsp-value-c * 10) / 10 + "%"; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; changed(value) => { root.dsp-value-c = value; } }
+                            }
+                            HorizontalLayout {
+                                horizontal-stretch: 1; spacing: 12px;
+                                Dial { label: "BASS"; value-label: round(root.dsp-value-a * 10) / 10 + ""; active: root.dsp-active-module == root.dsp-selected-module; }
+                                Dial { label: "DE-ESSER"; value-label: round(root.dsp-value-b * 10) / 10 + "%"; active: root.dsp-active-module == root.dsp-selected-module; }
+                                Dial { label: "EXCITER"; value-label: round(root.dsp-value-c * 10) / 10 + "%"; active: root.dsp-active-module == root.dsp-selected-module; }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
                         }
 
                         if root.dsp-selected-module == "noise_suppression": HorizontalLayout {

@@ -18,6 +18,8 @@ pub struct RuntimeHealth {
     pub link_control_enabled: bool,
     #[serde(default)]
     pub dsp_write_modules: Vec<String>,
+    #[serde(default)]
+    pub dsp_write_active_module: Option<String>,
     pub dsp_write_lease_seconds: Option<u64>,
 }
 
@@ -256,5 +258,29 @@ impl DaemonClient {
             .send()?
             .error_for_status()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RuntimeHealth;
+
+    #[test]
+    fn allow_list_does_not_imply_an_active_dsp_lease() {
+        let health: RuntimeHealth = serde_json::from_value(serde_json::json!({
+            "ok": true,
+            "studio_mode": "mock",
+            "mixer_mode": "mock",
+            "hardware_writes_enabled": false,
+            "link_control_enabled": false,
+            "dsp_write_modules": ["equalizer", "enhancement_suite"],
+            "dsp_write_active_module": null,
+            "dsp_write_lease_seconds": null
+        }))
+        .unwrap();
+
+        assert_eq!(health.dsp_write_modules.len(), 2);
+        assert_eq!(health.dsp_write_active_module, None);
+        assert_eq!(health.dsp_write_lease_seconds, None);
     }
 }

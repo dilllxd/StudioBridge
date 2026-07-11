@@ -259,6 +259,7 @@ struct RuntimeInfo {
     hardware_writes_enabled: bool,
     link_control_enabled: bool,
     dsp_write_modules: Vec<&'static str>,
+    dsp_write_active_module: Option<&'static str>,
     dsp_write_lease_seconds: Option<u64>,
 }
 
@@ -358,6 +359,7 @@ async fn main() -> anyhow::Result<()> {
                 .filter(|module| enabled_dsp_writes.contains(module))
                 .map(DspWriteModule::as_str)
                 .collect(),
+            dsp_write_active_module: None,
             dsp_write_lease_seconds: None,
         },
         static_dsp_writes: enabled_dsp_writes,
@@ -423,6 +425,7 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
         if !state.static_dsp_writes.contains(&module) {
             runtime.dsp_write_modules.push(module.as_str());
         }
+        runtime.dsp_write_active_module = Some(module.as_str());
         runtime.dsp_write_lease_seconds = Some(remaining.as_secs().max(1));
     }
     Json(HealthResponse {
@@ -663,6 +666,7 @@ mod tests {
                 hardware_writes_enabled: false,
                 link_control_enabled: true,
                 dsp_write_modules: vec!["headphone_equalizer"],
+                dsp_write_active_module: Some("headphone_equalizer"),
                 dsp_write_lease_seconds: Some(120),
             },
         };
@@ -672,6 +676,7 @@ mod tests {
         assert_eq!(json["hardware_writes_enabled"], false);
         assert_eq!(json["link_control_enabled"], true);
         assert_eq!(json["dsp_write_modules"][0], "headphone_equalizer");
+        assert_eq!(json["dsp_write_active_module"], "headphone_equalizer");
         assert_eq!(json["dsp_write_lease_seconds"], 120);
     }
 }
