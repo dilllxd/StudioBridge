@@ -1,11 +1,13 @@
 use crate::{
     AppSnapshot, BackendStatus, BridgeError, BridgeResult, HeadphoneState, LinkChannel,
-    MicrophoneState, MixBus, MixerBackend, MixerSnapshot, MuteState, SetMicrophoneRequest,
-    StudioBackend, StudioIdentity, StudioSnapshot,
+    MicrophoneDspSnapshot, MicrophoneDspUpdate, MicrophoneDspWriteResult, MicrophoneState, MixBus,
+    MixerBackend, MixerSnapshot, MuteState, SetMicrophoneRequest, StudioBackend, StudioIdentity,
+    StudioSnapshot,
 };
 use std::{future::Future, sync::Arc, time::Duration};
 
 const BACKEND_TIMEOUT: Duration = Duration::from_secs(5);
+const DSP_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub struct StudioBridgeService {
@@ -30,6 +32,40 @@ impl StudioBridgeService {
 
     pub async fn set_microphone(&self, request: SetMicrophoneRequest) -> BridgeResult<()> {
         backend_call("BEACN Studio", self.studio.set_microphone(request)).await
+    }
+
+    pub async fn microphone_dsp_snapshot(&self) -> BridgeResult<MicrophoneDspSnapshot> {
+        backend_call_with_timeout(
+            "BEACN Studio DSP snapshot",
+            DSP_SNAPSHOT_TIMEOUT,
+            self.studio.microphone_dsp_snapshot(),
+        )
+        .await
+    }
+
+    pub async fn set_microphone_dsp(
+        &self,
+        update: MicrophoneDspUpdate,
+    ) -> BridgeResult<MicrophoneDspWriteResult> {
+        update.validate()?;
+        let module = update.module();
+        let snapshot = backend_call_with_timeout(
+            "BEACN Studio DSP write and verification",
+            DSP_SNAPSHOT_TIMEOUT,
+            self.studio.set_microphone_dsp(update.clone()),
+        )
+        .await?;
+        if !update.matches_snapshot(&snapshot) {
+            return Err(BridgeError::Backend(format!(
+                "{} read-back did not match the requested state",
+                module.as_str()
+            )));
+        }
+        Ok(MicrophoneDspWriteResult {
+            module,
+            verified: true,
+            snapshot,
+        })
     }
 
     pub async fn set_link_assignment(
@@ -207,6 +243,41 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("0 and 69"));
+    }
+
+    #[tokio::test]
+    async fn mock_dsp_snapshot_contains_complete_profiles() {
+        let dsp = service().microphone_dsp_snapshot().await.unwrap();
+        assert_eq!(dsp.equalizer.simple.bands.len(), 8);
+        assert_eq!(dsp.equalizer.advanced.bands.len(), 8);
+        assert_eq!(dsp.headphone_equalizer.bands.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn dsp_write_is_validated_and_read_back() {
+        let service = service();
+        let mut headphone_eq = service
+            .microphone_dsp_snapshot()
+            .await
+            .unwrap()
+            .headphone_equalizer;
+        headphone_eq.bands[0].amount_db = 2.0;
+        let result = service
+            .set_microphone_dsp(MicrophoneDspUpdate::HeadphoneEqualizer(
+                headphone_eq.clone(),
+            ))
+            .await
+            .unwrap();
+        assert!(result.verified);
+        assert_eq!(result.module, crate::DspWriteModule::HeadphoneEqualizer);
+        assert_eq!(result.snapshot.headphone_equalizer, headphone_eq);
+
+        headphone_eq.bands[0].amount_db = 13.0;
+        let error = service
+            .set_microphone_dsp(MicrophoneDspUpdate::HeadphoneEqualizer(headphone_eq))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("between -12 and 12"));
     }
 
     #[tokio::test]

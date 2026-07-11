@@ -192,6 +192,55 @@ The health response must report `hardware_writes_enabled:false` and
 raw storage, gain, phantom-power, and other unrestricted hardware writes remain
 disabled.
 
+## Microphone DSP validation and scoped writes
+
+Capture and validate the complete onboard processing chain while all DSP module
+gates remain empty:
+
+```bash
+chmod +x scripts/validate-microphone-dsp.sh
+./scripts/validate-microphone-dsp.sh
+curl -fsS http://127.0.0.1:17840/api/health
+```
+
+The validator is GET-only and requires 16 EQ band states across both profiles,
+two compressor profiles, two expander profiles, noise suppression, bass
+enhancement, de-esser, exciter, and all three headphone EQ bands. Health must
+still report `hardware_writes_enabled:false` and `dsp_write_modules:[]`.
+
+To edit a module, arm exactly that module after the two read-only validators
+pass. Valid names are `equalizer`, `compressor`, `expander`,
+`noise-suppression`, `enhancement-suite`, and `headphone-equalizer`:
+
+```bash
+chmod +x scripts/arm-dsp-module.sh scripts/disarm-dsp-writes.sh
+./scripts/arm-dsp-module.sh headphone-equalizer
+curl -fsS http://127.0.0.1:17840/api/health
+```
+
+The Mic Chain UI then enables only the selected module. Apply validates the
+complete module before any USB command, reads the entire chain back from the
+device, and refuses success unless the selected module matches. Revert writes
+the captured module state and performs the same read-back check. General gain,
+phantom power, firmware, reset, lighting, limiter guesses, and raw storage are
+not reachable through this path.
+
+The Headphone EQ protocol has a bounded automated physical probe. It requires
+an explicit acknowledgement, moves only the bass playback EQ by 0.1 dB, verifies
+an independent read-back, and restores the captured three-band state in a
+`finally` path:
+
+```bash
+STUDIOBRIDGE_VALIDATE_DSP_WRITE=I_UNDERSTAND_THIS_CHANGES_HEADPHONE_EQ \
+  ./scripts/validate-headphone-eq-write.sh
+./scripts/disarm-dsp-writes.sh
+./scripts/validate-readonly.sh --link-control
+./scripts/validate-microphone-dsp.sh
+```
+
+Always leave the Live PC with `dsp_write_modules:[]` unless an attended edit is
+actively being made.
+
 For the audible test, play a known source on the Windows gaming PC and assign it
 to each BEACN Link channel in turn. Confirm activity on the corresponding
 PipeWeaver source and the real StudioBridge meter, plus audio in Headphones. Then

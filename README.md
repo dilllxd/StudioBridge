@@ -25,9 +25,13 @@ Studio adapter discovers USB1, reads serial/firmware, microphone gain, phantom
 power, headphone level, mic-monitor level, and Windows Link assignments. General
 hardware writes remain disabled unless `--allow-hardware-writes` is supplied.
 After the read-only baseline passes, `--enable-link-host` independently enables
-only the fixed USB1 host heartbeat and Link application assignments. The real PipeWeaver
-adapter reads and controls channels, Personal/Audience volumes, mute targets,
-applications, output targets, and routes.
+only the fixed USB1 host heartbeat and Link application assignments. The complete
+onboard microphone chain is readable through a separate bounded snapshot: both
+Simple/Advanced profiles for eight-band EQ, compressor, and expander, plus noise
+suppression, bass enhancement, de-esser, exciter, and headphone EQ. DSP writes
+use independent per-module gates and never require unrestricted hardware writes.
+The real PipeWeaver adapter reads and controls channels, Personal/Audience
+volumes, mute targets, applications, output targets, and routes.
 
 USB and PipeWeaver operations have a five-second service timeout. A stalled
 backend is shown as disconnected instead of indefinitely blocking the UI.
@@ -44,6 +48,8 @@ The API listens on `http://127.0.0.1:17840` by default:
 ```text
 GET  /api/health
 GET  /api/state
+GET  /api/studio/microphone-dsp
+POST /api/studio/microphone-dsp
 POST /api/studio/microphone
 POST /api/studio/link-assignment
 POST /api/mixer/volume
@@ -67,7 +73,9 @@ Sources/Targets/Routing model, adds a unified Windows/Linux Applications view,
 and consumes PipeWeaver's read-only meter WebSocket for real source and target
 levels. Personal/Audience faders can be linked or independent and each mix has a
 separate mute. Windows applications can be dragged onto Link 1–4; multiple
-applications may share a Link channel.
+applications may share a Link channel. The Mic Chain view shows real captured
+DSP values, a live microphone meter, editable Simple/Advanced profiles only when
+that exact module is armed, verified Apply, and revert to the captured baseline.
 
 On Linux, after completing the read-only checks, start with real read-only
 Studio access and PipeWeaver:
@@ -82,6 +90,12 @@ After this fully read-only baseline passes, run `scripts/enable-link-host.sh` to
 enable the constrained Link heartbeat and assignments. This does not enable gain,
 phantom-power, firmware, factory-reset, or storage writes. The broader
 `--allow-hardware-writes` mode is not required for the dual-PC Link workflow.
+
+After `scripts/validate-microphone-dsp.sh` passes, a single DSP module can be
+armed with `scripts/arm-dsp-module.sh MODULE`. The helper reruns both safe
+baselines and installs an override containing exactly one `--enable-dsp-write`
+argument. `scripts/disarm-dsp-writes.sh` removes it. Phantom power is never part
+of these module writes.
 
 See [docs/architecture.md](docs/architecture.md) for the implementation plan.
 

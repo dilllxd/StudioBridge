@@ -6,6 +6,7 @@ import { createIcons, Headphones, Link, Mic2, Route, Settings, SlidersVertical, 
 import { channelSourceLabel } from "./channel-source.js";
 import { escapeHtml } from "./escape.js";
 import { connectPipeweaverMeters } from "./meters.js";
+import { micChainMarkup } from "./mic-chain.js";
 import { isMixMuted, toggleMixMute } from "./mute-state.js";
 import { hardwareControlsEnabled, isReadOnlyHardware, linkControlsEnabled } from "./runtime.js";
 import "./styles.css";
@@ -18,6 +19,21 @@ let runtime = null;
 let activeView = "mixer";
 let hasRendered = false;
 let meterConnection = null;
+let dspState = null;
+let dspCaptured = null;
+let dspDraft = null;
+let dspLoading = false;
+let dspSaving = false;
+let dspError = null;
+let activeDspModule = "setup";
+const dspViewModes = {};
+
+const views = [
+  ["mixer", "Mixer"],
+  ["routing", "Routing"],
+  ["applications", "Applications"],
+  ["hardware", "Mic Chain"],
+];
 
 const icons = {
   Headphones,
@@ -40,6 +56,88 @@ async function request(path, options = {}) {
     throw new Error(body.error || `Request failed (${response.status})`);
   }
   return response.json();
+}
+
+async function loadMicrophoneDsp() {
+  if (dspLoading) return;
+  dspLoading = true;
+  dspError = null;
+  render();
+  try {
+    const next = await request("/api/studio/microphone-dsp");
+    dspState = next;
+    if (!dspCaptured) dspCaptured = structuredClone(next);
+    dspDraft = structuredClone(next);
+  } catch (error) {
+    dspError = error instanceof Error ? error.message : String(error);
+  } finally {
+    dspLoading = false;
+    render();
+  }
+}
+
+const dspModuleNames = {
+  noise: "noise_suppression",
+  equalizer: "equalizer",
+  compressor: "compressor",
+  expander: "expander",
+  enhancement: "enhancement_suite",
+  headphones: "headphone_equalizer",
+};
+
+function setDspDraftValue(path, value) {
+  if (!dspDraft || !path) return;
+  const keys = path.split(".");
+  const last = keys.pop();
+  const target = keys.reduce((current, key) => current?.[key], dspDraft);
+  if (target && last !== undefined) target[last] = value;
+}
+
+function formatDspValue(value) {
+  return Number(value).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1");
+}
+
+function updateDspActionState() {
+  const module = dspModuleNames[activeDspModule];
+  if (!module || !dspState || !dspDraft || !dspCaptured) return;
+  const dirty = JSON.stringify(dspState[module]) !== JSON.stringify(dspDraft[module]);
+  const matched = JSON.stringify(dspState) === JSON.stringify(dspCaptured);
+  const apply = document.querySelector('[data-action="dsp-apply"]');
+  const revert = document.querySelector('[data-action="dsp-revert"]');
+  const capture = document.querySelector(".capture-status");
+  if (apply) apply.disabled = dspSaving || !dirty;
+  if (revert) revert.disabled = dspSaving || (matched && !dirty);
+  if (capture) {
+    capture.classList.toggle("is-matched", matched && !dirty);
+    const label = capture.querySelector("strong");
+    if (label) label.textContent = dirty
+      ? "Unsaved module changes"
+      : matched
+        ? "Captured state matches"
+        : "Verified device change active";
+  }
+}
+
+async function writeDspModule(source) {
+  const module = dspModuleNames[activeDspModule];
+  if (!module || !source || dspSaving) return;
+  dspSaving = true;
+  dspError = null;
+  render();
+  try {
+    const result = await request("/api/studio/microphone-dsp", {
+      method: "POST",
+      body: JSON.stringify({ module, state: source[module] }),
+    });
+    if (!result.verified) throw new Error(`${module} read-back was not verified`);
+    dspState = result.snapshot;
+    dspDraft = structuredClone(result.snapshot);
+  } catch (error) {
+    dspError = error instanceof Error ? error.message : String(error);
+  } finally {
+    dspSaving = false;
+    render();
+  }
 }
 
 function routingMarkup(snapshot) {
@@ -232,14 +330,25 @@ function render() {
     : activeView === "applications"
       ? applicationsMarkup(state, canControlLink)
       : activeView === "hardware"
-        ? hardwareMarkup(state, canWriteHardware)
+        ? micChainMarkup({
+            snapshot: state,
+            dsp: dspState,
+            captured: dspCaptured,
+            draft: dspDraft,
+            loading: dspLoading,
+            saving: dspSaving,
+            error: dspError,
+            activeModule: activeDspModule,
+            viewModes: dspViewModes,
+            writeModules: runtime?.dsp_write_modules || [],
+          })
         : mixerMarkup(state);
   app.innerHTML = `
     <div class="shell ${hasRendered ? "no-intro" : ""}">
       <header class="topbar">
         <div class="wordmark">StudioBridge</div>
         <nav class="view-tabs" aria-label="Main views">
-          ${["mixer", "routing", "applications", "hardware"].map((view) => `<button type="button" data-action="view" data-view="${view}" class="${activeView === view ? "is-active" : ""}">${view}</button>`).join("")}
+          ${views.map(([id, label]) => `<button type="button" data-action="view" data-view="${id}" class="${activeView === id ? "is-active" : ""}">${label}</button>`).join("")}
         </nav>
         <div class="connection"><i data-lucide="link"></i><span>BEACN Studio</span><b class="${connected ? "ok" : ""}">${connected ? "Connected" : "Disconnected"}</b>${readOnlyHardware ? `<em title="Gain and 48V writes are disabled${canControlLink ? "; Link host control is isolated" : ""}">HARDWARE SAFE</em>` : ""}</div>
       </header>
@@ -269,6 +378,9 @@ function captureUiState() {
           process: focused.dataset.process,
           mix: focused.dataset.mix,
           view: focused.dataset.view,
+          dspModule: focused.dataset.dspModule,
+          dspMode: focused.dataset.dspMode,
+          dspPath: focused.dataset.dspPath,
           channel: focused.closest?.(".channel")?.dataset.channel,
         }
       : null,
@@ -285,7 +397,7 @@ function restoreUiState(uiState) {
   });
   if (!uiState.focus) return;
   const candidate = [...document.querySelectorAll(`[data-action="${uiState.focus.action}"]`)].find((element) =>
-    ["application", "process", "mix", "view"].every((key) =>
+    ["application", "process", "mix", "view", "dspModule", "dspMode", "dspPath"].every((key) =>
       uiState.focus[key] === undefined || element.dataset[key] === uiState.focus[key],
     ) && (uiState.focus.channel === undefined || element.closest(".channel")?.dataset.channel === uiState.focus.channel),
   );
@@ -306,7 +418,57 @@ function bindEvents() {
     button.addEventListener("click", () => {
       activeView = button.dataset.view;
       render();
+      if (activeView === "hardware" && !dspState) void loadMicrophoneDsp();
     });
+  });
+
+  document.querySelector('[data-action="dsp-refresh"]')?.addEventListener("click", () => {
+    void loadMicrophoneDsp();
+  });
+  document.querySelectorAll('[data-action="dsp-module"]').forEach((button) => {
+    button.addEventListener("click", () => {
+      activeDspModule = button.dataset.dspModule;
+      render();
+    });
+  });
+  document.querySelectorAll('[data-action="dsp-mode-view"]').forEach((button) => {
+    button.addEventListener("click", () => {
+      dspViewModes[button.dataset.dspModule] = button.dataset.dspMode;
+      render();
+    });
+  });
+  document.querySelectorAll('[data-action="dsp-control"]').forEach((input) => {
+    input.addEventListener("input", () => {
+      setDspDraftValue(input.dataset.dspPath, Number(input.value));
+      const output = input.closest(".dsp-control")?.querySelector("output");
+      if (output) output.textContent = `${formatDspValue(input.value)}${input.dataset.unit || ""}`;
+      updateDspActionState();
+    });
+  });
+  document.querySelectorAll('[data-action="dsp-select"]').forEach((select) => {
+    select.addEventListener("change", () => {
+      const value = select.dataset.valueType === "number" ? Number(select.value) : select.value;
+      setDspDraftValue(select.dataset.dspPath, value);
+      render();
+    });
+  });
+  document.querySelectorAll('[data-action="dsp-toggle"]').forEach((button) => {
+    button.addEventListener("click", () => {
+      setDspDraftValue(button.dataset.dspPath, button.dataset.enabled !== "true");
+      render();
+    });
+  });
+  document.querySelectorAll('[data-action="dsp-set-active-mode"]').forEach((button) => {
+    button.addEventListener("click", () => {
+      setDspDraftValue(`${button.dataset.dspModule}.active_mode`, button.dataset.dspMode);
+      render();
+    });
+  });
+  document.querySelector('[data-action="dsp-apply"]')?.addEventListener("click", () => {
+    void writeDspModule(dspDraft);
+  });
+  document.querySelector('[data-action="dsp-revert"]')?.addEventListener("click", () => {
+    void writeDspModule(dspCaptured);
   });
 
   document.querySelectorAll('[data-action="volume"]').forEach((input) => {

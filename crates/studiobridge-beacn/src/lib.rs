@@ -1,3 +1,5 @@
+mod dsp;
+
 use async_trait::async_trait;
 use beacn_lib::audio::messages::Message;
 use beacn_lib::audio::messages::headphones::Headphones;
@@ -6,11 +8,13 @@ use beacn_lib::audio::{
     BeacnAudioDevice, LinkChannel as BeacnLinkChannel, LinkedApp, open_audio_device,
 };
 use beacn_lib::manager::get_beacn_studio_devices;
+use std::collections::HashSet;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 use studiobridge_core::{
-    BackendStatus, BridgeError, BridgeResult, HeadphoneState, LinkChannel, LinkedApplication,
-    MicrophoneState, SetMicrophoneRequest, StudioBackend, StudioIdentity, StudioSnapshot,
+    BackendStatus, BridgeError, BridgeResult, DspWriteModule, HeadphoneState, LinkChannel,
+    LinkedApplication, MicrophoneDspSnapshot, MicrophoneDspUpdate, MicrophoneState,
+    SetMicrophoneRequest, StudioBackend, StudioIdentity, StudioSnapshot,
 };
 use tokio::sync::oneshot;
 
@@ -23,10 +27,15 @@ pub struct BeacnStudioBackend {
     commands: Sender<DeviceCommand>,
     allow_writes: bool,
     link_control_enabled: bool,
+    enabled_dsp_writes: HashSet<DspWriteModule>,
 }
 
 impl BeacnStudioBackend {
-    pub fn spawn(allow_writes: bool, link_control_enabled: bool) -> BridgeResult<Self> {
+    pub fn spawn(
+        allow_writes: bool,
+        link_control_enabled: bool,
+        enabled_dsp_writes: HashSet<DspWriteModule>,
+    ) -> BridgeResult<Self> {
         let (commands, receiver) = mpsc::channel();
         std::thread::Builder::new()
             .name("studiobridge-beacn-usb".into())
@@ -36,6 +45,7 @@ impl BeacnStudioBackend {
             commands,
             allow_writes,
             link_control_enabled,
+            enabled_dsp_writes,
         })
     }
 
@@ -48,12 +58,41 @@ impl BeacnStudioBackend {
             .await
             .map_err(|_| BridgeError::BackendUnavailable("USB worker stopped".into()))?
     }
+
+    async fn dsp_snapshot_request(&self) -> BridgeResult<MicrophoneDspSnapshot> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.commands
+            .send(DeviceCommand::DspSnapshot(response_tx))
+            .map_err(|_| BridgeError::BackendUnavailable("USB worker stopped".into()))?;
+        response_rx
+            .await
+            .map_err(|_| BridgeError::BackendUnavailable("USB worker stopped".into()))?
+    }
 }
 
 #[async_trait]
 impl StudioBackend for BeacnStudioBackend {
     async fn snapshot(&self) -> BridgeResult<StudioSnapshot> {
         self.snapshot_request().await
+    }
+
+    async fn microphone_dsp_snapshot(&self) -> BridgeResult<MicrophoneDspSnapshot> {
+        self.dsp_snapshot_request().await
+    }
+
+    async fn set_microphone_dsp(
+        &self,
+        update: MicrophoneDspUpdate,
+    ) -> BridgeResult<MicrophoneDspSnapshot> {
+        update.validate()?;
+        self.ensure_dsp_write_enabled(update.module())?;
+        let (response_tx, response_rx) = oneshot::channel();
+        self.commands
+            .send(DeviceCommand::SetDsp(update, response_tx))
+            .map_err(|_| BridgeError::BackendUnavailable("USB worker stopped".into()))?;
+        response_rx
+            .await
+            .map_err(|_| BridgeError::BackendUnavailable("USB worker stopped".into()))?
     }
 
     async fn set_microphone(&self, request: SetMicrophoneRequest) -> BridgeResult<()> {
@@ -109,6 +148,17 @@ impl BeacnStudioBackend {
             ))
         }
     }
+
+    fn ensure_dsp_write_enabled(&self, module: DspWriteModule) -> BridgeResult<()> {
+        if self.enabled_dsp_writes.contains(&module) {
+            Ok(())
+        } else {
+            Err(BridgeError::Backend(format!(
+                "{} writes are disabled; enable only that DSP module after read-only validation",
+                module.as_str()
+            )))
+        }
+    }
 }
 
 const LINK_HEARTBEAT: [u8; 4] = [0x00, 0x00, 0x00, 0xAC];
@@ -117,6 +167,11 @@ const LINK_HEARTBEAT_TIMEOUT: Duration = Duration::from_millis(500);
 
 enum DeviceCommand {
     Snapshot(oneshot::Sender<BridgeResult<StudioSnapshot>>),
+    DspSnapshot(oneshot::Sender<BridgeResult<MicrophoneDspSnapshot>>),
+    SetDsp(
+        MicrophoneDspUpdate,
+        oneshot::Sender<BridgeResult<MicrophoneDspSnapshot>>,
+    ),
     SetMicrophone(SetMicrophoneRequest, oneshot::Sender<BridgeResult<()>>),
     SetLink(String, LinkChannel, oneshot::Sender<BridgeResult<()>>),
 }
@@ -174,6 +229,16 @@ fn device_worker(receiver: Receiver<DeviceCommand>, link_control_enabled: bool) 
                 let result = with_device(&mut device, read_snapshot);
                 let _ = response.send(result);
             }
+            DeviceCommand::DspSnapshot(response) => {
+                let result = with_device(&mut device, dsp::read_microphone_dsp);
+                let _ = response.send(result);
+            }
+            DeviceCommand::SetDsp(update, response) => {
+                let result = with_device(&mut device, |device| {
+                    dsp::write_microphone_dsp(device, &update)
+                });
+                let _ = response.send(result);
+            }
             DeviceCommand::SetMicrophone(request, response) => {
                 let result = with_device(&mut device, |device| set_microphone(device, request));
                 let _ = response.send(result);
@@ -219,6 +284,8 @@ impl DeviceCommand {
     fn is_cancelled(&self) -> bool {
         match self {
             Self::Snapshot(response) => response.is_closed(),
+            Self::DspSnapshot(response) => response.is_closed(),
+            Self::SetDsp(_, response) => response.is_closed(),
             Self::SetMicrophone(_, response) | Self::SetLink(_, _, response) => {
                 response.is_closed()
             }
@@ -229,6 +296,12 @@ impl DeviceCommand {
 fn reject_command(command: DeviceCommand, error: BridgeError) {
     match command {
         DeviceCommand::Snapshot(response) => {
+            let _ = response.send(Err(error));
+        }
+        DeviceCommand::DspSnapshot(response) => {
+            let _ = response.send(Err(error));
+        }
+        DeviceCommand::SetDsp(_, response) => {
             let _ = response.send(Err(error));
         }
         DeviceCommand::SetMicrophone(_, response) | DeviceCommand::SetLink(_, _, response) => {
@@ -412,7 +485,7 @@ mod tests {
 
     #[tokio::test]
     async fn write_gate_rejects_requests_before_usb_access() {
-        let backend = BeacnStudioBackend::spawn(false, false).unwrap();
+        let backend = BeacnStudioBackend::spawn(false, false, HashSet::new()).unwrap();
         let error = backend
             .set_microphone(SetMicrophoneRequest {
                 gain_db: Some(40),
@@ -426,12 +499,29 @@ mod tests {
 
     #[tokio::test]
     async fn link_gate_is_independent_from_general_hardware_writes() {
-        let backend = BeacnStudioBackend::spawn(false, false).unwrap();
+        let backend = BeacnStudioBackend::spawn(false, false, HashSet::new()).unwrap();
         let error = backend
             .set_link_assignment("Game", LinkChannel::Link1)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("Link control is disabled"));
+    }
+
+    #[test]
+    fn dsp_write_gates_are_module_scoped() {
+        let backend = BeacnStudioBackend::spawn(
+            false,
+            false,
+            HashSet::from([DspWriteModule::HeadphoneEqualizer]),
+        )
+        .unwrap();
+        backend
+            .ensure_dsp_write_enabled(DspWriteModule::HeadphoneEqualizer)
+            .unwrap();
+        let error = backend
+            .ensure_dsp_write_enabled(DspWriteModule::Equalizer)
+            .unwrap_err();
+        assert!(error.to_string().contains("equalizer writes are disabled"));
     }
 
     #[test]

@@ -14,13 +14,18 @@ npm --prefix web test
 npm --prefix web run build
 npm --prefix web audit --omit=dev
 node --test scripts/validate-readonly.test.mjs
+node --test scripts/validate-microphone-dsp.test.mjs
 
 bash -n scripts/preflight-linux.sh
 bash -n scripts/bootstrap-linux-live.sh
 bash -n scripts/collect-linux-audio-info.sh
 bash -n scripts/install-linux.sh
 bash -n scripts/validate-readonly.sh
+bash -n scripts/validate-microphone-dsp.sh
 bash -n scripts/enable-link-host.sh
+bash -n scripts/arm-dsp-module.sh
+bash -n scripts/disarm-dsp-writes.sh
+bash -n scripts/validate-headphone-eq-write.sh
 
 if grep -Fq -- '--enable-link-host' packaging/systemd/studiobridge.service; then
   printf 'The base service must remain fully read-only.\n' >&2

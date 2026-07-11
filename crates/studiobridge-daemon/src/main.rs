@@ -8,12 +8,13 @@ use axum::{
 };
 use clap::{Parser, ValueEnum};
 use serde::Serialize;
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 use studiobridge_beacn::BeacnStudioBackend;
 use studiobridge_core::{
-    AppSnapshot, BridgeError, MixerBackend, MockMixerBackend, MockStudioBackend,
-    SetLinkAssignmentRequest, SetMicrophoneRequest, SetMixerApplicationRequest, SetMuteRequest,
-    SetRouteRequest, SetVolumeLinkedRequest, SetVolumeRequest, StudioBackend, StudioBridgeService,
+    AppSnapshot, BridgeError, DspWriteModule, MicrophoneDspUpdate, MixerBackend, MockMixerBackend,
+    MockStudioBackend, SetLinkAssignmentRequest, SetMicrophoneRequest, SetMixerApplicationRequest,
+    SetMuteRequest, SetRouteRequest, SetVolumeLinkedRequest, SetVolumeRequest, StudioBackend,
+    StudioBridgeService,
 };
 use studiobridge_pipeweaver::PipeweaverBackend;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
@@ -45,6 +46,14 @@ struct Args {
     enable_link_host: bool,
 
     #[arg(
+        long = "enable-dsp-write",
+        value_enum,
+        action = clap::ArgAction::Append,
+        help = "Enable writes for exactly one validated DSP module; repeat for additional modules"
+    )]
+    enabled_dsp_writes: Vec<DspWriteModuleArg>,
+
+    #[arg(
         long,
         hide = true,
         help = "Legacy alias; mock mode is already the default"
@@ -70,6 +79,29 @@ enum MixerMode {
     Pipeweaver,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum DspWriteModuleArg {
+    Equalizer,
+    Compressor,
+    Expander,
+    NoiseSuppression,
+    EnhancementSuite,
+    HeadphoneEqualizer,
+}
+
+impl From<DspWriteModuleArg> for DspWriteModule {
+    fn from(value: DspWriteModuleArg) -> Self {
+        match value {
+            DspWriteModuleArg::Equalizer => Self::Equalizer,
+            DspWriteModuleArg::Compressor => Self::Compressor,
+            DspWriteModuleArg::Expander => Self::Expander,
+            DspWriteModuleArg::NoiseSuppression => Self::NoiseSuppression,
+            DspWriteModuleArg::EnhancementSuite => Self::EnhancementSuite,
+            DspWriteModuleArg::HeadphoneEqualizer => Self::HeadphoneEqualizer,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     service: StudioBridgeService,
@@ -82,12 +114,13 @@ struct ApiMessage {
     message: &'static str,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct RuntimeInfo {
     studio_mode: &'static str,
     mixer_mode: &'static str,
     hardware_writes_enabled: bool,
     link_control_enabled: bool,
+    dsp_write_modules: Vec<&'static str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,11 +162,18 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
+    let enabled_dsp_writes: HashSet<DspWriteModule> = args
+        .enabled_dsp_writes
+        .iter()
+        .copied()
+        .map(Into::into)
+        .collect();
     let studio: Arc<dyn StudioBackend> = match args.studio {
         StudioMode::Mock => Arc::new(MockStudioBackend::default()),
         StudioMode::Beacn => Arc::new(BeacnStudioBackend::spawn(
             args.allow_hardware_writes,
             args.enable_link_host,
+            enabled_dsp_writes.clone(),
         )?),
     };
     let mixer: Arc<dyn MixerBackend> = match args.mixer {
@@ -154,6 +194,11 @@ async fn main() -> anyhow::Result<()> {
             },
             hardware_writes_enabled: args.allow_hardware_writes,
             link_control_enabled: args.enable_link_host || args.allow_hardware_writes,
+            dsp_write_modules: DspWriteModule::ALL
+                .into_iter()
+                .filter(|module| enabled_dsp_writes.contains(module))
+                .map(DspWriteModule::as_str)
+                .collect(),
         },
     };
 
@@ -161,6 +206,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/health", get(health))
         .route("/api/state", get(snapshot))
         .route("/api/studio/microphone", post(set_microphone))
+        .route(
+            "/api/studio/microphone-dsp",
+            get(microphone_dsp).post(set_microphone_dsp),
+        )
         .route("/api/studio/link-assignment", post(set_link_assignment))
         .route("/api/mixer/volume", post(set_volume))
         .route("/api/mixer/volume-link", post(set_volume_linked))
@@ -200,12 +249,25 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         ok: true,
         message: "studiobridge is ready",
-        runtime: state.runtime,
+        runtime: state.runtime.clone(),
     })
 }
 
 async fn snapshot(State(state): State<AppState>) -> Result<Json<AppSnapshot>, ApiError> {
     Ok(Json(state.service.snapshot().await?))
+}
+
+async fn microphone_dsp(
+    State(state): State<AppState>,
+) -> Result<Json<studiobridge_core::MicrophoneDspSnapshot>, ApiError> {
+    Ok(Json(state.service.microphone_dsp_snapshot().await?))
+}
+
+async fn set_microphone_dsp(
+    State(state): State<AppState>,
+    Json(update): Json<MicrophoneDspUpdate>,
+) -> Result<Json<studiobridge_core::MicrophoneDspWriteResult>, ApiError> {
+    Ok(Json(state.service.set_microphone_dsp(update).await?))
 }
 
 async fn set_microphone(
@@ -307,6 +369,7 @@ mod tests {
                 mixer_mode: "pipeweaver",
                 hardware_writes_enabled: false,
                 link_control_enabled: true,
+                dsp_write_modules: vec!["headphone_equalizer"],
             },
         };
         let json = serde_json::to_value(response).unwrap();
@@ -314,5 +377,6 @@ mod tests {
         assert_eq!(json["mixer_mode"], "pipeweaver");
         assert_eq!(json["hardware_writes_enabled"], false);
         assert_eq!(json["link_control_enabled"], true);
+        assert_eq!(json["dsp_write_modules"][0], "headphone_equalizer");
     }
 }

@@ -1,3 +1,4 @@
+use crate::dsp::*;
 use crate::{
     BackendStatus, BridgeError, BridgeResult, HeadphoneState, LinkChannel, LinkedApplication,
     MicrophoneState, MixBus, MixerApplication, MixerChannel, MixerRoute, MixerSnapshot,
@@ -10,6 +11,11 @@ use tokio::sync::RwLock;
 #[async_trait]
 pub trait StudioBackend: Send + Sync {
     async fn snapshot(&self) -> BridgeResult<StudioSnapshot>;
+    async fn microphone_dsp_snapshot(&self) -> BridgeResult<MicrophoneDspSnapshot>;
+    async fn set_microphone_dsp(
+        &self,
+        update: MicrophoneDspUpdate,
+    ) -> BridgeResult<MicrophoneDspSnapshot>;
     async fn set_microphone(&self, request: SetMicrophoneRequest) -> BridgeResult<()>;
     async fn set_link_assignment(
         &self,
@@ -35,6 +41,7 @@ pub trait MixerBackend: Send + Sync {
 
 pub struct MockStudioBackend {
     state: Arc<RwLock<StudioSnapshot>>,
+    dsp: Arc<RwLock<MicrophoneDspSnapshot>>,
 }
 
 impl Default for MockStudioBackend {
@@ -74,6 +81,7 @@ impl Default for MockStudioBackend {
                     },
                 ],
             })),
+            dsp: Arc::new(RwLock::new(mock_microphone_dsp())),
         }
     }
 }
@@ -82,6 +90,27 @@ impl Default for MockStudioBackend {
 impl StudioBackend for MockStudioBackend {
     async fn snapshot(&self) -> BridgeResult<StudioSnapshot> {
         Ok(self.state.read().await.clone())
+    }
+
+    async fn microphone_dsp_snapshot(&self) -> BridgeResult<MicrophoneDspSnapshot> {
+        Ok(self.dsp.read().await.clone())
+    }
+
+    async fn set_microphone_dsp(
+        &self,
+        update: MicrophoneDspUpdate,
+    ) -> BridgeResult<MicrophoneDspSnapshot> {
+        update.validate()?;
+        let mut dsp = self.dsp.write().await;
+        match update {
+            MicrophoneDspUpdate::Equalizer(state) => dsp.equalizer = state,
+            MicrophoneDspUpdate::Compressor(state) => dsp.compressor = state,
+            MicrophoneDspUpdate::Expander(state) => dsp.expander = state,
+            MicrophoneDspUpdate::NoiseSuppression(state) => dsp.noise_suppression = state,
+            MicrophoneDspUpdate::EnhancementSuite(state) => dsp.enhancement_suite = state,
+            MicrophoneDspUpdate::HeadphoneEqualizer(state) => dsp.headphone_equalizer = state,
+        }
+        Ok(dsp.clone())
     }
 
     async fn set_microphone(&self, request: SetMicrophoneRequest) -> BridgeResult<()> {
@@ -118,6 +147,112 @@ impl StudioBackend for MockStudioBackend {
             })?;
         linked.channel = channel;
         Ok(())
+    }
+}
+
+fn mock_microphone_dsp() -> MicrophoneDspSnapshot {
+    let equalizer_profile = |mode| EqualizerProfile {
+        mode,
+        bands: (1..=8)
+            .map(|band| EqualizerBandState {
+                band,
+                band_type: EqualizerBandType::Bell,
+                gain_db: if band == 2 { -2.5 } else { 0.0 },
+                frequency_hz: [
+                    80.0, 160.0, 320.0, 640.0, 1_250.0, 2_500.0, 5_000.0, 10_000.0,
+                ][(band - 1) as usize],
+                q: 1.0,
+                enabled: true,
+            })
+            .collect(),
+    };
+    let compressor_profile = |mode| CompressorProfile {
+        mode,
+        enabled: true,
+        threshold_db: -18.0,
+        ratio: 3.0,
+        attack_ms: 10.0,
+        release_ms: 120.0,
+        makeup_gain_db: 3.0,
+    };
+    let expander_profile = |mode| ExpanderProfile {
+        mode,
+        enabled: true,
+        threshold_db: -48.0,
+        ratio: 2.0,
+        attack_ms: 10.0,
+        release_ms: 180.0,
+    };
+    MicrophoneDspSnapshot {
+        equalizer: EqualizerState {
+            active_mode: DspMode::Advanced,
+            simple: equalizer_profile(DspMode::Simple),
+            advanced: equalizer_profile(DspMode::Advanced),
+        },
+        compressor: CompressorState {
+            active_mode: DspMode::Advanced,
+            simple: compressor_profile(DspMode::Simple),
+            advanced: compressor_profile(DspMode::Advanced),
+        },
+        expander: ExpanderState {
+            active_mode: DspMode::Advanced,
+            simple: expander_profile(DspMode::Simple),
+            advanced: expander_profile(DspMode::Advanced),
+        },
+        noise_suppression: NoiseSuppressionState {
+            enabled: true,
+            style: NoiseSuppressionStyle::Adaptive,
+            amount_percent: 70.0,
+            sensitivity_db: -85.0,
+            adapt_time_ms: 1_000.0,
+        },
+        enhancement_suite: EnhancementSuiteState {
+            bass: BassEnhancementState {
+                enabled: false,
+                preset: 0,
+                amount: 0.0,
+                drive: 0.0,
+                mix_percent: 0.0,
+                attack_ms: 10.0,
+                release_ms: 250.0,
+                threshold_db: -27.0,
+                knee: 2.0,
+                makeup_gain_db: 0.0,
+                ratio: 4.0,
+                cutoff_hz: 100.0,
+                q: 0.7,
+                lower_cutoff_hz: 40.0,
+                lower_q: 0.2,
+            },
+            de_esser: DeEsserState {
+                enabled: true,
+                amount_percent: 35.0,
+            },
+            exciter: ExciterState {
+                enabled: false,
+                amount_percent: 0.0,
+                frequency_hz: 3_000.0,
+            },
+        },
+        headphone_equalizer: HeadphoneEqualizerState {
+            bands: vec![
+                HeadphoneEqBandState {
+                    band: HeadphoneEqBand::Bass,
+                    enabled: true,
+                    amount_db: 1.5,
+                },
+                HeadphoneEqBandState {
+                    band: HeadphoneEqBand::Mids,
+                    enabled: true,
+                    amount_db: 0.0,
+                },
+                HeadphoneEqBandState {
+                    band: HeadphoneEqBand::Treble,
+                    enabled: true,
+                    amount_db: 2.0,
+                },
+            ],
+        },
     }
 }
 
