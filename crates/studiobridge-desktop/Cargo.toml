@@ -6,12 +6,18 @@ license.workspace = true
 build = "build.rs"
 
 [dependencies]
+global-hotkey = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true
 slint = { version = "1.17", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "renderer-software", "accessibility", "compat-1-2", "system-tray"] }
 studiobridge-core = { path = "../studiobridge-core" }
 tungstenite = "0.29"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.13", features = ["global_shortcuts"] }
+futures-util = "0.3"
+tokio.workspace = true
 
 [build-dependencies]
 slint-build = "1.17"

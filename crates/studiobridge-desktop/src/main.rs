@@ -1,12 +1,27 @@
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
 use serde::{Deserialize, Serialize};
 use slint::{Color, Model, ModelRc, SharedString, VecModel, Weak};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     rc::Rc,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
+
+#[cfg(target_os = "linux")]
+use ashpd::{
+    AppID,
+    desktop::{
+        CreateSessionOptions,
+        global_shortcuts::{BindShortcutsOptions, GlobalShortcuts, NewShortcut},
+    },
+};
+#[cfg(target_os = "linux")]
+use futures_util::StreamExt;
 #[cfg(unix)]
 use std::{
     fs,
@@ -39,6 +54,7 @@ struct AppPreferences {
     mixing_suite_enabled: bool,
     automatic_default_reset: bool,
     meter_crossfade: bool,
+    hotkeys: HashMap<String, String>,
 }
 
 impl Default for AppPreferences {
@@ -51,6 +67,7 @@ impl Default for AppPreferences {
             mixing_suite_enabled: true,
             automatic_default_reset: true,
             meter_crossfade: true,
+            hotkeys: HashMap::new(),
         }
     }
 }
@@ -128,6 +145,238 @@ fn sync_linux_autostart(_enabled: bool) -> std::io::Result<()> {
 struct MeterEvent {
     id: String,
     percent: f32,
+}
+
+struct HotkeyRuntime {
+    manager: Option<GlobalHotKeyManager>,
+    registered: Vec<HotKey>,
+    actions: Arc<Mutex<HashMap<u32, String>>>,
+    #[cfg(target_os = "linux")]
+    portal_generation: Arc<AtomicU64>,
+    #[cfg(target_os = "linux")]
+    portal_client: DaemonClient,
+    #[cfg(target_os = "linux")]
+    portal_window: Weak<MainWindow>,
+}
+
+impl HotkeyRuntime {
+    fn new(preferences: &AppPreferences, client: DaemonClient, window: Weak<MainWindow>) -> Self {
+        #[cfg(target_os = "linux")]
+        let portal_client = client.clone();
+        #[cfg(target_os = "linux")]
+        let portal_window = window.clone();
+        let actions = Arc::new(Mutex::new(HashMap::<u32, String>::new()));
+        let event_actions = actions.clone();
+        GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
+            if event.state != HotKeyState::Pressed {
+                return;
+            }
+            let action = event_actions
+                .lock()
+                .ok()
+                .and_then(|actions| actions.get(&event.id).cloned());
+            if let Some(action) = action {
+                execute_hotkey_action(action, client.clone(), window.clone());
+            }
+        }));
+
+        let manager = if using_wayland() {
+            None
+        } else {
+            GlobalHotKeyManager::new().ok()
+        };
+        let mut runtime = Self {
+            manager,
+            registered: Vec::new(),
+            actions,
+            #[cfg(target_os = "linux")]
+            portal_generation: Arc::new(AtomicU64::new(0)),
+            #[cfg(target_os = "linux")]
+            portal_client,
+            #[cfg(target_os = "linux")]
+            portal_window,
+        };
+        runtime.reload(preferences);
+        runtime
+    }
+
+    fn reload(&mut self, preferences: &AppPreferences) {
+        if using_wayland() {
+            #[cfg(target_os = "linux")]
+            self.reload_wayland(preferences);
+            return;
+        }
+        let Some(manager) = &self.manager else {
+            return;
+        };
+        if !self.registered.is_empty() {
+            let _ = manager.unregister_all(&self.registered);
+        }
+        self.registered.clear();
+        if let Ok(mut actions) = self.actions.lock() {
+            actions.clear();
+            for (action, binding) in &preferences.hotkeys {
+                let Ok(hotkey) = binding.parse::<HotKey>() else {
+                    continue;
+                };
+                if manager.register(hotkey).is_ok() {
+                    actions.insert(hotkey.id(), action.clone());
+                    self.registered.push(hotkey);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn reload_wayland(&mut self, preferences: &AppPreferences) {
+        let generation = self.portal_generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let bindings = preferences
+            .hotkeys
+            .iter()
+            .filter(|(_, binding)| !binding.trim().is_empty())
+            .map(|(action, binding)| (action.clone(), binding.clone()))
+            .collect::<Vec<_>>();
+        if bindings.is_empty() {
+            return;
+        }
+
+        let generation_state = self.portal_generation.clone();
+        let client = self.portal_client.clone();
+        let window = self.portal_window.clone();
+        thread::spawn(move || {
+            let runtime = match tokio::runtime::Runtime::new() {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    set_status(window, format!("Wayland hotkeys unavailable: {error}"));
+                    return;
+                }
+            };
+            let result = runtime.block_on(run_wayland_hotkeys(
+                bindings,
+                generation,
+                generation_state,
+                client,
+                window.clone(),
+            ));
+            if let Err(error) = result {
+                set_status(window, format!("Wayland hotkeys unavailable: {error}"));
+            }
+        });
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn run_wayland_hotkeys(
+    bindings: Vec<(String, String)>,
+    generation: u64,
+    generation_state: Arc<AtomicU64>,
+    client: DaemonClient,
+    window: Weak<MainWindow>,
+) -> Result<(), String> {
+    if let Ok(app_id) = AppID::try_from("io.github.dilllxd.StudioBridge") {
+        // Registration is optional on older portals, so a missing Registry
+        // interface must not prevent GlobalShortcuts from working.
+        let _ = ashpd::register_host_app(app_id).await;
+    }
+
+    let portal = GlobalShortcuts::new()
+        .await
+        .map_err(|error| error.to_string())?;
+    let session = portal
+        .create_session(CreateSessionOptions::default())
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let mut actions = HashMap::new();
+    let shortcuts = bindings
+        .iter()
+        .enumerate()
+        .map(|(index, (action, binding))| {
+            let id = format!("studiobridge_{index}");
+            actions.insert(id.clone(), action.clone());
+            NewShortcut::new(id, hotkey_description(action))
+                .preferred_trigger(Some(binding.as_str()))
+        })
+        .collect::<Vec<_>>();
+    let request = portal
+        .bind_shortcuts(&session, &shortcuts, None, BindShortcutsOptions::default())
+        .await
+        .map_err(|error| error.to_string())?;
+    request.response().map_err(|error| error.to_string())?;
+    set_status(window.clone(), "Wayland hotkeys registered".into());
+
+    let mut activated = portal
+        .receive_activated()
+        .await
+        .map_err(|error| error.to_string())?;
+    loop {
+        tokio::select! {
+            event = activated.next() => {
+                let Some(event) = event else { break; };
+                if let Some(action) = actions.get(event.shortcut_id()) {
+                    execute_hotkey_action(action.clone(), client.clone(), window.clone());
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                if generation_state.load(Ordering::SeqCst) != generation {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn hotkey_description(action: &str) -> String {
+    if let Some(profile) = action.strip_prefix("profile:") {
+        format!("Load mixer profile {profile}")
+    } else if let Some(channel) = action.strip_prefix("mute:") {
+        format!("Toggle mute for {channel}")
+    } else if action == "mix:toggle-personal-device" {
+        "Toggle Personal Mix device".into()
+    } else {
+        action.replace([':', '-'], " ")
+    }
+}
+
+fn using_wayland() -> bool {
+    cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+fn execute_hotkey_action(action: String, client: DaemonClient, window: Weak<MainWindow>) {
+    thread::spawn(move || {
+        if let Some(profile) = action.strip_prefix("profile:") {
+            match client.load_mixer_profile(profile) {
+                Ok(()) => set_status(window.clone(), format!("Loaded mixer profile {profile}")),
+                Err(error) => set_status(window.clone(), format!("Hotkey failed: {error}")),
+            }
+        } else if let Some(channel_id) = action.strip_prefix("mute:") {
+            let current = client.snapshot().ok().and_then(|snapshot| {
+                snapshot
+                    .mixer
+                    .channels
+                    .into_iter()
+                    .find(|channel| channel.id == channel_id)
+            });
+            if let Some(current) = current {
+                let next = if current.mute_state == MuteState::Unmuted {
+                    MuteState::MutedAll
+                } else {
+                    MuteState::Unmuted
+                };
+                if let Err(error) = client.set_mute(channel_id, next) {
+                    set_status(window.clone(), format!("Hotkey failed: {error}"));
+                }
+            }
+        } else if action == "mix:toggle-personal-device" {
+            set_status(
+                window.clone(),
+                "Personal device cycling needs at least two PipeWeaver outputs".into(),
+            );
+        }
+        refresh_all(window, client);
+    });
 }
 
 #[cfg(unix)]
@@ -211,6 +460,11 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_mixing_suite_enabled(preferences.mixing_suite_enabled);
     window.set_automatic_default_reset(preferences.automatic_default_reset);
     window.set_meter_crossfade(preferences.meter_crossfade);
+    let hotkey_runtime = Rc::new(RefCell::new(HotkeyRuntime::new(
+        &preferences,
+        client.clone(),
+        window.as_weak(),
+    )));
 
     window.set_sources(empty_sources());
     window.set_routes(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
@@ -218,6 +472,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_link_applications(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_targets(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_mixer_profiles(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
+    window.set_hotkeys(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_mixer_channel_names(string_model(vec!["Unassigned".into()]));
     window.set_link_channel_names(string_model(vec![
         "System".into(),
@@ -244,6 +499,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 mixing_suite_enabled,
                 automatic_default_reset,
                 meter_crossfade,
+                hotkeys: load_preferences().hotkeys,
             };
             match save_preferences(&preferences) {
                 Ok(()) => set_status(preferences_window.clone(), "Settings saved".into()),
@@ -254,6 +510,36 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         },
     );
+
+    let hotkey_window = window.as_weak();
+    let hotkey_client = client.clone();
+    let hotkey_runtime_for_save = hotkey_runtime.clone();
+    window.on_save_hotkey(move |action, binding| {
+        let action = action.trim().to_string();
+        let binding = binding.trim().to_string();
+        let mut preferences = load_preferences();
+        if binding.is_empty() {
+            preferences.hotkeys.remove(&action);
+        } else {
+            preferences.hotkeys.insert(action, binding);
+        }
+        match save_preferences(&preferences) {
+            Ok(()) => {
+                hotkey_runtime_for_save.borrow_mut().reload(&preferences);
+                let status = if using_wayland() {
+                    "Hotkey saved; Wayland portal registration is pending"
+                } else {
+                    "Hotkey assignment registered"
+                };
+                set_status(hotkey_window.clone(), status.into());
+            }
+            Err(error) => set_status(
+                hotkey_window.clone(),
+                format!("Hotkey save failed: {error}"),
+            ),
+        }
+        refresh_all(hotkey_window.clone(), hotkey_client.clone());
+    });
 
     let refresh_window = window.as_weak();
     let refresh_client = client.clone();
@@ -735,6 +1021,16 @@ fn refresh_all(window: Weak<MainWindow>, client: DaemonClient) {
             let Some(window) = window.upgrade() else {
                 return;
             };
+            let profile_names = profiles
+                .as_ref()
+                .map(|profiles| {
+                    profiles
+                        .profiles
+                        .iter()
+                        .map(|profile| profile.name.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             match health {
                 Ok(health) => {
                     let safe = !health.hardware_writes_enabled;
@@ -753,7 +1049,7 @@ fn refresh_all(window: Weak<MainWindow>, client: DaemonClient) {
                 }
             }
             match snapshot {
-                Ok(snapshot) => apply_snapshot(&window, snapshot),
+                Ok(snapshot) => apply_snapshot(&window, snapshot, &profile_names),
                 Err(error) => {
                     window.set_status_text(format!("Snapshot unavailable: {error}").into())
                 }
@@ -774,7 +1070,31 @@ fn refresh_all(window: Weak<MainWindow>, client: DaemonClient) {
     });
 }
 
-fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot) {
+fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[String]) {
+    let preferences = load_preferences();
+    let mut hotkeys = vec![hotkey_entry(
+        "MIX DEVICES",
+        "Toggle Personal Mix Device",
+        "mix:toggle-personal-device",
+        &preferences,
+    )];
+    for (index, profile) in profile_names.iter().enumerate() {
+        hotkeys.push(hotkey_entry(
+            if index == 0 { "MIXER PROFILES" } else { "" },
+            profile,
+            &format!("profile:{profile}"),
+            &preferences,
+        ));
+    }
+    for (index, channel) in snapshot.mixer.channels.iter().enumerate() {
+        hotkeys.push(hotkey_entry(
+            if index == 0 { "MUTES" } else { "" },
+            &format!("{} - Mute", channel.name),
+            &format!("mute:{}", channel.id),
+            &preferences,
+        ));
+    }
+    window.set_hotkeys(ModelRc::from(Rc::new(VecModel::from(hotkeys))));
     window.set_device_name(snapshot.studio.identity.product.clone().into());
     window.set_device_serial(
         snapshot
@@ -902,6 +1222,25 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot) {
     window.set_link_applications(ModelRc::from(Rc::new(VecModel::from(link_applications))));
     window.set_targets(ModelRc::from(Rc::new(VecModel::from(targets))));
     window.set_mixer_channel_names(string_model(channel_names));
+}
+
+fn hotkey_entry(
+    section: &str,
+    label: &str,
+    action: &str,
+    preferences: &AppPreferences,
+) -> HotkeyModel {
+    HotkeyModel {
+        section: section.into(),
+        label: label.into(),
+        action: action.into(),
+        binding: preferences
+            .hotkeys
+            .get(action)
+            .cloned()
+            .unwrap_or_default()
+            .into(),
+    }
 }
 
 fn channel_detail(channel: &MixerChannel) -> String {

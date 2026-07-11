@@ -138,6 +138,13 @@ export struct ProfileModel {
     active: bool,
 }
 
+export struct HotkeyModel {
+    section: string,
+    label: string,
+    action: string,
+    binding: string,
+}
+
 component VerticalFader inherits Rectangle {
     in property <float> value;
     in property <color> accent: Theme.teal;
@@ -356,7 +363,9 @@ component ContextTab inherits Rectangle {
 component TargetStrip inherits Rectangle {
     in property <TargetModel> target;
     callback volume-changed(float);
-    width: 512px;
+    // BEACN keeps the default Personal/Audience device cards compact instead
+    // of stretching them across the entire mixer canvas.
+    width: root.target.mix == "Personal" ? 396px : 398px;
     border-radius: 2px;
     border-width: 1px;
     border-color: Theme.border;
@@ -560,6 +569,7 @@ export component MainWindow inherits Window {
     in property <[LinkApplicationModel]> link-applications;
     in property <[TargetModel]> targets;
     in property <[ProfileModel]> mixer-profiles;
+    in property <[HotkeyModel]> hotkeys;
     in property <[string]> mixer-channel-names;
     in property <[string]> link-channel-names;
     in-out property <int> active-page: 0;
@@ -604,6 +614,10 @@ export component MainWindow inherits Window {
     in-out property <bool> automatic-default-reset: true;
     in-out property <bool> meter-crossfade: true;
     in-out property <bool> add-source-menu-open: false;
+    in-out property <bool> hotkey-editor-open: false;
+    in-out property <string> hotkey-editor-action: "";
+    in-out property <string> hotkey-editor-label: "";
+    in-out property <string> hotkey-editor-input: "";
 
     callback refresh;
     callback set-volume(string, string, float);
@@ -616,6 +630,7 @@ export component MainWindow inherits Window {
     callback save-mixer-profile(string);
     callback load-mixer-profile(string);
     callback delete-mixer-profile(string);
+    callback save-hotkey(string, string);
     callback assign-linux-application(string, string, int);
     callback assign-link-application(string, int);
     callback select-dsp-module(string);
@@ -723,15 +738,21 @@ export component MainWindow inherits Window {
                     border-color: Theme.border;
                     background: Theme.panel;
                     clip: true;
-                    ScrollView {
-                        width: parent.width;
-                        height: parent.height;
-                        HorizontalLayout {
-                            padding: 6px;
-                            spacing: 5px;
-                            for target in root.targets: TargetStrip { target: target; volume-changed(value) => { root.set-target-volume(target.target-id, value); } }
-                            Rectangle { horizontal-stretch: 1; }
+                    HorizontalLayout {
+                        spacing: 0px;
+                        ScrollView {
+                            // The native BEACN viewport ends after Personal and
+                            // Audience. Extra StudioBridge buses remain reachable
+                            // by scrolling this device region horizontally.
+                            width: 812px;
+                            height: parent.height;
+                            HorizontalLayout {
+                                padding: 6px;
+                                spacing: 5px;
+                                for target in root.targets: TargetStrip { target: target; volume-changed(value) => { root.set-target-volume(target.target-id, value); } }
+                            }
                         }
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
                     }
                 }
 
@@ -1203,13 +1224,16 @@ export component MainWindow inherits Window {
                     Text { text: "MIXER SETTINGS"; color: Theme.text; font-size: 12px; font-weight: 800; }
                     SettingRow { label: "Enable Crossfade on Profile Switching"; checked: root.meter-crossfade; toggled(value) => { root.meter-crossfade = value; root.save-preferences(root.start-at-login, root.close-to-tray, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, value); } }
                     Text { text: "HOTKEY ASSIGNMENTS"; color: Theme.text; font-size: 12px; font-weight: 800; }
-                    Text { text: "MIX DEVICES"; color: Theme.text; font-size: 10px; font-weight: 800; }
-                    Rectangle { height: 30px; Text { x: 12px; text: "Toggle Personal Mix Device"; color: Theme.quiet; font-size: 10px; vertical-alignment: center; } Text { x: 560px; text: "+"; color: Theme.quiet; font-size: 18px; vertical-alignment: center; } }
-                    Text { text: "MIXER PROFILES"; color: Theme.text; font-size: 10px; font-weight: 800; }
-                    Rectangle { height: 26px; Text { x: 12px; text: "Default Profile"; color: Theme.quiet; font-size: 10px; vertical-alignment: center; } Text { x: 560px; text: "+"; color: Theme.quiet; font-size: 18px; vertical-alignment: center; } }
-                    Rectangle { height: 26px; Text { x: 12px; text: "New Profile"; color: Theme.quiet; font-size: 10px; vertical-alignment: center; } Text { x: 560px; text: "+"; color: Theme.quiet; font-size: 18px; vertical-alignment: center; } }
-                    Text { text: "MUTES"; color: Theme.text; font-size: 10px; font-weight: 800; }
-                    for source in root.sources: Rectangle { height: 28px; Text { x: 12px; text: source.name + " - Mute"; color: Theme.quiet; font-size: 10px; vertical-alignment: center; } Text { x: 560px; text: "+"; color: Theme.quiet; font-size: 18px; vertical-alignment: center; } }
+                    for hotkey in root.hotkeys: VerticalLayout {
+                        spacing: 1px;
+                        if hotkey.section != "": Text { height: 18px; text: hotkey.section; color: Theme.text; font-size: 10px; font-weight: 800; }
+                        Rectangle {
+                            height: 26px;
+                            Text { x: 12px; width: 330px; text: hotkey.label; color: Theme.quiet; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                            Text { x: 350px; width: 210px; text: hotkey.binding == "" ? "+" : hotkey.binding; color: hotkey.binding == "" ? Theme.quiet : Theme.text; font-size: hotkey.binding == "" ? 18px : 9px; horizontal-alignment: right; vertical-alignment: center; }
+                            TouchArea { clicked => { root.hotkey-editor-action = hotkey.action; root.hotkey-editor-label = hotkey.label; root.hotkey-editor-input = hotkey.binding; root.hotkey-editor-open = true; } }
+                        }
+                    }
                     Rectangle { height: 16px; }
                     HorizontalLayout { Button { text: "Refresh status"; clicked => { root.refresh(); } } StatusPill { label: root.daemon-connected ? "DAEMON CONNECTED" : "DAEMON DISCONNECTED"; good: root.daemon-connected; } StatusPill { label: root.hardware-safe ? "HARDWARE WRITES OFF" : "WRITES ACTIVE"; good: root.hardware-safe; } Rectangle { horizontal-stretch: 1; } }
                 }
@@ -1232,6 +1256,28 @@ export component MainWindow inherits Window {
                 save-profile(name) => { root.save-mixer-profile(name); }
                 select-profile(name) => { root.load-mixer-profile(name); }
                 delete-profile(name) => { root.delete-mixer-profile(name); }
+            }
+        }
+    }
+    if root.hotkey-editor-open: Rectangle {
+        z: 100;
+        width: parent.width; height: parent.height; background: #00000099;
+        Rectangle {
+            x: (parent.width - 420px) / 2; y: (parent.height - 180px) / 2; width: 420px; height: 180px;
+            background: #28282c; border-width: 1px; border-color: #505057; border-radius: 4px;
+            VerticalLayout {
+                padding: 16px; spacing: 10px;
+                Text { text: "HOTKEY ASSIGNMENT"; color: Theme.text; font-size: 13px; font-weight: 800; }
+                Text { text: root.hotkey-editor-label; color: Theme.quiet; font-size: 11px; }
+                Text { text: "Enter a shortcut such as Ctrl+Shift+F9. Wayland will confirm it through the desktop portal."; color: Theme.quiet; font-size: 9px; wrap: word-wrap; }
+                LineEdit { text: root.hotkey-editor-input; edited(text) => { root.hotkey-editor-input = text; } }
+                HorizontalLayout {
+                    spacing: 6px;
+                    Button { text: "Save"; clicked => { root.save-hotkey(root.hotkey-editor-action, root.hotkey-editor-input); root.hotkey-editor-open = false; } }
+                    Button { text: "Clear"; clicked => { root.save-hotkey(root.hotkey-editor-action, ""); root.hotkey-editor-open = false; } }
+                    Button { text: "Cancel"; clicked => { root.hotkey-editor-open = false; } }
+                    Rectangle { horizontal-stretch: 1; }
+                }
             }
         }
     }
