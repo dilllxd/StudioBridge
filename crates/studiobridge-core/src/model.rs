@@ -191,6 +191,22 @@ pub struct RemoveMixerSourceRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MixerProfileRequest {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MixerProfileSummary {
+    pub name: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MixerProfilesResponse {
+    pub profiles: Vec<MixerProfileSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetMixerApplicationRequest {
     pub process: String,
     pub name: String,

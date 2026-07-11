@@ -8,16 +8,18 @@ use axum::{
 };
 use clap::{Parser, ValueEnum};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use studiobridge_beacn::{BeacnStudioBackend, DspWriteGate};
 use studiobridge_core::{
     AppSnapshot, BridgeError, CreateMixerSourceRequest, DspWriteModule, MicrophoneDspUpdate,
-    MixerBackend, MockMixerBackend, MockStudioBackend, RemoveMixerSourceRequest,
-    SetLinkAssignmentRequest, SetMicrophoneRequest, SetMixerApplicationRequest, SetMuteRequest,
-    SetRouteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
-    StudioBackend, StudioBridgeService,
+    MixerBackend, MixerProfileRequest, MixerProfileSummary, MixerProfilesResponse, MixerSnapshot,
+    MockMixerBackend, MockStudioBackend, RemoveMixerSourceRequest, SetLinkAssignmentRequest,
+    SetMicrophoneRequest, SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest,
+    SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest, StudioBackend,
+    StudioBridgeService,
 };
 use studiobridge_pipeweaver::PipeweaverBackend;
+use tokio::sync::RwLock;
 use tower_http::{cors::CorsLayer, services::ServeDir, trace::TraceLayer};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -109,6 +111,139 @@ struct AppState {
     runtime: RuntimeInfo,
     static_dsp_writes: HashSet<DspWriteModule>,
     dsp_write_gate: DspWriteGate,
+    profiles: ProfileStore,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SavedMixerProfile {
+    name: String,
+    mixer: MixerSnapshot,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ProfileFile {
+    active: Option<String>,
+    profiles: Vec<SavedMixerProfile>,
+}
+
+#[derive(Clone)]
+struct ProfileStore {
+    path: PathBuf,
+    state: Arc<RwLock<ProfileFile>>,
+}
+
+impl ProfileStore {
+    fn load() -> Self {
+        let path = daemon_config_root().join("mixer-profiles.json");
+        let state = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
+        Self {
+            path,
+            state: Arc::new(RwLock::new(state)),
+        }
+    }
+
+    async fn list(&self) -> MixerProfilesResponse {
+        let state = self.state.read().await;
+        MixerProfilesResponse {
+            profiles: state
+                .profiles
+                .iter()
+                .map(|profile| MixerProfileSummary {
+                    name: profile.name.clone(),
+                    active: state.active.as_deref() == Some(profile.name.as_str()),
+                })
+                .collect(),
+        }
+    }
+
+    async fn get(&self, name: &str) -> Option<MixerSnapshot> {
+        self.state
+            .read()
+            .await
+            .profiles
+            .iter()
+            .find(|profile| profile.name == name)
+            .map(|profile| profile.mixer.clone())
+    }
+
+    async fn save(&self, name: String, mixer: MixerSnapshot) -> Result<(), BridgeError> {
+        validate_profile_name(&name)?;
+        let mut state = self.state.write().await;
+        if let Some(profile) = state
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.name == name)
+        {
+            profile.mixer = mixer;
+        } else {
+            state.profiles.push(SavedMixerProfile {
+                name: name.clone(),
+                mixer,
+            });
+        }
+        state.active = Some(name);
+        self.persist(&state)
+    }
+
+    async fn set_active(&self, name: &str) -> Result<(), BridgeError> {
+        let mut state = self.state.write().await;
+        state.active = Some(name.to_owned());
+        self.persist(&state)
+    }
+
+    async fn delete(&self, name: &str) -> Result<(), BridgeError> {
+        let mut state = self.state.write().await;
+        let before = state.profiles.len();
+        state.profiles.retain(|profile| profile.name != name);
+        if state.profiles.len() == before {
+            return Err(BridgeError::InvalidValue(format!(
+                "unknown mixer profile: {name}"
+            )));
+        }
+        if state.active.as_deref() == Some(name) {
+            state.active = None;
+        }
+        self.persist(&state)
+    }
+
+    fn persist(&self, state: &ProfileFile) -> Result<(), BridgeError> {
+        let parent = self.path.parent().ok_or_else(|| {
+            BridgeError::Backend("mixer profile path has no parent directory".into())
+        })?;
+        std::fs::create_dir_all(parent).map_err(|error| BridgeError::Backend(error.to_string()))?;
+        let json = serde_json::to_vec_pretty(state)
+            .map_err(|error| BridgeError::Backend(error.to_string()))?;
+        std::fs::write(&self.path, json).map_err(|error| BridgeError::Backend(error.to_string()))
+    }
+}
+
+fn validate_profile_name(name: &str) -> Result<(), BridgeError> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > 64 {
+        return Err(BridgeError::InvalidValue(
+            "profile name must contain 1 to 64 characters".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn daemon_config_root() -> PathBuf {
+    #[cfg(windows)]
+    if let Some(app_data) = std::env::var_os("APPDATA") {
+        return PathBuf::from(app_data).join("StudioBridge");
+    }
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(".config"))
+        })
+        .unwrap_or_else(std::env::temp_dir)
+        .join("studiobridge")
 }
 
 #[derive(Debug, Serialize)]
@@ -227,6 +362,7 @@ async fn main() -> anyhow::Result<()> {
         },
         static_dsp_writes: enabled_dsp_writes,
         dsp_write_gate,
+        profiles: ProfileStore::load(),
     };
 
     let app = Router::new()
@@ -247,6 +383,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/mixer/route", post(set_route))
         .route("/api/mixer/source", post(create_mixer_source))
         .route("/api/mixer/source/remove", post(remove_mixer_source))
+        .route("/api/mixer/profiles", get(list_mixer_profiles))
+        .route("/api/mixer/profile/save", post(save_mixer_profile))
+        .route("/api/mixer/profile/load", post(load_mixer_profile))
+        .route("/api/mixer/profile/delete", post(delete_mixer_profile))
         .route("/api/mixer/application", post(set_mixer_application))
         .fallback_service(ServeDir::new("web/dist").append_index_html_on_directories(true))
         .layer(
@@ -446,6 +586,43 @@ async fn remove_mixer_source(
     Json(request): Json<RemoveMixerSourceRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
     state.service.remove_source(&request.source_id).await?;
+    Ok(ok())
+}
+
+async fn list_mixer_profiles(State(state): State<AppState>) -> Json<MixerProfilesResponse> {
+    Json(state.profiles.list().await)
+}
+
+async fn save_mixer_profile(
+    State(state): State<AppState>,
+    Json(request): Json<MixerProfileRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    validate_profile_name(&request.name)?;
+    let mixer = state.service.snapshot().await?.mixer;
+    state.profiles.save(request.name, mixer).await?;
+    Ok(ok())
+}
+
+async fn load_mixer_profile(
+    State(state): State<AppState>,
+    Json(request): Json<MixerProfileRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    let mixer = state.profiles.get(&request.name).await.ok_or_else(|| {
+        ApiError(BridgeError::InvalidValue(format!(
+            "unknown mixer profile: {}",
+            request.name
+        )))
+    })?;
+    state.service.apply_mixer_profile(&mixer).await?;
+    state.profiles.set_active(&request.name).await?;
+    Ok(ok())
+}
+
+async fn delete_mixer_profile(
+    State(state): State<AppState>,
+    Json(request): Json<MixerProfileRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state.profiles.delete(&request.name).await?;
     Ok(ok())
 }
 

@@ -3,9 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use studiobridge_core::{
     AppSnapshot, CreateMixerSourceRequest, DspWriteModule, LinkChannel, MicrophoneDspSnapshot,
-    MicrophoneDspUpdate, MicrophoneDspWriteResult, MixBus, MuteState, RemoveMixerSourceRequest,
-    SetLinkAssignmentRequest, SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest,
-    SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
+    MicrophoneDspUpdate, MicrophoneDspWriteResult, MixBus, MixerProfileRequest,
+    MixerProfilesResponse, MuteState, RemoveMixerSourceRequest, SetLinkAssignmentRequest,
+    SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest, SetTargetVolumeRequest,
+    SetVolumeLinkedRequest, SetVolumeRequest,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -189,6 +190,35 @@ impl DaemonClient {
             .json(&RemoveMixerSourceRequest {
                 source_id: source_id.into(),
             })
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub fn mixer_profiles(&self) -> Result<MixerProfilesResponse, reqwest::Error> {
+        self.client
+            .get(format!("{}/api/mixer/profiles", self.base_url))
+            .send()?
+            .error_for_status()?
+            .json()
+    }
+
+    pub fn save_mixer_profile(&self, name: &str) -> Result<(), reqwest::Error> {
+        self.profile_command("save", name)
+    }
+
+    pub fn load_mixer_profile(&self, name: &str) -> Result<(), reqwest::Error> {
+        self.profile_command("load", name)
+    }
+
+    pub fn delete_mixer_profile(&self, name: &str) -> Result<(), reqwest::Error> {
+        self.profile_command("delete", name)
+    }
+
+    fn profile_command(&self, action: &str, name: &str) -> Result<(), reqwest::Error> {
+        self.client
+            .post(format!("{}/api/mixer/profile/{action}", self.base_url))
+            .json(&MixerProfileRequest { name: name.into() })
             .send()?
             .error_for_status()?;
         Ok(())

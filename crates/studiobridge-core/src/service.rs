@@ -4,7 +4,7 @@ use crate::{
     MixerBackend, MixerSnapshot, MuteState, SetMicrophoneRequest, StudioBackend, StudioIdentity,
     StudioSnapshot,
 };
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
 const BACKEND_TIMEOUT: Duration = Duration::from_secs(5);
 const DSP_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -137,6 +137,83 @@ impl StudioBridgeService {
 
     pub async fn remove_source(&self, source_id: &str) -> BridgeResult<()> {
         backend_call("PipeWeaver", self.mixer.remove_source(source_id)).await
+    }
+
+    /// Applies a saved mixer-only profile without touching BEACN hardware.
+    pub async fn apply_mixer_profile(&self, desired: &MixerSnapshot) -> BridgeResult<()> {
+        let current = backend_call("PipeWeaver", self.mixer.snapshot()).await?;
+        let desired_ids = desired
+            .channels
+            .iter()
+            .map(|channel| channel.id.as_str())
+            .collect::<HashSet<_>>();
+
+        for channel in &desired.channels {
+            if channel.source_kind == crate::MixerSourceKind::Virtual
+                && !current.channels.iter().any(|item| item.id == channel.id)
+            {
+                backend_call("PipeWeaver", self.mixer.create_source(&channel.name)).await?;
+            }
+        }
+        for channel in &current.channels {
+            if channel.source_kind == crate::MixerSourceKind::Virtual
+                && !desired_ids.contains(channel.id.as_str())
+            {
+                backend_call("PipeWeaver", self.mixer.remove_source(&channel.id)).await?;
+            }
+        }
+
+        let current = backend_call("PipeWeaver", self.mixer.snapshot()).await?;
+        for channel in &desired.channels {
+            if !current.channels.iter().any(|item| item.id == channel.id) {
+                continue;
+            }
+            self.set_volume(&channel.id, MixBus::Personal, channel.personal_volume)
+                .await?;
+            self.set_volume(&channel.id, MixBus::Audience, channel.audience_volume)
+                .await?;
+            self.set_volume_linked(&channel.id, channel.volumes_linked)
+                .await?;
+            self.set_mute(&channel.id, channel.mute_state).await?;
+        }
+        for target in &desired.targets {
+            if current.targets.iter().any(|item| item.id == target.id) {
+                self.set_target_volume(&target.id, target.volume).await?;
+            }
+        }
+
+        let current_routes = current
+            .routes
+            .iter()
+            .map(|route| (route.source_id.as_str(), route.target_id.as_str()))
+            .collect::<HashSet<_>>();
+        let desired_routes = desired
+            .routes
+            .iter()
+            .map(|route| (route.source_id.as_str(), route.target_id.as_str()))
+            .collect::<HashSet<_>>();
+        for source in &current.channels {
+            for target in &current.targets {
+                let was_enabled =
+                    current_routes.contains(&(source.id.as_str(), target.id.as_str()));
+                let should_enable =
+                    desired_routes.contains(&(source.id.as_str(), target.id.as_str()));
+                if was_enabled != should_enable {
+                    self.set_route(&source.id, &target.id, should_enable)
+                        .await?;
+                }
+            }
+        }
+        for application in &current.applications {
+            let desired_channel = desired
+                .applications
+                .iter()
+                .find(|item| item.process == application.process && item.name == application.name)
+                .and_then(|item| item.channel_id.as_deref());
+            self.set_application_route(&application.process, &application.name, desired_channel)
+                .await?;
+        }
+        Ok(())
     }
 }
 
@@ -303,6 +380,40 @@ mod tests {
         assert!(
             !state
                 .mixer
+                .channels
+                .iter()
+                .any(|channel| channel.id == "aux-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn saved_mixer_profile_restores_mixer_only_state() {
+        let service = service();
+        let saved = service.snapshot().await.unwrap().mixer;
+        service
+            .set_volume("game", MixBus::Audience, 12)
+            .await
+            .unwrap();
+        service.create_source("Aux 1").await.unwrap();
+
+        service.apply_mixer_profile(&saved).await.unwrap();
+        let restored = service.snapshot().await.unwrap().mixer;
+        assert_eq!(
+            restored
+                .channels
+                .iter()
+                .find(|channel| channel.id == "game")
+                .unwrap()
+                .audience_volume,
+            saved
+                .channels
+                .iter()
+                .find(|channel| channel.id == "game")
+                .unwrap()
+                .audience_volume
+        );
+        assert!(
+            !restored
                 .channels
                 .iter()
                 .any(|channel| channel.id == "aux-1")

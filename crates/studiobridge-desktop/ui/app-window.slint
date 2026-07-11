@@ -1,4 +1,4 @@
-import { Button, ComboBox, Slider, ScrollView } from "std-widgets.slint";
+import { Button, ComboBox, LineEdit, Slider, ScrollView } from "std-widgets.slint";
 
 export struct SourceModel {
     channel-id: string,
@@ -131,6 +131,11 @@ component LevelMeter inherits Rectangle {
         animate y { duration: 65ms; easing: ease-out; }
         animate height { duration: 65ms; easing: ease-out; }
     }
+}
+
+export struct ProfileModel {
+    name: string,
+    active: bool,
 }
 
 component VerticalFader inherits Rectangle {
@@ -449,6 +454,13 @@ component ProfileRail inherits Rectangle {
     in property <bool> connected;
     in property <bool> hardware-safe;
     in property <bool> link-active;
+    in property <[ProfileModel]> mixer-profiles;
+    in-out property <bool> create-open: false;
+    in-out property <string> new-profile-name: "";
+    in-out property <string> menu-profile: "";
+    callback save-profile(string);
+    callback select-profile(string);
+    callback delete-profile(string);
     width: 285px;
     background: #242427;
     border-width: 1px;
@@ -465,7 +477,7 @@ component ProfileRail inherits Rectangle {
         Rectangle { height: 1px; background: Theme.border; }
 
         Rectangle {
-            height: 120px;
+            height: 102px;
             background: transparent;
             VerticalLayout {
                 spacing: 3px;
@@ -477,25 +489,47 @@ component ProfileRail inherits Rectangle {
                     background: #3a393e;
                     Text { text: "     On Device"; color: Theme.text; font-size: 11px; font-weight: 700; vertical-alignment: center; }
                 }
-                Text { text: "v  Mixer Profiles                                     +"; color: Theme.text; font-size: 12px; font-weight: 800; }
             }
         }
 
         Rectangle {
-            height: 70px;
+            vertical-stretch: 1;
             background: transparent;
             VerticalLayout {
                 spacing: 3px;
                 Rectangle {
                     height: 24px;
-                    background: #3a393e;
-                    Text { text: "     Default Profile"; color: Theme.text; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                    Text { text: "v  Mixer Profiles"; color: Theme.text; font-size: 12px; font-weight: 800; vertical-alignment: center; }
+                    Text { x: parent.width - 18px; text: "+"; color: Theme.text; font-size: 18px; vertical-alignment: center; }
+                    TouchArea { x: parent.width - 32px; width: 32px; clicked => { root.create-open = !root.create-open; root.menu-profile = ""; } }
                 }
-                Text { text: "     New Profile"; color: Theme.quiet; font-size: 11px; }
+                if root.create-open: Rectangle {
+                    height: 34px; background: #1c1c1f;
+                    HorizontalLayout {
+                        spacing: 4px; padding: 3px;
+                        LineEdit { horizontal-stretch: 1; text: root.new-profile-name; edited(text) => { root.new-profile-name = text; } }
+                        Button { width: 54px; text: "Save"; clicked => { if (root.new-profile-name != "") { root.save-profile(root.new-profile-name); root.new-profile-name = ""; root.create-open = false; } } }
+                    }
+                }
+                for profile in root.mixer-profiles: VerticalLayout {
+                    spacing: 1px;
+                    Rectangle {
+                        height: 24px; background: profile.active ? #3a393e : transparent;
+                        Text { x: 16px; width: parent.width - 42px; text: profile.name; color: profile.active ? Theme.text : Theme.quiet; font-size: 11px; font-weight: profile.active ? 700 : 400; vertical-alignment: center; overflow: elide; }
+                        Text { x: parent.width - 20px; text: "v"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
+                        TouchArea { width: parent.width - 28px; clicked => { root.select-profile(profile.name); } }
+                        TouchArea { x: parent.width - 28px; width: 28px; clicked => { root.menu-profile = root.menu-profile == profile.name ? "" : profile.name; } }
+                    }
+                    if root.menu-profile == profile.name: Rectangle {
+                        height: 26px; background: #303034;
+                        Text { x: 18px; text: "Delete Profile"; color: Theme.text; font-size: 10px; vertical-alignment: center; }
+                        TouchArea { clicked => { root.menu-profile = ""; root.delete-profile(profile.name); } }
+                    }
+                }
+                if root.mixer-profiles.length == 0 && !root.create-open: Text { text: "     New Profile"; color: Theme.quiet; font-size: 11px; }
+                Rectangle { vertical-stretch: 1; }
             }
         }
-
-        Rectangle { vertical-stretch: 1; }
         Text { text: "App V0.1.0"; color: Theme.quiet; font-size: 9px; horizontal-alignment: right; }
     }
 }
@@ -525,6 +559,7 @@ export component MainWindow inherits Window {
     in property <[ApplicationModel]> linux-applications;
     in property <[LinkApplicationModel]> link-applications;
     in property <[TargetModel]> targets;
+    in property <[ProfileModel]> mixer-profiles;
     in property <[string]> mixer-channel-names;
     in property <[string]> link-channel-names;
     in-out property <int> active-page: 0;
@@ -578,6 +613,9 @@ export component MainWindow inherits Window {
     callback set-route(string, string, bool);
     callback create-source(string);
     callback remove-source(string);
+    callback save-mixer-profile(string);
+    callback load-mixer-profile(string);
+    callback delete-mixer-profile(string);
     callback assign-linux-application(string, string, int);
     callback assign-link-application(string, int);
     callback select-dsp-module(string);
@@ -1190,6 +1228,10 @@ export component MainWindow inherits Window {
                 connected: root.daemon-connected;
                 hardware-safe: root.hardware-safe;
                 link-active: root.link-active;
+                mixer-profiles: root.mixer-profiles;
+                save-profile(name) => { root.save-mixer-profile(name); }
+                select-profile(name) => { root.load-mixer-profile(name); }
+                delete-profile(name) => { root.delete-mixer-profile(name); }
             }
         }
     }

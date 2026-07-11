@@ -217,6 +217,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_linux_applications(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_link_applications(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_targets(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
+    window.set_mixer_profiles(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_mixer_channel_names(string_model(vec!["Unassigned".into()]));
     window.set_link_channel_names(string_model(vec![
         "System".into(),
@@ -399,6 +400,51 @@ fn main() -> Result<(), slint::PlatformError> {
             match client.remove_source(&source_id) {
                 Ok(()) => set_status(window.clone(), "Mixer knob removed".into()),
                 Err(error) => set_status(window.clone(), format!("Remove knob failed: {error}")),
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let save_profile_window = window.as_weak();
+    let save_profile_client = client.clone();
+    window.on_save_mixer_profile(move |name| {
+        let window = save_profile_window.clone();
+        let client = save_profile_client.clone();
+        let name = name.to_string();
+        thread::spawn(move || {
+            match client.save_mixer_profile(&name) {
+                Ok(()) => set_status(window.clone(), format!("Saved mixer profile {name}")),
+                Err(error) => set_status(window.clone(), format!("Profile save failed: {error}")),
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let load_profile_window = window.as_weak();
+    let load_profile_client = client.clone();
+    window.on_load_mixer_profile(move |name| {
+        let window = load_profile_window.clone();
+        let client = load_profile_client.clone();
+        let name = name.to_string();
+        thread::spawn(move || {
+            match client.load_mixer_profile(&name) {
+                Ok(()) => set_status(window.clone(), format!("Loaded mixer profile {name}")),
+                Err(error) => set_status(window.clone(), format!("Profile load failed: {error}")),
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let delete_profile_window = window.as_weak();
+    let delete_profile_client = client.clone();
+    window.on_delete_mixer_profile(move |name| {
+        let window = delete_profile_window.clone();
+        let client = delete_profile_client.clone();
+        let name = name.to_string();
+        thread::spawn(move || {
+            match client.delete_mixer_profile(&name) {
+                Ok(()) => set_status(window.clone(), format!("Deleted mixer profile {name}")),
+                Err(error) => set_status(window.clone(), format!("Profile delete failed: {error}")),
             }
             refresh_all(window, client);
         });
@@ -683,6 +729,7 @@ fn refresh_all(window: Weak<MainWindow>, client: DaemonClient) {
     thread::spawn(move || {
         let health = client.health();
         let snapshot = client.snapshot();
+        let profiles = client.mixer_profiles();
 
         let _ = slint::invoke_from_event_loop(move || {
             let Some(window) = window.upgrade() else {
@@ -710,6 +757,18 @@ fn refresh_all(window: Weak<MainWindow>, client: DaemonClient) {
                 Err(error) => {
                     window.set_status_text(format!("Snapshot unavailable: {error}").into())
                 }
+            }
+            if let Ok(profiles) = profiles {
+                window.set_mixer_profiles(ModelRc::from(Rc::new(VecModel::from(
+                    profiles
+                        .profiles
+                        .into_iter()
+                        .map(|profile| ProfileModel {
+                            name: profile.name.into(),
+                            active: profile.active,
+                        })
+                        .collect::<Vec<_>>(),
+                ))));
             }
         });
     });
