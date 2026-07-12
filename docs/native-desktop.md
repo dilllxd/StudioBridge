@@ -74,6 +74,9 @@ than copying its source or visual assets:
   170-by-27 master field, 24-pixel alternative rows, content-width popup,
   native outside/Escape dismissal, and mouse plus arrow-key activation;
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
+- a measured routing matrix with 112-pixel destinations, 90-pixel source
+  columns, 34-pixel row cadence, drawn teal/red state indicators, and accessible
+  keyboard toggles backed by exact PipeWeaver route commands;
 - PipeWeaver-backed Linux default recording and playback device selectors;
 - a device-information card with the measured Legal and Regulatory modal,
   keyboard dismissal, and permanently read-only USB2 driverless-mode state;

@@ -79,10 +79,16 @@ toolkit combo-box styling.
 - Each intersection is one large binary included/excluded control.
 - The table uses positive teal checks and negative red exclusions, making the
   entire signal graph readable without opening individual source cards.
+- The table begins 179 pixels into the contextual workspace. Destination labels
+  are 112 pixels wide, source columns are 90 pixels wide, and rows advance on a
+  34-pixel cadence with neutral 28-pixel cells. Each state is drawn as an
+  18-pixel circle: filled teal with a dark check when included, or a red ring
+  with a diagonal exclusion stroke when excluded.
 
 StudioBridge adaptation: render PipeWeaver targets as rows and mixer sources as
 columns, with accessible toggle buttons and source colors. Do not use a long
-list of source-to-target sentences.
+list of source-to-target sentences. The physical microphone is labelled Mic
+Relay in this matrix to match the familiar BEACN routing vocabulary.
 
 ## Microphone workspace
 

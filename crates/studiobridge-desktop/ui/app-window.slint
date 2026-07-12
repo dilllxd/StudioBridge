@@ -635,6 +635,44 @@ component ContextTab inherits Rectangle {
     TouchArea { clicked => { root.clicked(); } }
 }
 
+component RoutingToggle inherits Rectangle {
+    in property <RouteModel> route;
+    callback toggled;
+    width: 90px;
+    height: 34px;
+    background: transparent;
+    cell := Rectangle {
+        y: 5px; width: parent.width; height: 28px;
+        background: #1c1c1f;
+        border-width: 1px; border-color: #2e2e32;
+        indicator := Rectangle {
+            x: (parent.width - 18px) / 2; y: 5px; width: 18px; height: 18px;
+            border-radius: 9px;
+            border-width: 2px;
+            border-color: root.route.enabled ? Theme.teal : Theme.red;
+            background: root.route.enabled ? Theme.teal : transparent;
+            if root.route.enabled: Path {
+                width: parent.width; height: parent.height;
+                commands: "M 4 9 L 8 13 L 14 5";
+                fill: transparent; stroke: #17413f; stroke-width: 2px;
+            }
+            if !root.route.enabled: Path {
+                width: parent.width; height: parent.height;
+                commands: "M 4 14 L 14 4";
+                fill: transparent; stroke: Theme.red; stroke-width: 2px;
+            }
+        }
+    }
+    route-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: checkbox;
+        accessible-checked: root.route.enabled;
+        accessible-label: (root.route.enabled ? "Exclude " : "Include ") + root.route.source-name + " in " + root.route.target-name;
+        key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.toggled(); return accept; } return reject; }
+        TouchArea { clicked => { route-focus.focus(); root.toggled(); } }
+    }
+}
+
 component TargetStrip inherits Rectangle {
     in property <TargetModel> target;
     in property <[string]> output-device-names;
@@ -1418,30 +1456,29 @@ export component MainWindow inherits Window {
                 if root.mixer-context-page == 1: ScrollView {
                     vertical-stretch: 1;
                     GridLayout {
-                        x: 170px;
-                        spacing: 4px;
-                        for route in root.routes: Rectangle {
+                        x: 179px;
+                        y: 8px;
+                        spacing: 0px;
+                        for route in root.routes: RoutingToggle {
                             row: route.row + 1;
                             col: route.column + 1;
-                            width: 90px;
-                            height: 36px;
-                            border-radius: 3px;
-                            border-width: 1px;
-                            border-color: route.enabled ? Theme.teal : #653b37;
-                            background: route.enabled ? #153230 : #251a19;
-                            Text { text: route.enabled ? "✓" : "⊘"; color: route.enabled ? Theme.teal : Theme.red; font-size: 17px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
-                            TouchArea { clicked => { root.set-route(route.source-id, route.target-id, !route.enabled); } }
+                            route: route;
+                            toggled => { root.set-route(route.source-id, route.target-id, !route.enabled); }
                         }
                         for route in root.routes: Rectangle {
                             visible: route.row == 0;
-                            row: 0; col: route.column + 1; width: 90px; height: 36px; background: Theme.raised;
-                            Rectangle { y: parent.height - 4px; height: 4px; background: route.colour; }
-                            Text { text: route.source-name; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+                            row: 0; col: route.column + 1; width: 90px; height: 34px; background: #1c1c1f;
+                            border-width: 1px; border-color: #2e2e32;
+                            Text { text: route.source-id == "microphone" ? "Mic Relay" : route.source-name; color: Theme.text; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
                         }
                         for route in root.routes: Rectangle {
                             visible: route.column == 0;
-                            row: route.row + 1; col: 0; width: 110px; height: 36px; background: Theme.raised;
-                            VerticalLayout { padding-left: 10px; Text { text: route.target-name; color: Theme.text; font-size: 11px; font-weight: 800; } Text { text: route.target-mix; color: Theme.quiet; font-size: 9px; } }
+                            row: route.row + 1; col: 0; width: 112px; height: 34px; background: transparent;
+                            Rectangle {
+                                y: 5px; width: parent.width; height: 28px;
+                                background: #1c1c1f; border-width: 1px; border-color: #2e2e32;
+                                Text { x: 5px; width: parent.width - 10px; text: (route.target-id == "headphones" ? "Personal Mix" : route.target-name) + (route.target-id == "voice-chat-mic" ? " ⌄" : ""); color: Theme.text; font-size: 10px; font-weight: 800; vertical-alignment: center; overflow: elide; }
+                            }
                         }
                     }
                 }
