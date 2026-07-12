@@ -791,6 +791,74 @@ component ProcessorModeButton inherits Rectangle {
     TouchArea { enabled: root.interactive; clicked => { root.clicked(); } }
 }
 
+component LightingStyleRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked;
+    height: 32px;
+    background: root.selected ? #3a393e : transparent;
+    Text { x: 10px; text: root.label; color: root.selected ? Theme.text : Theme.quiet; font-size: 11px; font-weight: root.selected ? 700 : 400; vertical-alignment: center; }
+    style-focus := FocusScope {
+        accessible-role: button;
+        accessible-label: root.label;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    TouchArea { clicked => { style-focus.focus(); root.clicked(); } }
+}
+
+component LightingRadioRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked;
+    height: 25px;
+    Rectangle {
+        x: 4px; y: 5px; width: 16px; height: 16px; border-radius: 8px;
+        background: #2b2b2e; border-width: 2px; border-color: root.selected ? #8b8b90 : #69696e;
+        Rectangle { x: 4px; y: 4px; width: 6px; height: 6px; border-radius: 3px; background: root.selected ? Theme.teal : transparent; }
+    }
+    Text { x: 30px; width: parent.width - 30px; text: root.label; color: root.selected ? Theme.text : Theme.quiet; font-size: 10px; font-weight: root.selected ? 700 : 400; vertical-alignment: center; }
+    radio-focus := FocusScope {
+        accessible-role: button;
+        accessible-label: root.label;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    TouchArea { clicked => { radio-focus.focus(); root.clicked(); } }
+}
+
+component LightingColourSwatch inherits Rectangle {
+    in property <color> swatch-colour;
+    in property <bool> selected;
+    callback clicked;
+    width: 22px; height: 22px; border-radius: 3px;
+    background: root.swatch-colour;
+    border-width: root.selected ? 2px : 1px;
+    border-color: root.selected ? Theme.text : #242428;
+    colour-focus := FocusScope {
+        accessible-role: button;
+        accessible-label: "Choose preview colour";
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    TouchArea { clicked => { colour-focus.focus(); root.clicked(); } }
+}
+
 component ProcessorValueRow inherits Rectangle {
     in property <string> label;
     in property <string> value-label;
@@ -1191,8 +1259,10 @@ export component MainWindow inherits Window {
     in-out property <float> lighting-speed: 0;
     in-out property <float> lighting-brightness: 100;
     in-out property <int> lighting-style: 2;
-    in-out property <int> lighting-muted-mode: 0;
-    in-out property <int> lighting-suspended-mode: 0;
+    in-out property <int> lighting-muted-mode: 1;
+    in-out property <int> lighting-suspended-mode: 1;
+    in-out property <float> lighting-suspended-brightness: 50;
+    in-out property <int> lighting-colour-index: 0;
     in-out property <bool> start-at-login: false;
     in-out property <bool> close-to-tray: true;
     in-out property <bool> save-confirmation: true;
@@ -2014,64 +2084,85 @@ export component MainWindow inherits Window {
 
             if root.active-page == 2: VerticalLayout {
                 spacing: 0px;
-                Rectangle { height: 32px; background: #1b1b1e; Text { x: 10px; text: "BEACN STUDIO LIGHTING OPTIONS"; color: Theme.text; font-size: 12px; font-weight: 800; vertical-alignment: center; } }
+                Rectangle {
+                    height: 32px; background: #1b1b1e; border-width: 1px; border-color: Theme.border;
+                    Text { x: 10px; text: "BEACN STUDIO LIGHTING OPTIONS"; color: Theme.text; font-size: 12px; font-weight: 800; vertical-alignment: center; }
+                    Text { x: parent.width - 206px; width: 196px; text: "PREVIEW ONLY · NO DEVICE WRITES"; color: Theme.amber; font-size: 8px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
+                }
                 HorizontalLayout {
-                    height: 365px;
+                    height: 388px; spacing: 0px;
                     Rectangle {
-                        width: 200px;
-                        background: #232326;
-                        border-width: 1px; border-color: Theme.border;
+                        width: 200px; background: #232326; border-width: 1px; border-color: Theme.border;
+                        Text { x: 10px; y: 10px; height: 22px; text: "Lighting Style"; color: Theme.text; font-size: 11px; font-weight: 800; vertical-alignment: center; }
                         VerticalLayout {
-                            padding: 10px; spacing: 4px;
-                            Text { text: "Lighting Style"; color: Theme.text; font-size: 11px; font-weight: 800; }
-                            Rectangle { height: 34px; background: root.lighting-style == 0 ? #3a393e : transparent; Text { x: 10px; text: "Solid Colour"; color: root.lighting-style == 0 ? Theme.text : Theme.quiet; font-size: 11px; font-weight: root.lighting-style == 0 ? 700 : 400; vertical-alignment: center; } TouchArea { clicked => { root.lighting-style = 0; } } }
-                            Rectangle { height: 34px; background: root.lighting-style == 1 ? #3a393e : transparent; Text { x: 10px; text: "Peak Meter"; color: root.lighting-style == 1 ? Theme.text : Theme.quiet; font-size: 11px; font-weight: root.lighting-style == 1 ? 700 : 400; vertical-alignment: center; } TouchArea { clicked => { root.lighting-style = 1; } } }
-                            Rectangle { height: 34px; background: root.lighting-style == 2 ? #3a393e : transparent; Text { x: 10px; text: "Solid Spectrum"; color: root.lighting-style == 2 ? Theme.text : Theme.quiet; font-size: 11px; font-weight: root.lighting-style == 2 ? 700 : 400; vertical-alignment: center; } TouchArea { clicked => { root.lighting-style = 2; } } }
-                            Rectangle { vertical-stretch: 1; }
+                            x: 10px; y: 32px; width: parent.width - 10px; height: 96px; spacing: 0px;
+                            LightingStyleRow { label: "Solid Colour"; selected: root.lighting-style == 0; clicked => { root.lighting-style = 0; } }
+                            LightingStyleRow { label: "Peak Meter"; selected: root.lighting-style == 1; clicked => { root.lighting-style = 1; } }
+                            LightingStyleRow { label: "Solid Spectrum"; selected: root.lighting-style == 2; clicked => { root.lighting-style = 2; } }
                         }
                     }
                     Rectangle {
-                        width: 250px;
-                        background: #252528;
-                        border-width: 1px; border-color: Theme.border;
-                        VerticalLayout {
-                            padding: 14px; spacing: 8px;
-                            Text { text: "Speed and Direction"; color: Theme.text; font-size: 11px; font-weight: 800; }
-                            Text { text: round(root.lighting-speed); color: Theme.teal; font-size: 11px; }
-                            Slider { value: root.lighting-speed; minimum: -100; maximum: 100; changed(value) => { root.lighting-speed = value; } }
-                            Text { text: "Ring Brightness"; color: Theme.text; font-size: 11px; font-weight: 800; }
-                            Text { text: round(root.lighting-brightness); color: Theme.teal; font-size: 11px; }
-                            Slider { value: root.lighting-brightness; minimum: 0; maximum: 100; changed(value) => { root.lighting-brightness = value; } }
-                            Rectangle {
-                                vertical-stretch: 1; background: #141417; border-width: 1px; border-color: Theme.border;
-                                Rectangle { x: parent.width * 0.18; y: parent.height * 0.18; width: parent.height * 0.58; height: parent.height * 0.58; border-radius: parent.height * 0.29; border-width: 8px; border-color: root.lighting-style == 0 ? #43c7c0 : root.lighting-style == 1 ? Theme.amber : #ce4cbd; background: #202024; }
-                                Text { x: parent.width * 0.55; width: parent.width * 0.38; text: root.lighting-style == 0 ? "SOLID COLOUR" : root.lighting-style == 1 ? "PEAK METER" : "SOLID SPECTRUM"; color: Theme.text; font-size: 13px; font-weight: 800; vertical-alignment: center; }
-                            }
-                        }
+                        horizontal-stretch: 1; background: #252528; border-width: 1px; border-color: Theme.border;
+                        Text { x: 16px; y: 10px; height: 18px; text: "Speed and Direction"; color: Theme.text; font-size: 11px; font-weight: 800; vertical-alignment: center; }
+                        Text { x: 24px; y: 31px; width: 28px; height: 18px; text: round(root.lighting-speed); color: Theme.teal; font-size: 10px; vertical-alignment: center; }
+                        Slider { x: 55px; y: 27px; width: 243px; height: 22px; value: root.lighting-speed; minimum: -100; maximum: 100; changed(value) => { root.lighting-speed = value; } }
+                        Text { x: 16px; y: 58px; height: 18px; text: "Ring Brightness"; color: Theme.text; font-size: 11px; font-weight: 800; vertical-alignment: center; }
+                        Text { x: 24px; y: 80px; width: 28px; height: 18px; text: round(root.lighting-brightness); color: Theme.teal; font-size: 10px; vertical-alignment: center; }
+                        Slider { x: 55px; y: 76px; width: 243px; height: 22px; value: root.lighting-brightness; minimum: 0; maximum: 100; changed(value) => { root.lighting-brightness = value; } }
                     }
                 }
-                Rectangle { height: 32px; background: #1b1b1e; Text { x: 10px; text: "BEACN STUDIO OTHER LIGHTING OPTIONS"; color: Theme.text; font-size: 12px; font-weight: 800; vertical-alignment: center; } }
-                Rectangle {
-                    vertical-stretch: 1; background: #252528; border-width: 1px; border-color: Theme.border;
-                    HorizontalLayout {
-                        padding: 14px; spacing: 28px;
+                Rectangle { height: 32px; background: #1b1b1e; border-width: 1px; border-color: Theme.border; Text { x: 10px; text: "BEACN STUDIO OTHER LIGHTING OPTIONS"; color: Theme.text; font-size: 12px; font-weight: 800; vertical-alignment: center; } }
+                HorizontalLayout {
+                    vertical-stretch: 1; spacing: 0px;
+                    Rectangle {
+                        width: 351px; background: #252528; border-width: 1px; border-color: Theme.border;
+                        Text { x: 10px; y: 10px; height: 20px; text: "When Muted"; color: Theme.text; font-size: 11px; font-weight: 800; vertical-alignment: center; }
                         VerticalLayout {
-                            horizontal-stretch: 1; spacing: 9px;
-                            Text { height: 18px; text: "WHEN MUTED"; color: Theme.text; font-size: 11px; font-weight: 800; }
-                            Text { height: 18px; text: "Choose the local preview shown for a muted microphone."; color: Theme.quiet; font-size: 9px; }
-                            HorizontalLayout { height: 28px; spacing: 16px; Text { text: root.lighting-muted-mode == 0 ? "● Off" : "○ Off"; color: root.lighting-muted-mode == 0 ? Theme.teal : Theme.quiet; font-size: 10px; TouchArea { clicked => { root.lighting-muted-mode = 0; } } } Text { text: root.lighting-muted-mode == 1 ? "● Solid Colour" : "○ Solid Colour"; color: root.lighting-muted-mode == 1 ? Theme.teal : Theme.quiet; font-size: 10px; TouchArea { clicked => { root.lighting-muted-mode = 1; } } } Text { text: root.lighting-muted-mode == 2 ? "● Dim" : "○ Dim"; color: root.lighting-muted-mode == 2 ? Theme.teal : Theme.quiet; font-size: 10px; TouchArea { clicked => { root.lighting-muted-mode = 2; } } } }
-                            HorizontalLayout { height: 34px; spacing: 8px; Rectangle { width: 28px; background: #e74d54; border-radius: 14px; } Rectangle { width: 28px; background: #43c7c0; border-radius: 14px; } Rectangle { width: 28px; background: #7f56d9; border-radius: 14px; } Rectangle { width: 28px; background: #f1b83b; border-radius: 14px; } }
-                            Rectangle { vertical-stretch: 1; }
+                            x: 10px; y: 31px; width: 280px; height: 75px; spacing: 0px;
+                            LightingRadioRow { label: "Do Nothing"; selected: root.lighting-muted-mode == 0; clicked => { root.lighting-muted-mode = 0; } }
+                            LightingRadioRow { label: "Turn LED Ring to a Solid Colour"; selected: root.lighting-muted-mode == 1; clicked => { root.lighting-muted-mode = 1; } }
+                            LightingRadioRow { label: "Turn Off LED Ring"; selected: root.lighting-muted-mode == 2; clicked => { root.lighting-muted-mode = 2; } }
                         }
-                        Rectangle { width: 1px; background: Theme.border; }
+                        Text { x: 10px; y: 113px; height: 20px; text: "Colour"; color: Theme.text; font-size: 11px; font-weight: 800; vertical-alignment: center; }
+                        Rectangle { x: 10px; y: 135px; width: 46px; height: 46px; border-radius: 10px; background: root.lighting-colour-index == 0 ? #f5000b : root.lighting-colour-index == 1 ? #ff3b00 : root.lighting-colour-index == 2 ? #ffe600 : root.lighting-colour-index == 3 ? #2ad83c : root.lighting-colour-index == 4 ? #00d5b7 : root.lighting-colour-index == 5 ? #16cde2 : root.lighting-colour-index == 6 ? #1474ed : root.lighting-colour-index == 7 ? #633ee8 : root.lighting-colour-index == 8 ? #9c1de1 : root.lighting-colour-index == 9 ? #e500c8 : root.lighting-colour-index == 10 ? #fa006e : #43b6aa; }
+                        HorizontalLayout {
+                            x: 59px; y: 135px; width: 239px; height: 22px; spacing: 2px;
+                            LightingColourSwatch { swatch-colour: #f5000b; selected: root.lighting-colour-index == 0; clicked => { root.lighting-colour-index = 0; } }
+                            LightingColourSwatch { swatch-colour: #ff3b00; selected: root.lighting-colour-index == 1; clicked => { root.lighting-colour-index = 1; } }
+                            LightingColourSwatch { swatch-colour: #ffe600; selected: root.lighting-colour-index == 2; clicked => { root.lighting-colour-index = 2; } }
+                            LightingColourSwatch { swatch-colour: #2ad83c; selected: root.lighting-colour-index == 3; clicked => { root.lighting-colour-index = 3; } }
+                            LightingColourSwatch { swatch-colour: #00d5b7; selected: root.lighting-colour-index == 4; clicked => { root.lighting-colour-index = 4; } }
+                            LightingColourSwatch { swatch-colour: #16cde2; selected: root.lighting-colour-index == 5; clicked => { root.lighting-colour-index = 5; } }
+                            LightingColourSwatch { swatch-colour: #1474ed; selected: root.lighting-colour-index == 6; clicked => { root.lighting-colour-index = 6; } }
+                            LightingColourSwatch { swatch-colour: #633ee8; selected: root.lighting-colour-index == 7; clicked => { root.lighting-colour-index = 7; } }
+                            LightingColourSwatch { swatch-colour: #9c1de1; selected: root.lighting-colour-index == 8; clicked => { root.lighting-colour-index = 8; } }
+                            LightingColourSwatch { swatch-colour: #e500c8; selected: root.lighting-colour-index == 9; clicked => { root.lighting-colour-index = 9; } }
+                        }
+                        HorizontalLayout {
+                            x: 59px; y: 159px; width: 239px; height: 22px; spacing: 2px;
+                            LightingColourSwatch { swatch-colour: #43b6aa; selected: root.lighting-colour-index == 11; clicked => { root.lighting-colour-index = 11; } }
+                            LightingColourSwatch { swatch-colour: #62cb70; selected: root.lighting-colour-index == 12; clicked => { root.lighting-colour-index = 12; } }
+                            LightingColourSwatch { swatch-colour: #5795cf; selected: root.lighting-colour-index == 13; clicked => { root.lighting-colour-index = 13; } }
+                            LightingColourSwatch { swatch-colour: #7b67c5; selected: root.lighting-colour-index == 14; clicked => { root.lighting-colour-index = 14; } }
+                            LightingColourSwatch { swatch-colour: #bd4368; selected: root.lighting-colour-index == 15; clicked => { root.lighting-colour-index = 15; } }
+                            LightingColourSwatch { swatch-colour: #e2ba41; selected: root.lighting-colour-index == 16; clicked => { root.lighting-colour-index = 16; } }
+                            LightingColourSwatch { swatch-colour: #d07d37; selected: root.lighting-colour-index == 17; clicked => { root.lighting-colour-index = 17; } }
+                            LightingColourSwatch { swatch-colour: #c45c3f; selected: root.lighting-colour-index == 18; clicked => { root.lighting-colour-index = 18; } }
+                            LightingColourSwatch { swatch-colour: #9aa0a0; selected: root.lighting-colour-index == 19; clicked => { root.lighting-colour-index = 19; } }
+                            LightingColourSwatch { swatch-colour: #68808d; selected: root.lighting-colour-index == 20; clicked => { root.lighting-colour-index = 20; } }
+                        }
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1; background: #252528; border-width: 1px; border-color: Theme.border;
+                        Text { x: 12px; y: 10px; height: 20px; text: "When USB Is Suspended"; color: Theme.text; font-size: 11px; font-weight: 800; vertical-alignment: center; }
                         VerticalLayout {
-                            horizontal-stretch: 1; spacing: 9px;
-                            Text { height: 18px; text: "WHEN USB IS SUSPENDED"; color: Theme.text; font-size: 11px; font-weight: 800; }
-                            Text { height: 18px; text: "Choose the local preview for a suspended host connection."; color: Theme.quiet; font-size: 9px; }
-                            HorizontalLayout { height: 28px; spacing: 16px; Text { text: root.lighting-suspended-mode == 0 ? "● Off" : "○ Off"; color: root.lighting-suspended-mode == 0 ? Theme.teal : Theme.quiet; font-size: 10px; TouchArea { clicked => { root.lighting-suspended-mode = 0; } } } Text { text: root.lighting-suspended-mode == 1 ? "● Solid Colour" : "○ Solid Colour"; color: root.lighting-suspended-mode == 1 ? Theme.teal : Theme.quiet; font-size: 10px; TouchArea { clicked => { root.lighting-suspended-mode = 1; } } } Text { text: root.lighting-suspended-mode == 2 ? "● Dim" : "○ Dim"; color: root.lighting-suspended-mode == 2 ? Theme.teal : Theme.quiet; font-size: 10px; TouchArea { clicked => { root.lighting-suspended-mode = 2; } } } }
-                            Text { text: "Preview controls only — StudioBridge never sends lighting writes."; color: Theme.amber; font-size: 9px; }
-                            Rectangle { vertical-stretch: 1; }
+                            x: 12px; y: 31px; width: 280px; height: 75px; spacing: 0px;
+                            LightingRadioRow { label: "Do Nothing"; selected: root.lighting-suspended-mode == 0; clicked => { root.lighting-suspended-mode = 0; } }
+                            LightingRadioRow { label: "Turn Off LED Ring"; selected: root.lighting-suspended-mode == 1; clicked => { root.lighting-suspended-mode = 1; } }
+                            LightingRadioRow { label: "Change the Brightness to:"; selected: root.lighting-suspended-mode == 2; clicked => { root.lighting-suspended-mode = 2; } }
                         }
+                        Slider { x: 44px; y: 114px; width: 277px; height: 22px; enabled: root.lighting-suspended-mode == 2; value: root.lighting-suspended-brightness; minimum: 0; maximum: 100; changed(value) => { root.lighting-suspended-brightness = value; } }
+                        Text { x: 12px; y: parent.height - 22px; width: parent.width - 24px; height: 16px; text: "Local visual preview only — StudioBridge never sends lighting commands."; color: Theme.amber; font-size: 8px; vertical-alignment: center; }
                     }
                 }
             }

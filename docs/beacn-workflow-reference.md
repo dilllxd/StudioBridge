@@ -131,6 +131,27 @@ still the only operation that can send the staged state to the daemon.
 The unsupported Mic Output gain remains visibly read-only instead of guessing a
 device command or exposing a write path.
 
+## Lighting workspace
+
+- The 1047-pixel workspace uses a 32-pixel section header followed by a
+  388-pixel Lighting Options panel. Its style column is 200 pixels wide; the
+  remaining panel contains Speed and Direction and Ring Brightness sliders
+  aligned near the leading edge, with no decorative device preview.
+- Solid Colour, Peak Meter, and Solid Spectrum are 32-pixel style rows. The
+  selected style uses the same raised grey row treatment as other BEACN lists.
+- A second 32-pixel header separates Other Lighting Options. The lower panel is
+  split 351 pixels from its leading edge into When Muted and When USB Is
+  Suspended sections.
+- When Muted uses three radio rows followed by a large selected-colour swatch
+  and a compact two-row palette. When USB Is Suspended uses three radio rows
+  followed by a brightness slider.
+
+StudioBridge adaptation: reproduce this geometry and interaction model as a
+strictly local visual preview. Style, radio, palette, and brightness changes do
+not call the daemon, do not persist a device command, and do not create any
+lighting write path. The workspace states that it is preview-only while the
+global hardware-write gate remains off.
+
 ## Device settings
 
 - Device Settings presents the device name, serial number, firmware version,
