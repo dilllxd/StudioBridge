@@ -263,6 +263,14 @@ component SourceStrip inherits Rectangle {
     in-out property <bool> mute-menu-open: false;
     in-out property <bool> dragging: false;
     in-out property <length> drag-distance: 0px;
+    in property <bool> application-dragging: false;
+    in property <length> application-drag-x: 0px;
+    in property <length> application-drag-y: 0px;
+    property <bool> application-hovered: root.application-dragging
+        && root.application-drag-x >= root.absolute-position.x
+        && root.application-drag-x < root.absolute-position.x + root.width
+        && root.application-drag-y >= root.absolute-position.y
+        && root.application-drag-y < root.absolute-position.y + root.height;
     callback personal-changed(float);
     callback audience-changed(float);
     callback personal-mute;
@@ -276,7 +284,7 @@ component SourceStrip inherits Rectangle {
     height: 398px;
     border-radius: 2px;
     border-width: 1px;
-    border-color: root.dragging ? Theme.teal : Theme.border;
+    border-color: root.dragging || root.application-hovered ? Theme.teal : Theme.border;
     background: Theme.panel;
     opacity: root.dragging ? 0.82 : 1.0;
     VerticalLayout {
@@ -427,6 +435,14 @@ component SourceStrip inherits Rectangle {
                 self-touch := TouchArea { clicked => { root.mute-menu-open = false; root.mute-action-selected("personal"); } }
             }
         }
+    }
+    Rectangle {
+        visible: root.application-hovered;
+        z: 29;
+        width: parent.width; height: parent.height;
+        border-width: 2px; border-color: Theme.teal; border-radius: 3px;
+        background: #163b3977;
+        Text { text: "DROP ON " + root.source.name.to-uppercase(); color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
     }
 }
 
@@ -720,6 +736,11 @@ export component MainWindow inherits Window {
     in-out property <string> hotkey-editor-label: "";
     in-out property <string> hotkey-editor-input: "";
     in-out property <string> hotkey-editor-key-label: "";
+    in-out property <string> last-application-drag: "";
+    in-out property <bool> application-pointer-dragging: false;
+    in-out property <length> application-pointer-x: 0px;
+    in-out property <length> application-pointer-y: 0px;
+    in-out property <string> dragged-application-process: "";
 
     callback refresh;
     callback set-volume(string, string, float);
@@ -798,7 +819,7 @@ export component MainWindow inherits Window {
                     clip: true;
                     horizontal-stretch: 1;
                     background: transparent;
-                    ScrollView {
+                    source-scroll := ScrollView {
                         width: parent.width;
                         height: parent.height;
                         HorizontalLayout {
@@ -806,6 +827,9 @@ export component MainWindow inherits Window {
                             for source[index] in root.sources: SourceStrip {
                                 source: source;
                                 source-index: index;
+                                application-dragging: root.application-pointer-dragging;
+                                application-drag-x: root.application-pointer-x;
+                                application-drag-y: root.application-pointer-y;
                                 personal-changed(value) => { root.set-volume(source.channel-id, "personal", value); }
                                 audience-changed(value) => { root.set-volume(source.channel-id, "audience", value); }
                                 personal-mute => { root.set-source-mute(source.channel-id, "personal", !source.personal-muted); }
@@ -923,8 +947,89 @@ export component MainWindow inherits Window {
                         VerticalLayout {
                             padding: 9px; spacing: 6px;
                             Text { text: "APPLICATIONS"; color: Theme.text; font-size: 11px; font-weight: 800; }
-                            Text { text: "Assign Linux applications to a mixer source"; color: Theme.quiet; font-size: 9px; }
-                            ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 6px; for app in root.linux-applications: AssignmentRow { title: app.title; HorizontalLayout { padding-left: 8px; padding-right: 6px; VerticalLayout { horizontal-stretch: 1; Text { text: app.title; color: Theme.text; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: app.process; color: Theme.quiet; font-size: 8px; overflow: elide; } } ComboBox { width: 94px; model: root.mixer-channel-names; current-index: app.channel-index; selected(value) => { root.assign-linux-application(app.process, app.name, self.current-index); } } } } } }
+                            Text { text: "Drag applications onto a source, or use the selector"; color: Theme.quiet; font-size: 9px; }
+                            Text { height: 14px; text: root.last-application-drag; color: Theme.teal; font-size: 8px; }
+                            unassign-target := Rectangle {
+                                height: 25px;
+                                property <bool> drag-hovered: root.application-pointer-dragging
+                                    && root.application-pointer-x >= self.absolute-position.x
+                                    && root.application-pointer-x < self.absolute-position.x + self.width
+                                    && root.application-pointer-y >= self.absolute-position.y
+                                    && root.application-pointer-y < self.absolute-position.y + self.height;
+                                border-width: 1px; border-color: self.drag-hovered ? Theme.red : Theme.border;
+                                background: self.drag-hovered ? #43221f : #1b1b1e;
+                                Text { text: "UNASSIGNED DROP TARGET"; color: unassign-target.drag-hovered ? #f0b0aa : Theme.quiet; font-size: 8px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            ScrollView {
+                                vertical-stretch: 1;
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    for app in root.linux-applications: AssignmentRow {
+                                        title: app.title;
+                                        background: root.application-pointer-dragging && root.dragged-application-process == app.process ? #24413f : Theme.raised;
+                                        HorizontalLayout {
+                                            padding-left: 8px; padding-right: 6px; spacing: 6px;
+                                            Rectangle {
+                                                width: 18px;
+                                                height: parent.height;
+                                                Text { text: "⠿"; color: root.application-pointer-dragging && root.dragged-application-process == app.process ? Theme.teal : #626167; font-size: 10px; vertical-alignment: center; }
+                                                app-drag-touch := TouchArea {
+                                                    mouse-cursor: root.application-pointer-dragging && root.dragged-application-process == app.process ? MouseCursor.grabbing : MouseCursor.grab;
+                                                    pointer-event(event) => {
+                                                        let pointer-x = self.absolute-position.x + self.mouse-x;
+                                                        let pointer-y = self.absolute-position.y + self.mouse-y;
+                                                        if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                                                            root.application-pointer-dragging = true;
+                                                            root.dragged-application-process = app.process;
+                                                            root.application-pointer-x = pointer-x;
+                                                            root.application-pointer-y = pointer-y;
+                                                            root.last-application-drag = "Dragging " + app.title;
+                                                        } else if event.kind == PointerEventKind.move && root.application-pointer-dragging && root.dragged-application-process == app.process {
+                                                            root.application-pointer-x = pointer-x;
+                                                            root.application-pointer-y = pointer-y;
+                                                        } else if event.kind == PointerEventKind.up && root.application-pointer-dragging && root.dragged-application-process == app.process {
+                                                            root.application-pointer-x = pointer-x;
+                                                            root.application-pointer-y = pointer-y;
+                                                            root.application-pointer-dragging = false;
+                                                            root.dragged-application-process = "";
+                                                            if pointer-x >= unassign-target.absolute-position.x
+                                                                && pointer-x < unassign-target.absolute-position.x + unassign-target.width
+                                                                && pointer-y >= unassign-target.absolute-position.y
+                                                                && pointer-y < unassign-target.absolute-position.y + unassign-target.height {
+                                                                root.assign-linux-application(app.process, app.name, 0);
+                                                                root.last-application-drag = app.title + " unassigned";
+                                                            } else if pointer-x >= source-scroll.absolute-position.x
+                                                                && pointer-x < source-scroll.absolute-position.x + source-scroll.width
+                                                                && pointer-y >= source-scroll.absolute-position.y
+                                                                && pointer-y < source-scroll.absolute-position.y + source-scroll.height {
+                                                                let source-position = floor((pointer-x - source-scroll.absolute-position.x - source-scroll.viewport-x) / 137px);
+                                                                if source-position >= 0 && source-position < root.sources.length {
+                                                                    root.assign-linux-application(app.process, app.name, source-position + 1);
+                                                                    root.last-application-drag = app.title + " assigned to " + root.sources[source-position].name;
+                                                                } else {
+                                                                    root.last-application-drag = "Application drag cancelled";
+                                                                }
+                                                            } else {
+                                                                root.last-application-drag = "Application drag cancelled";
+                                                            }
+                                                        } else if event.kind == PointerEventKind.cancel {
+                                                            root.application-pointer-dragging = false;
+                                                            root.dragged-application-process = "";
+                                                            root.last-application-drag = "Application drag cancelled";
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            VerticalLayout {
+                                                horizontal-stretch: 1;
+                                                Text { text: app.title; color: Theme.text; font-size: 11px; font-weight: 700; overflow: elide; }
+                                                Text { text: app.process; color: Theme.quiet; font-size: 8px; overflow: elide; }
+                                            }
+                                            ComboBox { width: 94px; model: root.mixer-channel-names; current-index: app.channel-index; selected(value) => { root.assign-linux-application(app.process, app.name, self.current-index); } }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }

@@ -32,9 +32,10 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
   does not imply a one-app-per-channel limit.
 - Empty destinations remain visible as drop/assignment targets.
 
-StudioBridge adaptation: show Windows Link and Linux PipeWire application pools
-in the mixer Assignments tab, group them by destination, support keyboard/touch
-selectors and drag/drop, and keep unassigned applications visible.
+StudioBridge adaptation: Windows Link and Linux PipeWire application pools live
+in the mixer Assignments tab. Linux application chips can be dragged directly
+onto a source or the unassign target, while keyboard/touch selectors remain
+available and unassigned applications stay visible.
 
 ## Routing table
 
