@@ -260,10 +260,42 @@ component MixFader inherits Rectangle {
     }
 }
 
+component MuteActionRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback activated;
+    height: 20px;
+    background: action-touch.has-hover ? #3a393e : transparent;
+    action-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: button;
+        accessible-label: root.label;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                root.activated();
+                return accept;
+            }
+            return reject;
+        }
+        Text {
+            x: 5px; width: 11px;
+            text: root.selected ? "✓" : "";
+            color: Theme.quiet; font-size: 9px; font-weight: 700;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+        Text {
+            x: 20px; width: parent.width - 24px;
+            text: root.label;
+            color: Theme.text; font-size: 9px; font-weight: 700;
+            vertical-alignment: center;
+        }
+        action-touch := TouchArea { clicked => { action-focus.focus(); root.activated(); } }
+    }
+}
+
 component SourceStrip inherits Rectangle {
     in property <SourceModel> source;
     in property <int> source-index;
-    in-out property <bool> mute-menu-open: false;
     in-out property <bool> dragging: false;
     in-out property <length> drag-distance: 0px;
     in property <bool> application-dragging: false;
@@ -414,7 +446,19 @@ component SourceStrip inherits Rectangle {
                 x: parent.width - 20px; width: 20px; height: parent.height;
                 Rectangle { width: 1px; height: parent.height; background: #303034; }
                 Text { text: "v"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
-                TouchArea { clicked => { root.mute-menu-open = !root.mute-menu-open; } }
+                mute-menu-focus := FocusScope {
+                    width: parent.width; height: parent.height;
+                    accessible-role: button;
+                    accessible-label: "Choose mute action for " + root.source.name;
+                    key-pressed(event) => {
+                        if event.text == Key.Return || event.text == Key.Space {
+                            if mute-menu.is-open { mute-menu.close(); } else { mute-menu.show(); }
+                            return accept;
+                        }
+                        return reject;
+                    }
+                    TouchArea { clicked => { mute-menu-focus.focus(); if mute-menu.is-open { mute-menu.close(); } else { mute-menu.show(); } } }
+                }
             }
             TouchArea { width: parent.width - 20px; clicked => { root.mute-action(root.source.mute-action); } }
         }
@@ -442,27 +486,26 @@ component SourceStrip inherits Rectangle {
             }
         }
     }
-    Rectangle {
-        visible: root.mute-menu-open;
-        z: 25;
-        x: 0px; y: 315px; width: 116px; height: 60px;
-        background: #2d2d31; border-width: 1px; border-color: #4b4b50; border-radius: 2px;
-        VerticalLayout {
-            spacing: 0px;
-            Rectangle {
-                height: 20px; background: all-touch.has-hover ? #3a393e : transparent;
-                Text { x: 7px; text: (root.source.mute-action == "all" ? "✓  " : "    ") + "Mute to All"; color: Theme.text; font-size: 9px; vertical-alignment: center; }
-                all-touch := TouchArea { clicked => { root.mute-menu-open = false; root.mute-action-selected("all"); } }
-            }
-            Rectangle {
-                height: 20px; background: audience-touch.has-hover ? #3a393e : transparent;
-                Text { x: 7px; text: (root.source.mute-action == "audience" ? "✓  " : "    ") + "Mute to Audience"; color: Theme.text; font-size: 9px; vertical-alignment: center; }
-                audience-touch := TouchArea { clicked => { root.mute-menu-open = false; root.mute-action-selected("audience"); } }
-            }
-            Rectangle {
-                height: 20px; background: self-touch.has-hover ? #3a393e : transparent;
-                Text { x: 7px; text: (root.source.mute-action == "personal" ? "✓  " : "    ") + "Mute to Chat"; color: Theme.text; font-size: 9px; vertical-alignment: center; }
-                self-touch := TouchArea { clicked => { root.mute-menu-open = false; root.mute-action-selected("personal"); } }
+    mute-menu := PopupWindow {
+        x: 116px; y: 326px; width: 112px; height: 60px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            width: parent.width; height: parent.height;
+            background: #2d2d31; border-width: 1px; border-color: #242326;
+            VerticalLayout {
+                spacing: 0px;
+                MuteActionRow {
+                    label: "Mute to All"; selected: root.source.mute-action == "all";
+                    activated => { mute-menu.close(); root.mute-action-selected("all"); }
+                }
+                MuteActionRow {
+                    label: "Mute to Audience"; selected: root.source.mute-action == "audience";
+                    activated => { mute-menu.close(); root.mute-action-selected("audience"); }
+                }
+                MuteActionRow {
+                    label: "Mute to Chat"; selected: root.source.mute-action == "personal";
+                    activated => { mute-menu.close(); root.mute-action-selected("personal"); }
+                }
             }
         }
     }

@@ -19,9 +19,12 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
 - The arrow at the trailing edge of a source header opens a compact 93-by-20
   Delete Knob popup anchored over the next strip. Clicking outside or pressing
   Escape dismisses it without changing the mixer.
-- The compact mute action at the bottom of each strip has a separate arrow menu
-  with Mute to All, Mute to Audience, and Mute to Chat. Selecting an item changes
-  the action (shown with a checkmark); pressing the main area applies that action.
+- The compact mute action at the bottom of each strip has a separate arrow menu:
+  a 112-by-60 popup anchored over the next strip, with three 20-pixel rows for
+  Mute to All, Mute to Audience, and Mute to Chat. The active action is shown
+  with a checkmark. Selecting a row changes the main action and closes the menu;
+  clicking outside or pressing Escape dismisses it without changing the action.
+  Pressing the main area applies the selected action.
 - Personal and Audience master devices remain visible directly below the
   source strips. The Personal card combines its playback-device selector and
   master level, while the Audience card keeps the virtual mix and master level
