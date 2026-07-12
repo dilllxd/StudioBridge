@@ -83,7 +83,8 @@ than copying its source or visual assets:
   confirmation or cancellation;
 - BEACN-style key-mapping capture that listens for the next native key chord,
   previews its primary key, validates it, and persists the complete binding in
-  a measured 316-by-160 blocking dialog with disabled-until-valid confirmation;
+  a measured 350-by-175 blocking dialog with disabled-until-valid confirmation
+  and BEACN-matched Escape-key capture;
 - BEACN-measured application settings rows with 18-by-18 square checkboxes,
   keyboard toggling, checkbox accessibility state, and Linux-specific labels;
 - native application chips that drag onto source strips, with accepted-drop

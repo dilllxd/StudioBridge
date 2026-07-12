@@ -1953,24 +1953,20 @@ export component MainWindow inherits Window {
         TouchArea { width: parent.width; height: parent.height; }
         Rectangle {
             z: 1;
-            x: (parent.width - 316px) / 2; y: (parent.height - 160px) / 2; width: 316px; height: 160px;
+            x: (parent.width - 350px) / 2; y: (parent.height - 176px) / 2; width: 350px; height: 176px;
             background: #28282b; border-width: 1px; border-color: #414145; border-radius: 7px;
-            Text { x: 0px; y: 29px; width: parent.width; height: 22px; text: "New key mapping"; color: Theme.text; font-size: 15px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+            Text { x: 0px; y: 29px; width: parent.width; height: 22px; text: "New key-mapping"; color: Theme.text; font-size: 15px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
             Text {
-                x: 16px; y: 73px; width: parent.width - 32px; height: 22px;
+                x: 16px; y: 77px; width: parent.width - 32px; height: 22px;
                 text: root.hotkey-editor-key-label == "" ? "Please press a key combination now..." : "Key: " + root.hotkey-editor-key-label;
                 color: Theme.text; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center;
             }
-            Button { x: 63px; y: 114px; width: 68px; height: 38px; text: "OK"; enabled: root.hotkey-editor-input != ""; clicked => { root.save-hotkey(root.hotkey-editor-action, root.hotkey-editor-input); root.hotkey-editor-open = false; } }
-            Button { x: 147px; y: 114px; width: 106px; height: 38px; text: "Cancel"; clicked => { root.hotkey-editor-open = false; } }
+            Button { x: 71px; y: 125px; width: 74px; height: 40px; text: "OK"; enabled: root.hotkey-editor-input != ""; clicked => { root.save-hotkey(root.hotkey-editor-action, root.hotkey-editor-input); root.hotkey-editor-open = false; } }
+            Button { x: 163px; y: 125px; width: 115px; height: 40px; text: "Cancel"; clicked => { root.hotkey-editor-open = false; } }
         }
         hotkey-capture := FocusScope {
             init => { self.focus(); }
             key-pressed(event) => {
-                if event.text == Key.Escape {
-                    root.hotkey-editor-open = false;
-                    return accept;
-                }
                 let binding = root.normalize-hotkey(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift, event.modifiers.meta);
                 if binding != "" {
                     root.hotkey-editor-input = binding;

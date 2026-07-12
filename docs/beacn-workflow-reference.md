@@ -117,10 +117,11 @@ opening or dismissing the dialog never enters a hardware write path.
   retain a dark fill and grey outline rather than becoming pill switches.
 - Hotkey assignments continue below the preferences in the same column, grouped
   by profile and mute sections.
-- Selecting an unassigned hotkey opens a blocking 316-by-160 New key mapping
+- Selecting an unassigned hotkey opens a blocking 350-by-175 New key-mapping
   dialog. It prompts for the next key combination, keeps OK disabled until a
-  valid mapping is captured, uses 68-by-38 OK and 106-by-38 Cancel actions, and
-  cancels on Escape without letting clicks reach the settings page underneath.
+  valid mapping is captured, and uses 74-by-40 OK and 115-by-40 Cancel actions.
+  Escape is captured as a valid mapping rather than dismissing the dialog;
+  Cancel closes it without letting clicks reach the settings page underneath.
 
 StudioBridge adaptation: preserve the same settings hierarchy and checkbox
 geometry while using System Startup, System Tray, and Linux Audio wording where

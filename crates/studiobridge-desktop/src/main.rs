@@ -352,6 +352,7 @@ fn hotkey_key_name(text: &str) -> Option<String> {
     }
 
     let special_keys = [
+        (Key::Escape, "escape"),
         (Key::Backspace, "Backspace"),
         (Key::Tab, "Tab"),
         (Key::Return, "Enter"),
@@ -2161,6 +2162,12 @@ mod desktop_tests {
         let shifted_digit = normalize_captured_hotkey("!", true, false, true, false).unwrap();
         assert_eq!(shifted_digit, "ctrl + shift + 1");
         assert!(shifted_digit.parse::<HotKey>().is_ok());
+
+        let escape = char::from(Key::Escape).to_string();
+        let escape_binding = normalize_captured_hotkey(&escape, false, false, false, false)
+            .expect("Escape should be capturable like it is in BEACN");
+        assert_eq!(escape_binding, "escape");
+        assert!(escape_binding.parse::<HotKey>().is_ok());
     }
 
     #[test]
