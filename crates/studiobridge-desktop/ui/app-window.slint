@@ -627,12 +627,19 @@ component SourceStrip inherits Rectangle {
 component ContextTab inherits Rectangle {
     in property <string> label;
     in property <bool> active;
+    in property <length> tab-width: 126px;
     callback clicked;
-    width: 126px;
-    background: active ? #1b292d : transparent;
+    width: root.tab-width;
+    background: active ? #3a393e : transparent;
     Text { text: root.label; color: root.active ? Theme.teal : Theme.quiet; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
     Rectangle { y: parent.height - 2px; height: 2px; background: root.active ? Theme.teal : transparent; }
-    TouchArea { clicked => { root.clicked(); } }
+    context-tab-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: tab;
+        accessible-label: root.label;
+        key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.clicked(); return accept; } return reject; }
+        TouchArea { clicked => { context-tab-focus.focus(); root.clicked(); } }
+    }
 }
 
 component RoutingToggle inherits Rectangle {
@@ -1325,8 +1332,8 @@ export component MainWindow inherits Window {
                     background: #0f1517;
                     HorizontalLayout {
                         spacing: 0px;
-                        ContextTab { label: "ASSIGNMENTS"; active: root.mixer-context-page == 0; clicked => { root.mixer-context-page = 0; } }
-                        ContextTab { label: "ROUTING TABLE"; active: root.mixer-context-page == 1; clicked => { root.mixer-context-page = 1; } }
+                        ContextTab { tab-width: 126px; label: "ASSIGNMENTS"; active: root.mixer-context-page == 0; clicked => { root.mixer-context-page = 0; } }
+                        ContextTab { tab-width: 135px; label: "ROUTING TABLE"; active: root.mixer-context-page == 1; clicked => { root.mixer-context-page = 1; } }
                         Rectangle { horizontal-stretch: 1; }
                     }
                 }

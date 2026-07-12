@@ -42,6 +42,9 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
   the popup without changing the mixer.
 - Assignments and Routing Table are contextual tabs below the mixer. They do
   not replace the mixer with unrelated full-screen pages.
+- The contextual tab strip uses a 126-pixel Assignments tab and a 135-pixel
+  Routing Table tab with a raised active fill, teal label, and two-pixel teal
+  underline.
 - Profiles occupy a secondary right rail and do not compete with live mixer
   controls.
 - Mixer profiles use compact 22-pixel rows. Hovering a row reveals Save,
