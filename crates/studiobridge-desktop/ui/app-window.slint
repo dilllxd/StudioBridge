@@ -744,16 +744,47 @@ component ToggleSwitch inherits Rectangle {
     TouchArea { enabled: root.interactive; clicked => { root.checked = !root.checked; root.toggled(root.checked); } }
 }
 
+component SettingCheckbox inherits Rectangle {
+    in-out property <bool> checked;
+    callback toggled(bool);
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: root.checked ? #52ceca : #717177;
+    background: root.checked ? #31bcb9 : #2b2b2e;
+    checkbox-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: checkbox;
+        accessible-checked: root.checked;
+        accessible-label: "Toggle setting";
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                root.checked = !root.checked;
+                root.toggled(root.checked);
+                return accept;
+            }
+            return reject;
+        }
+        TouchArea {
+            clicked => {
+                checkbox-focus.focus();
+                root.checked = !root.checked;
+                root.toggled(root.checked);
+            }
+        }
+    }
+}
+
 component SettingRow inherits Rectangle {
     in property <string> label;
     in-out property <bool> checked;
     callback toggled(bool);
     height: 40px;
     background: transparent;
-    border-width: 1px;
-    border-color: #2f2f33;
+    Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: #2f2f33; }
     Text { x: 4px; width: parent.width - 58px; text: root.label; color: Theme.quiet; font-size: 11px; font-weight: 700; vertical-alignment: center; }
-    ToggleSwitch { x: parent.width - 42px; y: 11px; checked: root.checked; toggled(value) => { root.checked = value; root.toggled(value); } }
+    SettingCheckbox { x: parent.width - 26px; y: 11px; checked: root.checked; toggled(value) => { root.checked = value; root.toggled(value); } }
 }
 
 component ModuleTab inherits Rectangle {
@@ -1919,22 +1950,19 @@ export component MainWindow inherits Window {
     if root.hotkey-editor-open: Rectangle {
         z: 101;
         width: parent.width; height: parent.height; background: #00000099;
+        TouchArea { width: parent.width; height: parent.height; }
         Rectangle {
-            x: (parent.width - 350px) / 2; y: (parent.height - 176px) / 2; width: 350px; height: 176px;
-            background: #28282b; border-width: 1px; border-color: #4d4d51; border-radius: 5px;
-            VerticalLayout {
-                padding-top: 27px; padding-bottom: 18px; padding-left: 36px; padding-right: 36px; spacing: 13px;
-                Text { text: "New key-mapping"; color: Theme.text; font-size: 15px; font-weight: 800; horizontal-alignment: center; }
-                Text {
-                    text: root.hotkey-editor-key-label == "" ? "Please press a key combination now..." : "Key: " + root.hotkey-editor-key-label;
-                    color: Theme.text; font-size: 13px; font-weight: 700; horizontal-alignment: center;
-                }
-                HorizontalLayout {
-                    alignment: center; spacing: 14px;
-                    Button { width: 76px; text: "OK"; enabled: root.hotkey-editor-input != ""; clicked => { root.save-hotkey(root.hotkey-editor-action, root.hotkey-editor-input); root.hotkey-editor-open = false; } }
-                    Button { text: "Cancel"; clicked => { root.hotkey-editor-open = false; } }
-                }
+            z: 1;
+            x: (parent.width - 316px) / 2; y: (parent.height - 160px) / 2; width: 316px; height: 160px;
+            background: #28282b; border-width: 1px; border-color: #414145; border-radius: 7px;
+            Text { x: 0px; y: 29px; width: parent.width; height: 22px; text: "New key mapping"; color: Theme.text; font-size: 15px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+            Text {
+                x: 16px; y: 73px; width: parent.width - 32px; height: 22px;
+                text: root.hotkey-editor-key-label == "" ? "Please press a key combination now..." : "Key: " + root.hotkey-editor-key-label;
+                color: Theme.text; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center;
             }
+            Button { x: 63px; y: 114px; width: 68px; height: 38px; text: "OK"; enabled: root.hotkey-editor-input != ""; clicked => { root.save-hotkey(root.hotkey-editor-action, root.hotkey-editor-input); root.hotkey-editor-open = false; } }
+            Button { x: 147px; y: 114px; width: 106px; height: 38px; text: "Cancel"; clicked => { root.hotkey-editor-open = false; } }
         }
         hotkey-capture := FocusScope {
             init => { self.focus(); }

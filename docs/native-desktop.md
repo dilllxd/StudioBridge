@@ -82,7 +82,10 @@ than copying its source or visual assets:
   controlling an attended overwrite dialog that supports mouse and keyboard
   confirmation or cancellation;
 - BEACN-style key-mapping capture that listens for the next native key chord,
-  previews its primary key, validates it, and persists the complete binding;
+  previews its primary key, validates it, and persists the complete binding in
+  a measured 316-by-160 blocking dialog with disabled-until-valid confirmation;
+- BEACN-measured application settings rows with 18-by-18 square checkboxes,
+  keyboard toggling, checkbox accessibility state, and Linux-specific labels;
 - native application chips that drag onto source strips, with accepted-drop
   highlighting, an unassign target, and accessible selector fallback;
 - always-accessible voice EQ and enhancement controls;

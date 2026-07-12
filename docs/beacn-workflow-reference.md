@@ -107,6 +107,25 @@ StudioBridge adaptation: preserve this read-only information hierarchy and
 dialog workflow while continuing to expose USB2 driverless mode as read-only;
 opening or dismissing the dialog never enters a hardware write path.
 
+## Application settings
+
+- Device power, save confirmation, beta opt-in, mixing-suite, default-device
+  reset, and profile-crossfade preferences are presented as a single narrow
+  column of 40-pixel rows separated by one-pixel rules.
+- Each preference uses an 18-by-18 rounded square checkbox aligned eight pixels
+  from the row's trailing edge. Enabled boxes are solid teal; disabled boxes
+  retain a dark fill and grey outline rather than becoming pill switches.
+- Hotkey assignments continue below the preferences in the same column, grouped
+  by profile and mute sections.
+- Selecting an unassigned hotkey opens a blocking 316-by-160 New key mapping
+  dialog. It prompts for the next key combination, keeps OK disabled until a
+  valid mapping is captured, uses 68-by-38 OK and 106-by-38 Cancel actions, and
+  cancels on Escape without letting clicks reach the settings page underneath.
+
+StudioBridge adaptation: preserve the same settings hierarchy and checkbox
+geometry while using System Startup, System Tray, and Linux Audio wording where
+the Windows-specific labels do not apply.
+
 ## Originality boundary
 
 StudioBridge retains its own bridge icon, typography, teal/amber palette,
