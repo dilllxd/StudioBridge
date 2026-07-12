@@ -210,6 +210,12 @@ pub struct RemoveMixerSourceRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReorderMixerSourceRequest {
+    pub source_id: String,
+    pub position: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MixerProfileRequest {
     pub name: String,
 }

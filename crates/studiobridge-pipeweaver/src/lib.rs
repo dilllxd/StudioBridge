@@ -149,6 +149,14 @@ impl MixerBackend for PipeweaverBackend {
             .await
     }
 
+    async fn set_source_order(&self, source_id: &str, position: usize) -> BridgeResult<()> {
+        let position = u8::try_from(position).map_err(|_| {
+            BridgeError::InvalidValue("source position must be between 0 and 255".into())
+        })?;
+        self.send(APICommand::SetOrderByName(source_id.to_owned(), position))
+            .await
+    }
+
     async fn set_application_route(
         &self,
         process: &str,

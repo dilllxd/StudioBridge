@@ -258,22 +258,27 @@ component MixFader inherits Rectangle {
 
 component SourceStrip inherits Rectangle {
     in property <SourceModel> source;
+    in property <int> source-index;
     in-out property <bool> menu-open: false;
     in-out property <bool> mute-menu-open: false;
+    in-out property <bool> dragging: false;
+    in-out property <length> drag-distance: 0px;
     callback personal-changed(float);
     callback audience-changed(float);
     callback personal-mute;
     callback audience-mute;
     callback mute-action(string);
     callback mute-action-selected(string);
+    callback reorder-requested(float);
     callback link-changed(bool);
     callback delete-source;
     width: 133px;
     height: 398px;
     border-radius: 2px;
     border-width: 1px;
-    border-color: Theme.border;
+    border-color: root.dragging ? Theme.teal : Theme.border;
     background: Theme.panel;
+    opacity: root.dragging ? 0.82 : 1.0;
     VerticalLayout {
         padding: 7px;
         spacing: 5px;
@@ -281,11 +286,49 @@ component SourceStrip inherits Rectangle {
             height: 22px;
             HorizontalLayout {
                 spacing: 3px;
-                Text { text: "⠿"; color: #5f5e64; font-size: 10px; vertical-alignment: center; }
+                grip-focus := FocusScope {
+                    width: 14px;
+                    accessible-role: button;
+                    accessible-label: "Reorder " + root.source.name;
+                    key-pressed(event) => {
+                        if event.text == Key.LeftArrow {
+                            root.reorder-requested(root.source-index - 1);
+                            return accept;
+                        } else if event.text == Key.RightArrow {
+                            root.reorder-requested(root.source-index + 1);
+                            return accept;
+                        }
+                        return reject;
+                    }
+                    Text { text: "⠿"; color: root.dragging ? Theme.teal : #5f5e64; font-size: 10px; vertical-alignment: center; }
+                    drag-touch := TouchArea {
+                        mouse-cursor: MouseCursor.grab;
+                        pointer-event(event) => {
+                            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                                grip-focus.focus();
+                                root.dragging = true;
+                                root.drag-distance = 0px;
+                            } else if event.kind == PointerEventKind.move && root.dragging {
+                                root.drag-distance = self.mouse-x - self.pressed-x;
+                            } else if event.kind == PointerEventKind.up && root.dragging {
+                                root.drag-distance = self.mouse-x - self.pressed-x;
+                                let delta = round(root.drag-distance / 137px);
+                                root.dragging = false;
+                                root.drag-distance = 0px;
+                                if delta != 0 {
+                                    root.reorder-requested(root.source-index + delta);
+                                }
+                            } else if event.kind == PointerEventKind.cancel {
+                                root.dragging = false;
+                                root.drag-distance = 0px;
+                            }
+                        }
+                    }
+                }
                 Text { text: root.source.name; color: Theme.text; font-size: 13px; font-weight: 800; horizontal-alignment: center; horizontal-stretch: 1; overflow: elide; }
                 Text { text: "v"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
             }
-            TouchArea { clicked => { root.menu-open = !root.menu-open; } }
+            TouchArea { x: 17px; width: parent.width - 17px; clicked => { root.menu-open = !root.menu-open; } }
         }
         Rectangle { height: 3px; background: root.source.colour; }
         HorizontalLayout {
@@ -685,6 +728,7 @@ export component MainWindow inherits Window {
     callback set-default-output(string);
     callback set-source-mute(string, string, bool);
     callback set-source-mute-action(string, string);
+    callback reorder-source(string, float);
     callback set-volume-linked(string, bool);
     callback set-route(string, string, bool);
     callback create-source(string);
@@ -759,8 +803,9 @@ export component MainWindow inherits Window {
                         height: parent.height;
                         HorizontalLayout {
                             spacing: 4px;
-                            for source in root.sources: SourceStrip {
+                            for source[index] in root.sources: SourceStrip {
                                 source: source;
+                                source-index: index;
                                 personal-changed(value) => { root.set-volume(source.channel-id, "personal", value); }
                                 audience-changed(value) => { root.set-volume(source.channel-id, "audience", value); }
                                 personal-mute => { root.set-source-mute(source.channel-id, "personal", !source.personal-muted); }
@@ -775,6 +820,7 @@ export component MainWindow inherits Window {
                                     }
                                 }
                                 mute-action-selected(action) => { root.set-source-mute-action(source.channel-id, action); }
+                                reorder-requested(position) => { root.reorder-source(source.channel-id, position); }
                                 link-changed(linked) => { root.set-volume-linked(source.channel-id, linked); }
                                 delete-source => { root.remove-source(source.channel-id); }
                             }

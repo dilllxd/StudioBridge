@@ -13,10 +13,10 @@ use studiobridge_beacn::{BeacnStudioBackend, DspWriteGate};
 use studiobridge_core::{
     AppSnapshot, BridgeError, CreateMixerSourceRequest, DspWriteModule, MicrophoneDspUpdate,
     MixerBackend, MixerProfileRequest, MixerProfileSummary, MixerProfilesResponse, MixerSnapshot,
-    MockMixerBackend, MockStudioBackend, RemoveMixerSourceRequest, SetDefaultDeviceRequest,
-    SetLinkAssignmentRequest, SetMicrophoneRequest, SetMixerApplicationRequest, SetMuteRequest,
-    SetRouteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
-    StudioBackend, StudioBridgeService,
+    MockMixerBackend, MockStudioBackend, RemoveMixerSourceRequest, ReorderMixerSourceRequest,
+    SetDefaultDeviceRequest, SetLinkAssignmentRequest, SetMicrophoneRequest,
+    SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest, SetTargetVolumeRequest,
+    SetVolumeLinkedRequest, SetVolumeRequest, StudioBackend, StudioBridgeService,
 };
 use studiobridge_pipeweaver::PipeweaverBackend;
 use tokio::sync::RwLock;
@@ -452,6 +452,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/mixer/route", post(set_route))
         .route("/api/mixer/source", post(create_mixer_source))
         .route("/api/mixer/source/remove", post(remove_mixer_source))
+        .route("/api/mixer/source/reorder", post(reorder_mixer_source))
         .route("/api/mixer/profiles", get(list_mixer_profiles))
         .route("/api/mixer/profile/save", post(save_mixer_profile))
         .route("/api/mixer/profile/create", post(create_mixer_profile))
@@ -677,6 +678,17 @@ async fn remove_mixer_source(
     Json(request): Json<RemoveMixerSourceRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
     state.service.remove_source(&request.source_id).await?;
+    Ok(ok())
+}
+
+async fn reorder_mixer_source(
+    State(state): State<AppState>,
+    Json(request): Json<ReorderMixerSourceRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state
+        .service
+        .set_source_order(&request.source_id, request.position)
+        .await?;
     Ok(ok())
 }
 

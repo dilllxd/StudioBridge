@@ -37,6 +37,7 @@ pub trait MixerBackend: Send + Sync {
     async fn set_route(&self, source_id: &str, target_id: &str, enabled: bool) -> BridgeResult<()>;
     async fn create_source(&self, name: &str) -> BridgeResult<()>;
     async fn remove_source(&self, source_id: &str) -> BridgeResult<()>;
+    async fn set_source_order(&self, source_id: &str, position: usize) -> BridgeResult<()>;
     async fn set_application_route(
         &self,
         process: &str,
@@ -558,6 +559,19 @@ impl MixerBackend for MockMixerBackend {
                 application.channel_id = None;
             }
         }
+        Ok(())
+    }
+
+    async fn set_source_order(&self, source_id: &str, position: usize) -> BridgeResult<()> {
+        let mut state = self.state.write().await;
+        let current = state
+            .channels
+            .iter()
+            .position(|channel| channel.id == source_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown channel: {source_id}")))?;
+        let channel = state.channels.remove(current);
+        let position = position.min(state.channels.len());
+        state.channels.insert(position, channel);
         Ok(())
     }
 

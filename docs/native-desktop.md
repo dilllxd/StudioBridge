@@ -49,6 +49,8 @@ than copying its source or visual assets:
 
 - a visible device and module column;
 - a source-first mixer with Personal and Audience controls;
+- draggable and keyboard-accessible source-strip grips backed by the native
+  PipeWeaver order command, with saved profiles restoring the captured order;
 - linked or independent submix faders;
 - a persistent per-source mute action menu matching Mute to All, Mute to
   Audience, and Mute to Self;

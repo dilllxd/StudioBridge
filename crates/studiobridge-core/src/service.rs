@@ -147,6 +147,14 @@ impl StudioBridgeService {
         backend_call("PipeWeaver", self.mixer.remove_source(source_id)).await
     }
 
+    pub async fn set_source_order(&self, source_id: &str, position: usize) -> BridgeResult<()> {
+        backend_call(
+            "PipeWeaver",
+            self.mixer.set_source_order(source_id, position),
+        )
+        .await
+    }
+
     /// Applies a saved mixer-only profile without touching BEACN hardware.
     pub async fn apply_mixer_profile(&self, desired: &MixerSnapshot) -> BridgeResult<()> {
         let current = backend_call("PipeWeaver", self.mixer.snapshot()).await?;
@@ -172,10 +180,11 @@ impl StudioBridgeService {
         }
 
         let current = backend_call("PipeWeaver", self.mixer.snapshot()).await?;
-        for channel in &desired.channels {
+        for (position, channel) in desired.channels.iter().enumerate() {
             if !current.channels.iter().any(|item| item.id == channel.id) {
                 continue;
             }
+            self.set_source_order(&channel.id, position).await?;
             self.set_volume(&channel.id, MixBus::Personal, channel.personal_volume)
                 .await?;
             self.set_volume(&channel.id, MixBus::Audience, channel.audience_volume)
@@ -382,6 +391,7 @@ mod tests {
     async fn mixer_sources_can_be_added_and_removed() {
         let service = service();
         service.create_source("Aux 1").await.unwrap();
+        service.set_source_order("aux-1", 1).await.unwrap();
         let state = service.snapshot().await.unwrap();
         assert!(
             state
@@ -390,6 +400,7 @@ mod tests {
                 .iter()
                 .any(|channel| channel.id == "aux-1" && channel.name == "Aux 1")
         );
+        assert_eq!(state.mixer.channels[1].id, "aux-1");
 
         service.remove_source("aux-1").await.unwrap();
         let state = service.snapshot().await.unwrap();
@@ -410,6 +421,7 @@ mod tests {
             .set_volume("game", MixBus::Audience, 12)
             .await
             .unwrap();
+        service.set_source_order("game", 0).await.unwrap();
         service.create_source("Aux 1").await.unwrap();
 
         service.apply_mixer_profile(&saved).await.unwrap();
@@ -433,6 +445,18 @@ mod tests {
                 .channels
                 .iter()
                 .any(|channel| channel.id == "aux-1")
+        );
+        assert_eq!(
+            restored
+                .channels
+                .iter()
+                .map(|channel| &channel.id)
+                .collect::<Vec<_>>(),
+            saved
+                .channels
+                .iter()
+                .map(|channel| &channel.id)
+                .collect::<Vec<_>>()
         );
     }
 

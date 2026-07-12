@@ -928,6 +928,39 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
+    let reorder_source_window = window.as_weak();
+    let reorder_source_client = client.clone();
+    window.on_reorder_source(move |source_id, requested_position| {
+        let window = reorder_source_window.clone();
+        let client = reorder_source_client.clone();
+        let source_id = source_id.to_string();
+        thread::spawn(move || {
+            let Ok(snapshot) = client.snapshot() else {
+                set_status(window, "Could not read the current source order".into());
+                return;
+            };
+            let count = snapshot.mixer.channels.len();
+            if count == 0 || !requested_position.is_finite() {
+                return;
+            }
+            let position =
+                (requested_position.round() as isize).clamp(0, count as isize - 1) as usize;
+            let current = snapshot
+                .mixer
+                .channels
+                .iter()
+                .position(|channel| channel.id == source_id);
+            if current == Some(position) {
+                return;
+            }
+            match client.reorder_source(&source_id, position) {
+                Ok(()) => set_status(window.clone(), "Mixer knob order updated".into()),
+                Err(error) => set_status(window.clone(), format!("Reorder failed: {error}")),
+            }
+            refresh_all(window, client);
+        });
+    });
+
     let create_profile_window = window.as_weak();
     let create_profile_client = client.clone();
     window.on_create_mixer_profile(move || {

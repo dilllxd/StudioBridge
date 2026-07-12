@@ -4,9 +4,9 @@ use std::time::Duration;
 use studiobridge_core::{
     AppSnapshot, CreateMixerSourceRequest, DspWriteModule, LinkChannel, MicrophoneDspSnapshot,
     MicrophoneDspUpdate, MicrophoneDspWriteResult, MixBus, MixerProfileRequest,
-    MixerProfilesResponse, MuteState, RemoveMixerSourceRequest, SetDefaultDeviceRequest,
-    SetLinkAssignmentRequest, SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest,
-    SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
+    MixerProfilesResponse, MuteState, RemoveMixerSourceRequest, ReorderMixerSourceRequest,
+    SetDefaultDeviceRequest, SetLinkAssignmentRequest, SetMixerApplicationRequest, SetMuteRequest,
+    SetRouteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -127,6 +127,18 @@ impl DaemonClient {
             .json(&SetVolumeLinkedRequest {
                 channel_id: channel_id.into(),
                 linked,
+            })
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub fn reorder_source(&self, source_id: &str, position: usize) -> Result<(), reqwest::Error> {
+        self.client
+            .post(format!("{}/api/mixer/source/reorder", self.base_url))
+            .json(&ReorderMixerSourceRequest {
+                source_id: source_id.into(),
+                position,
             })
             .send()?
             .error_for_status()?;
