@@ -55,6 +55,7 @@ struct AppPreferences {
     automatic_default_reset: bool,
     meter_crossfade: bool,
     hotkeys: HashMap<String, String>,
+    mute_actions: HashMap<String, String>,
 }
 
 impl Default for AppPreferences {
@@ -68,6 +69,7 @@ impl Default for AppPreferences {
             automatic_default_reset: true,
             meter_crossfade: true,
             hotkeys: HashMap::new(),
+            mute_actions: HashMap::new(),
         }
     }
 }
@@ -467,6 +469,33 @@ fn normalize_captured_hotkey(
     Some(parts.join(" + "))
 }
 
+fn normalize_mute_action(action: &str) -> &'static str {
+    match action {
+        "all" => "all",
+        "personal" => "personal",
+        _ => "audience",
+    }
+}
+
+fn mute_state_with_target(current: MuteState, target: &str, muted: bool) -> MuteState {
+    let personal = if target == "personal" || target == "all" {
+        muted
+    } else {
+        matches!(current, MuteState::MutedAll | MuteState::MutedPersonal)
+    };
+    let audience = if target == "audience" || target == "all" {
+        muted
+    } else {
+        matches!(current, MuteState::MutedAll | MuteState::MutedAudience)
+    };
+    match (personal, audience) {
+        (false, false) => MuteState::Unmuted,
+        (true, true) => MuteState::MutedAll,
+        (true, false) => MuteState::MutedPersonal,
+        (false, true) => MuteState::MutedAudience,
+    }
+}
+
 fn using_wayland() -> bool {
     cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
@@ -655,6 +684,7 @@ fn main() -> Result<(), slint::PlatformError> {
               mixing_suite_enabled,
               automatic_default_reset,
               meter_crossfade| {
+            let existing = load_preferences();
             let preferences = AppPreferences {
                 start_at_login,
                 close_to_tray,
@@ -663,7 +693,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 mixing_suite_enabled,
                 automatic_default_reset,
                 meter_crossfade,
-                hotkeys: load_preferences().hotkeys,
+                hotkeys: existing.hotkeys,
+                mute_actions: existing.mute_actions,
             };
             match save_preferences(&preferences) {
                 Ok(()) => set_status(preferences_window.clone(), "Settings saved".into()),
@@ -809,33 +840,32 @@ fn main() -> Result<(), slint::PlatformError> {
                 set_status(window, "Could not read the current mute state".into());
                 return;
             };
-            let personal = if mix == "personal" {
-                muted
-            } else {
-                matches!(
-                    current.mute_state,
-                    MuteState::MutedAll | MuteState::MutedPersonal
-                )
-            };
-            let audience = if mix == "audience" {
-                muted
-            } else {
-                matches!(
-                    current.mute_state,
-                    MuteState::MutedAll | MuteState::MutedAudience
-                )
-            };
-            let state = match (personal, audience) {
-                (false, false) => MuteState::Unmuted,
-                (true, true) => MuteState::MutedAll,
-                (true, false) => MuteState::MutedPersonal,
-                (false, true) => MuteState::MutedAudience,
-            };
+            let state = mute_state_with_target(current.mute_state, &mix, muted);
             if let Err(error) = client.set_mute(&channel_id, state) {
                 set_status(window.clone(), format!("Mute update failed: {error}"));
             }
             refresh_all(window, client);
         });
+    });
+
+    let mute_action_window = window.as_weak();
+    let mute_action_client = client.clone();
+    window.on_set_source_mute_action(move |channel_id, action| {
+        let channel_id = channel_id.trim().to_string();
+        let action = normalize_mute_action(action.trim()).to_string();
+        let mut preferences = load_preferences();
+        preferences.mute_actions.insert(channel_id, action.clone());
+        match save_preferences(&preferences) {
+            Ok(()) => set_status(
+                mute_action_window.clone(),
+                format!("Source mute action set to {action}"),
+            ),
+            Err(error) => set_status(
+                mute_action_window.clone(),
+                format!("Mute action save failed: {error}"),
+            ),
+        }
+        refresh_all(mute_action_window.clone(), mute_action_client.clone());
     });
 
     let link_volume_window = window.as_weak();
@@ -1217,7 +1247,11 @@ fn claim_single_instance(
     Some(InstanceGuard)
 }
 
-fn source(channel: &MixerChannel) -> SourceModel {
+fn source(channel: &MixerChannel, preferences: &AppPreferences) -> SourceModel {
+    let mute_action = preferences
+        .mute_actions
+        .get(&channel.id)
+        .map_or("audience", |action| normalize_mute_action(action));
     SourceModel {
         channel_id: SharedString::from(&channel.id),
         meter_id: SharedString::from(&channel.meter_id),
@@ -1235,6 +1269,7 @@ fn source(channel: &MixerChannel) -> SourceModel {
             channel.mute_state,
             MuteState::MutedAll | MuteState::MutedAudience
         ),
+        mute_action: mute_action.into(),
         colour: parse_colour(&channel.colour),
     }
 }
@@ -1440,7 +1475,7 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
         .mixer
         .channels
         .iter()
-        .map(source)
+        .map(|channel| source(channel, &preferences))
         .collect::<Vec<_>>();
     let targets = ordered_targets
         .iter()
@@ -2031,9 +2066,13 @@ fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
 
 #[cfg(test)]
 mod desktop_tests {
-    use super::{hotkey_key_name, mock_meter_level, normalize_captured_hotkey};
+    use super::{
+        hotkey_key_name, mock_meter_level, mute_state_with_target, normalize_captured_hotkey,
+        normalize_mute_action,
+    };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
+    use studiobridge_core::MuteState;
 
     #[test]
     fn mock_meter_motion_is_bounded_and_changes_over_time() {
@@ -2070,5 +2109,30 @@ mod desktop_tests {
         let shifted_digit = normalize_captured_hotkey("!", true, false, true, false).unwrap();
         assert_eq!(shifted_digit, "ctrl + shift + 1");
         assert!(shifted_digit.parse::<HotKey>().is_ok());
+    }
+
+    #[test]
+    fn source_mute_actions_match_beacn_targets() {
+        assert_eq!(normalize_mute_action("all"), "all");
+        assert_eq!(normalize_mute_action("personal"), "personal");
+        assert_eq!(normalize_mute_action("audience"), "audience");
+        assert_eq!(normalize_mute_action("unsupported"), "audience");
+
+        assert_eq!(
+            mute_state_with_target(MuteState::Unmuted, "all", true),
+            MuteState::MutedAll
+        );
+        assert_eq!(
+            mute_state_with_target(MuteState::MutedPersonal, "audience", true),
+            MuteState::MutedAll
+        );
+        assert_eq!(
+            mute_state_with_target(MuteState::MutedAll, "personal", false),
+            MuteState::MutedAudience
+        );
+        assert_eq!(
+            mute_state_with_target(MuteState::MutedAudience, "audience", false),
+            MuteState::Unmuted
+        );
     }
 }

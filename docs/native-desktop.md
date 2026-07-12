@@ -50,6 +50,8 @@ than copying its source or visual assets:
 - a visible device and module column;
 - a source-first mixer with Personal and Audience controls;
 - linked or independent submix faders;
+- a persistent per-source mute action menu matching Mute to All, Mute to
+  Audience, and Mute to Self;
 - a prominent Main Out section;
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
 - PipeWeaver-backed Linux default recording and playback device selectors;

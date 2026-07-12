@@ -12,6 +12,7 @@ export struct SourceModel {
     linked: bool,
     personal-muted: bool,
     audience-muted: bool,
+    mute-action: string,
 }
 
 export struct RouteModel {
@@ -258,10 +259,13 @@ component MixFader inherits Rectangle {
 component SourceStrip inherits Rectangle {
     in property <SourceModel> source;
     in-out property <bool> menu-open: false;
+    in-out property <bool> mute-menu-open: false;
     callback personal-changed(float);
     callback audience-changed(float);
     callback personal-mute;
     callback audience-mute;
+    callback mute-action(string);
+    callback mute-action-selected(string);
     callback link-changed(bool);
     callback delete-source;
     width: 133px;
@@ -335,8 +339,18 @@ component SourceStrip inherits Rectangle {
             background: #202023;
             border-width: 1px;
             border-color: #303034;
-            Text { text: "Mute to Audience    v"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
-            TouchArea { clicked => { root.audience-mute(); } }
+            Text {
+                width: parent.width - 20px;
+                text: root.source.mute-action == "all" ? "Mute to All" : root.source.mute-action == "personal" ? "Mute to Self" : "Mute to Audience";
+                color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center;
+            }
+            Rectangle {
+                x: parent.width - 20px; width: 20px; height: parent.height;
+                Rectangle { width: 1px; height: parent.height; background: #303034; }
+                Text { text: "v"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { root.mute-menu-open = !root.mute-menu-open; } }
+            }
+            TouchArea { width: parent.width - 20px; clicked => { root.mute-action(root.source.mute-action); } }
         }
     }
     Rectangle {
@@ -346,6 +360,30 @@ component SourceStrip inherits Rectangle {
         background: #2d2d31; border-width: 1px; border-color: #4b4b50; border-radius: 2px;
         Text { text: "Delete Knob"; color: Theme.text; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
         TouchArea { clicked => { root.menu-open = false; root.delete-source(); } }
+    }
+    Rectangle {
+        visible: root.mute-menu-open;
+        z: 25;
+        x: 0px; y: 315px; width: 116px; height: 60px;
+        background: #2d2d31; border-width: 1px; border-color: #4b4b50; border-radius: 2px;
+        VerticalLayout {
+            spacing: 0px;
+            Rectangle {
+                height: 20px; background: all-touch.has-hover ? #3a393e : transparent;
+                Text { x: 7px; text: (root.source.mute-action == "all" ? "✓  " : "    ") + "Mute to All"; color: Theme.text; font-size: 9px; vertical-alignment: center; }
+                all-touch := TouchArea { clicked => { root.mute-menu-open = false; root.mute-action-selected("all"); } }
+            }
+            Rectangle {
+                height: 20px; background: audience-touch.has-hover ? #3a393e : transparent;
+                Text { x: 7px; text: (root.source.mute-action == "audience" ? "✓  " : "    ") + "Mute to Audience"; color: Theme.text; font-size: 9px; vertical-alignment: center; }
+                audience-touch := TouchArea { clicked => { root.mute-menu-open = false; root.mute-action-selected("audience"); } }
+            }
+            Rectangle {
+                height: 20px; background: self-touch.has-hover ? #3a393e : transparent;
+                Text { x: 7px; text: (root.source.mute-action == "personal" ? "✓  " : "    ") + "Mute to Self"; color: Theme.text; font-size: 9px; vertical-alignment: center; }
+                self-touch := TouchArea { clicked => { root.mute-menu-open = false; root.mute-action-selected("personal"); } }
+            }
+        }
     }
 }
 
@@ -646,6 +684,7 @@ export component MainWindow inherits Window {
     callback set-default-input(string);
     callback set-default-output(string);
     callback set-source-mute(string, string, bool);
+    callback set-source-mute-action(string, string);
     callback set-volume-linked(string, bool);
     callback set-route(string, string, bool);
     callback create-source(string);
@@ -726,6 +765,16 @@ export component MainWindow inherits Window {
                                 audience-changed(value) => { root.set-volume(source.channel-id, "audience", value); }
                                 personal-mute => { root.set-source-mute(source.channel-id, "personal", !source.personal-muted); }
                                 audience-mute => { root.set-source-mute(source.channel-id, "audience", !source.audience-muted); }
+                                mute-action(action) => {
+                                    if action == "all" {
+                                        root.set-source-mute(source.channel-id, "all", !(source.personal-muted && source.audience-muted));
+                                    } else if action == "personal" {
+                                        root.set-source-mute(source.channel-id, "personal", !source.personal-muted);
+                                    } else {
+                                        root.set-source-mute(source.channel-id, "audience", !source.audience-muted);
+                                    }
+                                }
+                                mute-action-selected(action) => { root.set-source-mute-action(source.channel-id, action); }
                                 link-changed(linked) => { root.set-volume-linked(source.channel-id, linked); }
                                 delete-source => { root.remove-source(source.channel-id); }
                             }

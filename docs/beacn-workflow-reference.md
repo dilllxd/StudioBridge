@@ -11,6 +11,9 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
 - Sources are horizontal channel strips. Each strip keeps its color, name,
   source/application list, Personal fader, Audience fader, separate mute
   actions, and a link toggle together.
+- The compact mute action at the bottom of each strip has a separate arrow menu
+  with Mute to All, Mute to Audience, and Mute to Self. Selecting an item changes
+  the action (shown with a checkmark); pressing the main area applies that action.
 - Personal and Audience master devices remain visible directly below the
   source strips.
 - Assignments and Routing Table are contextual tabs below the mixer. They do
