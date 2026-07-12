@@ -70,6 +70,9 @@ than copying its source or visual assets:
 - a prominent Main Out section;
 - BEACN-aligned Personal and Audience master-device cards backed by the real
   default-output selector and independent PipeWeaver target masters;
+- a shared BEACN-style device and assignment selector with the measured
+  170-by-27 master field, 24-pixel alternative rows, content-width popup,
+  native outside/Escape dismissal, and mouse plus arrow-key activation;
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
 - PipeWeaver-backed Linux default recording and playback device selectors;
 - a device-information card with the measured Legal and Regulatory modal,

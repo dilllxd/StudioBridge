@@ -1,4 +1,4 @@
-import { Button, ComboBox, Slider, ScrollView } from "std-widgets.slint";
+import { Button, Slider, ScrollView } from "std-widgets.slint";
 
 export struct SourceModel {
     channel-id: string,
@@ -293,6 +293,111 @@ component MuteActionRow inherits Rectangle {
     }
 }
 
+component SelectorMenuRow inherits Rectangle {
+    in property <string> label;
+    callback activated;
+    height: 24px;
+    background: row-touch.has-hover ? #3a393e : transparent;
+    row-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: button;
+        accessible-label: root.label;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                root.activated();
+                return accept;
+            }
+            return reject;
+        }
+        Text {
+            x: 20px; width: parent.width - 24px;
+            text: root.label;
+            color: Theme.text; font-size: 10px; font-weight: 700;
+            vertical-alignment: center; overflow: elide;
+        }
+        row-touch := TouchArea { clicked => { row-focus.focus(); root.activated(); } }
+    }
+}
+
+component BeacnSelector inherits Rectangle {
+    in property <[string]> model;
+    in property <int> current-index: -1;
+    in property <string> placeholder: "Choose Audio to output...";
+    in property <length> popup-width: root.width;
+    property <bool> current-valid: root.current-index >= 0 && root.current-index < root.model.length;
+    property <int> option-count: root.model.length - (root.current-valid ? 1 : 0);
+    callback selected(int);
+    height: 27px;
+    background: #1b1b1e;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    Text {
+        x: 7px; width: parent.width - 34px;
+        text: root.current-index >= 0 && root.current-index < root.model.length
+            ? root.model[root.current-index] : root.placeholder;
+        color: root.current-index >= 0 ? Theme.text : Theme.quiet;
+        font-size: 10px; font-weight: 700;
+        vertical-alignment: center; overflow: elide;
+    }
+    Rectangle { x: parent.width - 26px; width: 1px; height: parent.height; background: #303034; }
+    Text { x: parent.width - 25px; width: 25px; text: "v"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+    selector-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: combobox;
+        accessible-label: root.current-index >= 0 && root.current-index < root.model.length
+            ? root.model[root.current-index] : root.placeholder;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                if selector-menu.is-open {
+                    selector-menu.close();
+                } else if root.option-count > 0 {
+                    selector-menu.show();
+                }
+                return accept;
+            }
+            if event.text == Key.DownArrow && root.model.length > 0 {
+                let next = root.current-index + 1 >= root.model.length ? 0 : root.current-index + 1;
+                root.selected(next);
+                return accept;
+            }
+            if event.text == Key.UpArrow && root.model.length > 0 {
+                let next = root.current-index <= 0 ? root.model.length - 1 : root.current-index - 1;
+                root.selected(next);
+                return accept;
+            }
+            return reject;
+        }
+        TouchArea {
+            clicked => {
+                selector-focus.focus();
+                if selector-menu.is-open {
+                    selector-menu.close();
+                } else if root.option-count > 0 {
+                    selector-menu.show();
+                }
+            }
+        }
+    }
+    selector-menu := PopupWindow {
+        x: 0px; y: root.height; width: root.popup-width;
+        height: root.option-count * 24px + 4px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            width: parent.width; height: parent.height;
+            background: #27272b; border-width: 1px; border-color: #242326;
+            VerticalLayout {
+                padding: 2px; spacing: 0px;
+                for item[index] in root.model: SelectorMenuRow {
+                    visible: index != root.current-index;
+                    label: item;
+                    activated => { selector-menu.close(); root.selected(index); }
+                }
+            }
+        }
+    }
+}
+
 component SourceStrip inherits Rectangle {
     in property <SourceModel> source;
     in property <int> source-index;
@@ -553,12 +658,13 @@ component TargetStrip inherits Rectangle {
         HorizontalLayout {
             height: 34px;
             spacing: 7px;
-            if root.target.target-id == "headphones": ComboBox {
+            if root.target.target-id == "headphones": BeacnSelector {
                 width: 170px;
                 height: 27px;
                 model: root.output-device-names;
                 current-index: root.output-device-index;
-                selected(value) => { root.output-device-selected(self.current-index); }
+                popup-width: 248px;
+                selected(index) => { root.output-device-selected(index); }
             }
             if root.target.target-id == "audience-mix": Rectangle {
                 width: 170px; height: 27px;
@@ -1094,11 +1200,11 @@ export component MainWindow inherits Window {
                             padding: 9px; spacing: 7px;
                             Text { text: "RECORDING DEVICES"; color: Theme.text; font-size: 11px; font-weight: 800; }
                             Text { text: "DEFAULT"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                            ComboBox { height: 30px; model: root.default-input-names; current-index: root.default-input-index; selected(value) => { if self.current-index >= 0 && self.current-index < root.default-input-ids.length { root.set-default-input(root.default-input-ids[self.current-index]); } } }
+                            BeacnSelector { width: 205px; height: 27px; model: root.default-input-names; current-index: root.default-input-index; placeholder: "Choose Audio to input..."; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-input-ids.length { root.set-default-input(root.default-input-ids[index]); } } }
                             Text { text: "VOD / RECORDING"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
                             Rectangle { height: 28px; background: Theme.raised; Text { x: 7px; text: "VOD Track · configure in Routing Table"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
                             Text { text: "DEFAULT PLAYBACK DEVICE"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                            ComboBox { height: 30px; model: root.default-output-names; current-index: root.default-output-index; selected(value) => { if self.current-index >= 0 && self.current-index < root.default-output-ids.length { root.set-default-output(root.default-output-ids[self.current-index]); } } }
+                            BeacnSelector { width: 205px; height: 27px; model: root.default-output-names; current-index: root.default-output-index; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-output-ids.length { root.set-default-output(root.default-output-ids[index]); } } }
                             Rectangle { vertical-stretch: 1; }
                         }
                     }
@@ -1109,7 +1215,7 @@ export component MainWindow inherits Window {
                             padding: 9px; spacing: 6px;
                             Text { text: "OUTGOING STUDIO LINK ASSIGNMENTS"; color: Theme.text; font-size: 11px; font-weight: 800; }
                             Text { text: "Multiple Windows apps may share a Link channel"; color: Theme.quiet; font-size: 9px; }
-                            ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 6px; for app in root.link-applications: AssignmentRow { title: app.name; HorizontalLayout { padding-left: 10px; padding-right: 8px; Text { text: app.name; color: Theme.text; font-size: 12px; font-weight: 700; horizontal-stretch: 1; } ComboBox { width: 140px; model: root.link-channel-names; current-index: app.channel-index; selected(value) => { root.assign-link-application(app.name, self.current-index); } } } } } }
+                            ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 6px; for app in root.link-applications: AssignmentRow { title: app.name; HorizontalLayout { padding-left: 10px; padding-right: 8px; Text { text: app.name; color: Theme.text; font-size: 12px; font-weight: 700; horizontal-stretch: 1; } BeacnSelector { width: 140px; model: root.link-channel-names; current-index: app.channel-index; popup-width: 180px; selected(index) => { root.assign-link-application(app.name, index); } } } } } }
                         }
                     }
                     Rectangle {
@@ -1196,7 +1302,7 @@ export component MainWindow inherits Window {
                                                 Text { text: app.title; color: Theme.text; font-size: 11px; font-weight: 700; overflow: elide; }
                                                 Text { text: app.process; color: Theme.quiet; font-size: 8px; overflow: elide; }
                                             }
-                                            ComboBox { width: 94px; model: root.mixer-channel-names; current-index: app.channel-index; selected(value) => { root.assign-linux-application(app.process, app.name, self.current-index); } }
+                                            BeacnSelector { width: 94px; model: root.mixer-channel-names; current-index: app.channel-index; placeholder: "Unassigned"; popup-width: 140px; selected(index) => { root.assign-linux-application(app.process, app.name, index); } }
                                         }
                                     }
                                 }

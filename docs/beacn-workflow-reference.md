@@ -29,6 +29,11 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
   source strips. The Personal card combines its playback-device selector and
   master level, while the Audience card keeps the virtual mix and master level
   together.
+- The Personal playback-device control is a compact 170-by-27 field. Its menu
+  opens below the field, expands to roughly 248 pixels when device names need
+  more room, reserves a 20-pixel icon gutter, and uses 24-pixel rows. The active
+  device remains in the field while the menu lists the alternative devices;
+  clicking outside or pressing Escape dismisses the menu without changing it.
 - The trailing add-source card opens an 82-by-238 popup at the plus button with
   thirteen 18-pixel rows and a reserved icon/check gutter: Mic, Game, Music,
   Chat, Browser, System, Aux 1, Aux 2, Hardware, and four Link inputs. Types
@@ -59,7 +64,10 @@ Cancel/Escape, and backdrop dismissal.
 StudioBridge adaptation: Windows Link and Linux PipeWire application pools live
 in the mixer Assignments tab. Linux application chips can be dragged directly
 onto a source or the unassign target, while keyboard/touch selectors remain
-available and unassigned applications stay visible.
+available and unassigned applications stay visible. The Personal device,
+recording/playback defaults, outgoing Link assignments, and application
+destinations share the measured BEACN selector treatment rather than native
+toolkit combo-box styling.
 
 ## Routing table
 
