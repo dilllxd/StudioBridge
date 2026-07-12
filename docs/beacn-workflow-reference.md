@@ -44,6 +44,10 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
   not replace the mixer with unrelated full-screen pages.
 - Profiles occupy a secondary right rail and do not compete with live mixer
   controls.
+- Mixer profiles use compact 22-pixel rows. Hovering a row reveals Save,
+  Duplicate, and Delete actions in that order in three trailing 16-pixel areas;
+  the selected profile keeps the raised row background while its actions are
+  visible. The section-level plus action creates the next numbered profile.
 
 StudioBridge adaptation: the observed BEACN settings surface exposes a Save
 Confirmation option, but its resulting dialog was not observable during the

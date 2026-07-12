@@ -78,9 +78,11 @@ than copying its source or visual assets:
 - a device-information card with the measured Legal and Regulatory modal,
   keyboard dismissal, and permanently read-only USB2 driverless-mode state;
 - a BEACN-style profile rail with instant numbered creation plus hover Save,
-  Duplicate, and Delete actions, with the persisted Save Confirmation setting
-  controlling an attended overwrite dialog that supports mouse and keyboard
-  confirmation or cancellation;
+  Duplicate, and Delete actions in measured 22-pixel rows and three 16-pixel
+  action areas, with drawn native glyphs, keyboard activation, and accessible
+  labels; the persisted Save Confirmation setting controls an attended
+  overwrite dialog that supports mouse and keyboard confirmation or
+  cancellation;
 - BEACN-style key-mapping capture that listens for the next native key chord,
   previews its primary key, validates it, and persists the complete binding in
   a measured 350-by-175 blocking dialog with disabled-until-valid confirmation
