@@ -16,6 +16,9 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
   actions, and a link toggle together.
 - The grip at the leading edge of each source header reorders the strip by
   dragging; order is mixer state and follows saved profiles.
+- The arrow at the trailing edge of a source header opens a compact 93-by-20
+  Delete Knob popup anchored over the next strip. Clicking outside or pressing
+  Escape dismisses it without changing the mixer.
 - The compact mute action at the bottom of each strip has a separate arrow menu
   with Mute to All, Mute to Audience, and Mute to Chat. Selecting an item changes
   the action (shown with a checkmark); pressing the main area applies that action.

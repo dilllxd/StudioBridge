@@ -263,7 +263,6 @@ component MixFader inherits Rectangle {
 component SourceStrip inherits Rectangle {
     in property <SourceModel> source;
     in property <int> source-index;
-    in-out property <bool> menu-open: false;
     in-out property <bool> mute-menu-open: false;
     in-out property <bool> dragging: false;
     in-out property <length> drag-distance: 0px;
@@ -340,7 +339,19 @@ component SourceStrip inherits Rectangle {
                 Text { text: root.source.name; color: Theme.text; font-size: 13px; font-weight: 800; horizontal-alignment: center; horizontal-stretch: 1; overflow: elide; }
                 Text { text: "v"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
             }
-            TouchArea { x: 17px; width: parent.width - 17px; clicked => { root.menu-open = !root.menu-open; } }
+            header-menu-focus := FocusScope {
+                x: 17px; width: parent.width - 17px;
+                accessible-role: button;
+                accessible-label: "Open menu for " + root.source.name;
+                key-pressed(event) => {
+                    if event.text == Key.Return || event.text == Key.Space {
+                        if channel-menu.is-open { channel-menu.close(); } else { channel-menu.show(); }
+                        return accept;
+                    }
+                    return reject;
+                }
+                TouchArea { clicked => { header-menu-focus.focus(); if channel-menu.is-open { channel-menu.close(); } else { channel-menu.show(); } } }
+            }
         }
         Rectangle { height: 3px; background: root.source.colour; }
         HorizontalLayout {
@@ -408,13 +419,28 @@ component SourceStrip inherits Rectangle {
             TouchArea { width: parent.width - 20px; clicked => { root.mute-action(root.source.mute-action); } }
         }
     }
-    Rectangle {
-        visible: root.menu-open;
-        z: 20;
-        x: 39px; y: 28px; width: 88px; height: 28px;
-        background: #2d2d31; border-width: 1px; border-color: #4b4b50; border-radius: 2px;
-        Text { text: "Delete Knob"; color: Theme.text; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
-        TouchArea { clicked => { root.menu-open = false; root.delete-source(); } }
+    channel-menu := PopupWindow {
+        x: 116px; y: 13px; width: 93px; height: 20px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            width: parent.width; height: parent.height;
+            background: #49474d; border-width: 1px; border-color: #242326;
+            delete-focus := FocusScope {
+                width: parent.width; height: parent.height;
+                accessible-role: button;
+                accessible-label: "Delete " + root.source.name;
+                key-pressed(event) => {
+                    if event.text == Key.Return || event.text == Key.Space {
+                        channel-menu.close();
+                        root.delete-source();
+                        return accept;
+                    }
+                    return reject;
+                }
+                Text { text: "Delete Knob"; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { clicked => { channel-menu.close(); root.delete-source(); } }
+            }
+        }
     }
     Rectangle {
         visible: root.mute-menu-open;

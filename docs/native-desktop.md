@@ -56,6 +56,8 @@ than copying its source or visual assets:
 - a source-first mixer with Personal and Audience controls;
 - draggable and keyboard-accessible source-strip grips backed by the native
   PipeWeaver order command, with saved profiles restoring the captured order;
+- measured source-header Delete Knob popups with native outside-click and
+  Escape dismissal plus keyboard opening and activation;
 - linked or independent submix faders;
 - a BEACN-matched add-source menu that keeps all source types visible, disables
   occupied names before they reach the daemon, and creates available strips
