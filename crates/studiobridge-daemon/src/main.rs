@@ -188,6 +188,43 @@ impl ProfileStore {
         self.persist(&state)
     }
 
+    async fn create(&self, mixer: MixerSnapshot) -> Result<String, BridgeError> {
+        let mut state = self.state.write().await;
+        let name = next_profile_name(
+            "New Profile",
+            state.profiles.iter().map(|profile| profile.name.as_str()),
+            false,
+        );
+        state.profiles.push(SavedMixerProfile {
+            name: name.clone(),
+            mixer,
+        });
+        state.active = Some(name.clone());
+        self.persist(&state)?;
+        Ok(name)
+    }
+
+    async fn duplicate(&self, name: &str) -> Result<String, BridgeError> {
+        let mut state = self.state.write().await;
+        let mixer = state
+            .profiles
+            .iter()
+            .find(|profile| profile.name == name)
+            .map(|profile| profile.mixer.clone())
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown mixer profile: {name}")))?;
+        let duplicate_name = next_profile_name(
+            name,
+            state.profiles.iter().map(|profile| profile.name.as_str()),
+            true,
+        );
+        state.profiles.push(SavedMixerProfile {
+            name: duplicate_name.clone(),
+            mixer,
+        });
+        self.persist(&state)?;
+        Ok(duplicate_name)
+    }
+
     async fn set_active(&self, name: &str) -> Result<(), BridgeError> {
         let mut state = self.state.write().await;
         state.active = Some(name.to_owned());
@@ -228,6 +265,34 @@ fn validate_profile_name(name: &str) -> Result<(), BridgeError> {
         ));
     }
     Ok(())
+}
+
+fn next_profile_name<'a>(
+    base: &str,
+    existing: impl Iterator<Item = &'a str>,
+    parenthesized: bool,
+) -> String {
+    let existing = existing.collect::<HashSet<_>>();
+    if !parenthesized && !existing.contains(base) {
+        return base.to_owned();
+    }
+    for index in 1..=10_000 {
+        let suffix = if parenthesized {
+            format!(" ({index})")
+        } else {
+            format!(" {index}")
+        };
+        let max_base_chars = 64_usize.saturating_sub(suffix.chars().count());
+        let candidate = format!(
+            "{}{}",
+            base.chars().take(max_base_chars).collect::<String>(),
+            suffix
+        );
+        if !existing.contains(candidate.as_str()) {
+            return candidate;
+        }
+    }
+    unreachable!("profile name space exhausted")
 }
 
 fn daemon_config_root() -> PathBuf {
@@ -389,6 +454,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/mixer/source/remove", post(remove_mixer_source))
         .route("/api/mixer/profiles", get(list_mixer_profiles))
         .route("/api/mixer/profile/save", post(save_mixer_profile))
+        .route("/api/mixer/profile/create", post(create_mixer_profile))
+        .route(
+            "/api/mixer/profile/duplicate",
+            post(duplicate_mixer_profile),
+        )
         .route("/api/mixer/profile/load", post(load_mixer_profile))
         .route("/api/mixer/profile/delete", post(delete_mixer_profile))
         .route("/api/mixer/application", post(set_mixer_application))
@@ -624,6 +694,20 @@ async fn save_mixer_profile(
     Ok(ok())
 }
 
+async fn create_mixer_profile(State(state): State<AppState>) -> Result<Json<ApiMessage>, ApiError> {
+    let mixer = state.service.snapshot().await?.mixer;
+    state.profiles.create(mixer).await?;
+    Ok(ok())
+}
+
+async fn duplicate_mixer_profile(
+    State(state): State<AppState>,
+    Json(request): Json<MixerProfileRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state.profiles.duplicate(&request.name).await?;
+    Ok(ok())
+}
+
 async fn load_mixer_profile(
     State(state): State<AppState>,
     Json(request): Json<MixerProfileRequest>,
@@ -696,5 +780,29 @@ mod tests {
         assert_eq!(json["dsp_write_modules"][0], "headphone_equalizer");
         assert_eq!(json["dsp_write_active_module"], "headphone_equalizer");
         assert_eq!(json["dsp_write_lease_seconds"], 120);
+    }
+
+    #[test]
+    fn profile_names_match_beacn_numbering() {
+        assert_eq!(
+            next_profile_name("New Profile", ["Default Profile"].into_iter(), false),
+            "New Profile"
+        );
+        assert_eq!(
+            next_profile_name(
+                "New Profile",
+                ["New Profile", "New Profile 1"].into_iter(),
+                false,
+            ),
+            "New Profile 2"
+        );
+        assert_eq!(
+            next_profile_name(
+                "Streaming",
+                ["Streaming", "Streaming (1)"].into_iter(),
+                true,
+            ),
+            "Streaming (2)"
+        );
     }
 }

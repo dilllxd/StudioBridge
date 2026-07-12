@@ -53,6 +53,8 @@ than copying its source or visual assets:
 - a prominent Main Out section;
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
 - PipeWeaver-backed Linux default recording and playback device selectors;
+- a BEACN-style profile rail with instant numbered creation plus hover Save,
+  Duplicate, and Delete actions;
 - drag-and-drop application assignment;
 - always-accessible voice EQ and enhancement controls;
 - secondary microphone processors grouped by module;

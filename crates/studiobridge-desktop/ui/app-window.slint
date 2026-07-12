@@ -459,15 +459,45 @@ component ModuleTab inherits Rectangle {
     TouchArea { clicked => { root.clicked(root.module); } }
 }
 
+component MixerProfileRow inherits Rectangle {
+    in property <ProfileModel> profile;
+    callback selected;
+    callback saved;
+    callback duplicated;
+    callback deleted;
+    height: 24px;
+    background: root.profile.active ? #3a393e : transparent;
+
+    Text {
+        x: 16px;
+        width: parent.width - 78px;
+        text: root.profile.name;
+        color: root.profile.active ? Theme.text : Theme.quiet;
+        font-size: 11px;
+        font-weight: root.profile.active ? 700 : 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    name-area := TouchArea { width: parent.width - 58px; clicked => { root.selected(); } }
+
+    save-text := Text { x: parent.width - 58px; width: 18px; text: "▣"; color: Theme.quiet; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; visible: name-area.has-hover || save-area.has-hover || duplicate-area.has-hover || delete-area.has-hover; }
+    save-area := TouchArea { x: parent.width - 58px; width: 18px; clicked => { root.saved(); } }
+
+    duplicate-text := Text { x: parent.width - 38px; width: 18px; text: "▱"; color: Theme.quiet; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; visible: name-area.has-hover || save-area.has-hover || duplicate-area.has-hover || delete-area.has-hover; }
+    duplicate-area := TouchArea { x: parent.width - 38px; width: 18px; clicked => { root.duplicated(); } }
+
+    delete-text := Text { x: parent.width - 18px; width: 18px; text: "×"; color: Theme.quiet; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; visible: name-area.has-hover || save-area.has-hover || duplicate-area.has-hover || delete-area.has-hover; }
+    delete-area := TouchArea { x: parent.width - 18px; width: 18px; clicked => { root.deleted(); } }
+}
+
 component ProfileRail inherits Rectangle {
     in property <bool> connected;
     in property <bool> hardware-safe;
     in property <bool> link-active;
     in property <[ProfileModel]> mixer-profiles;
-    in-out property <bool> create-open: false;
-    in-out property <string> new-profile-name: "";
-    in-out property <string> menu-profile: "";
+    callback create-profile;
     callback save-profile(string);
+    callback duplicate-profile(string);
     callback select-profile(string);
     callback delete-profile(string);
     width: 285px;
@@ -510,32 +540,16 @@ component ProfileRail inherits Rectangle {
                     height: 24px;
                     Text { text: "v  Mixer Profiles"; color: Theme.text; font-size: 12px; font-weight: 800; vertical-alignment: center; }
                     Text { x: parent.width - 18px; text: "+"; color: Theme.text; font-size: 18px; vertical-alignment: center; }
-                    TouchArea { x: parent.width - 32px; width: 32px; clicked => { root.create-open = !root.create-open; root.menu-profile = ""; } }
+                    TouchArea { x: parent.width - 32px; width: 32px; clicked => { root.create-profile(); } }
                 }
-                if root.create-open: Rectangle {
-                    height: 34px; background: #1c1c1f;
-                    HorizontalLayout {
-                        spacing: 4px; padding: 3px;
-                        LineEdit { horizontal-stretch: 1; text: root.new-profile-name; edited(text) => { root.new-profile-name = text; } }
-                        Button { width: 54px; text: "Save"; clicked => { if (root.new-profile-name != "") { root.save-profile(root.new-profile-name); root.new-profile-name = ""; root.create-open = false; } } }
-                    }
+                for profile in root.mixer-profiles: MixerProfileRow {
+                    profile: profile;
+                    selected => { root.select-profile(profile.name); }
+                    saved => { root.save-profile(profile.name); }
+                    duplicated => { root.duplicate-profile(profile.name); }
+                    deleted => { root.delete-profile(profile.name); }
                 }
-                for profile in root.mixer-profiles: VerticalLayout {
-                    spacing: 1px;
-                    Rectangle {
-                        height: 24px; background: profile.active ? #3a393e : transparent;
-                        Text { x: 16px; width: parent.width - 42px; text: profile.name; color: profile.active ? Theme.text : Theme.quiet; font-size: 11px; font-weight: profile.active ? 700 : 400; vertical-alignment: center; overflow: elide; }
-                        Text { x: parent.width - 20px; text: "v"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
-                        TouchArea { width: parent.width - 28px; clicked => { root.select-profile(profile.name); } }
-                        TouchArea { x: parent.width - 28px; width: 28px; clicked => { root.menu-profile = root.menu-profile == profile.name ? "" : profile.name; } }
-                    }
-                    if root.menu-profile == profile.name: Rectangle {
-                        height: 26px; background: #303034;
-                        Text { x: 18px; text: "Delete Profile"; color: Theme.text; font-size: 10px; vertical-alignment: center; }
-                        TouchArea { clicked => { root.menu-profile = ""; root.delete-profile(profile.name); } }
-                    }
-                }
-                if root.mixer-profiles.length == 0 && !root.create-open: Text { text: "     New Profile"; color: Theme.quiet; font-size: 11px; }
+                if root.mixer-profiles.length == 0: Text { text: "     New Profile"; color: Theme.quiet; font-size: 11px; }
                 Rectangle { vertical-stretch: 1; }
             }
         }
@@ -635,7 +649,9 @@ export component MainWindow inherits Window {
     callback set-route(string, string, bool);
     callback create-source(string);
     callback remove-source(string);
+    callback create-mixer-profile;
     callback save-mixer-profile(string);
+    callback duplicate-mixer-profile(string);
     callback load-mixer-profile(string);
     callback delete-mixer-profile(string);
     callback save-hotkey(string, string);
@@ -1306,7 +1322,9 @@ export component MainWindow inherits Window {
                 hardware-safe: root.hardware-safe;
                 link-active: root.link-active;
                 mixer-profiles: root.mixer-profiles;
+                create-profile => { root.create-mixer-profile(); }
                 save-profile(name) => { root.save-mixer-profile(name); }
+                duplicate-profile(name) => { root.duplicate-mixer-profile(name); }
                 select-profile(name) => { root.load-mixer-profile(name); }
                 delete-profile(name) => { root.delete-mixer-profile(name); }
             }

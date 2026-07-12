@@ -757,6 +757,22 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
+    let create_profile_window = window.as_weak();
+    let create_profile_client = client.clone();
+    window.on_create_mixer_profile(move || {
+        let window = create_profile_window.clone();
+        let client = create_profile_client.clone();
+        thread::spawn(move || {
+            match client.create_mixer_profile() {
+                Ok(()) => set_status(window.clone(), "Created a new mixer profile".into()),
+                Err(error) => {
+                    set_status(window.clone(), format!("Profile creation failed: {error}"))
+                }
+            }
+            refresh_all(window, client);
+        });
+    });
+
     let save_profile_window = window.as_weak();
     let save_profile_client = client.clone();
     window.on_save_mixer_profile(move |name| {
@@ -767,6 +783,24 @@ fn main() -> Result<(), slint::PlatformError> {
             match client.save_mixer_profile(&name) {
                 Ok(()) => set_status(window.clone(), format!("Saved mixer profile {name}")),
                 Err(error) => set_status(window.clone(), format!("Profile save failed: {error}")),
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let duplicate_profile_window = window.as_weak();
+    let duplicate_profile_client = client.clone();
+    window.on_duplicate_mixer_profile(move |name| {
+        let window = duplicate_profile_window.clone();
+        let client = duplicate_profile_client.clone();
+        let name = name.to_string();
+        thread::spawn(move || {
+            match client.duplicate_mixer_profile(&name) {
+                Ok(()) => set_status(window.clone(), format!("Duplicated mixer profile {name}")),
+                Err(error) => set_status(
+                    window.clone(),
+                    format!("Profile duplication failed: {error}"),
+                ),
             }
             refresh_all(window, client);
         });

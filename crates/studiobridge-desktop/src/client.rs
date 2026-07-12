@@ -228,6 +228,18 @@ impl DaemonClient {
         self.profile_command("save", name)
     }
 
+    pub fn create_mixer_profile(&self) -> Result<(), reqwest::Error> {
+        self.client
+            .post(format!("{}/api/mixer/profile/create", self.base_url))
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub fn duplicate_mixer_profile(&self, name: &str) -> Result<(), reqwest::Error> {
+        self.profile_command("duplicate", name)
+    }
+
     pub fn load_mixer_profile(&self, name: &str) -> Result<(), reqwest::Error> {
         self.profile_command("load", name)
     }
