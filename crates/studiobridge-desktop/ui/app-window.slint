@@ -711,6 +711,7 @@ export component MainWindow inherits Window {
     min-width: 1120px;
     min-height: 700px;
     background: Theme.background;
+    init => { root.width = 1402px; root.height = 778px; }
 
     in property <[SourceModel]> sources;
     in property <[RouteModel]> routes;

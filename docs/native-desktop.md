@@ -49,7 +49,8 @@ than copying its source or visual assets:
 
 - a visible device and module column;
 - a stable measured 1404-by-810 Windows default frame that does not collapse
-  when switching between Mixer, Studio, device, and application settings;
+  when switching between Mixer, Studio, device, and application settings,
+  remains user-resizable, and returns to that default on a clean restart;
 - a persistent five-button device navigation hierarchy plus application
   settings at the foot of the rail;
 - a source-first mixer with Personal and Audience controls;
