@@ -8,13 +8,16 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
 
 - The mixer is the primary workspace, reached from a narrow left navigation
   rail rather than a row of equally weighted top-level pages.
+- Mixer, Studio, microphone, lighting, and device buttons remain visible in the
+  rail on every page; Studio and its selected child workspace can be highlighted
+  together.
 - Sources are horizontal channel strips. Each strip keeps its color, name,
   source/application list, Personal fader, Audience fader, separate mute
   actions, and a link toggle together.
 - The grip at the leading edge of each source header reorders the strip by
   dragging; order is mixer state and follows saved profiles.
 - The compact mute action at the bottom of each strip has a separate arrow menu
-  with Mute to All, Mute to Audience, and Mute to Self. Selecting an item changes
+  with Mute to All, Mute to Audience, and Mute to Chat. Selecting an item changes
   the action (shown with a checkmark); pressing the main area applies that action.
 - Personal and Audience master devices remain visible directly below the
   source strips.

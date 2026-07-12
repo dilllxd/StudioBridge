@@ -48,12 +48,16 @@ The design follows concepts documented in the current BEACN application rather
 than copying its source or visual assets:
 
 - a visible device and module column;
+- a stable measured 1404-by-810 Windows default frame that does not collapse
+  when switching between Mixer, Studio, device, and application settings;
+- a persistent five-button device navigation hierarchy plus application
+  settings at the foot of the rail;
 - a source-first mixer with Personal and Audience controls;
 - draggable and keyboard-accessible source-strip grips backed by the native
   PipeWeaver order command, with saved profiles restoring the captured order;
 - linked or independent submix faders;
 - a persistent per-source mute action menu matching Mute to All, Mute to
-  Audience, and Mute to Self;
+  Audience, and Mute to Chat while retaining the internal Personal target;
 - a prominent Main Out section;
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
 - PipeWeaver-backed Linux default recording and playback device selectors;

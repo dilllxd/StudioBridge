@@ -1,6 +1,6 @@
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
 use serde::{Deserialize, Serialize};
-use slint::{Color, Model, ModelRc, SharedString, VecModel, Weak};
+use slint::{Color, LogicalSize, Model, ModelRc, SharedString, VecModel, Weak};
 #[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
@@ -628,6 +628,7 @@ fn main() -> Result<(), slint::PlatformError> {
         return Ok(());
     }
     let window = MainWindow::new()?;
+    window.window().set_size(LogicalSize::new(1402.0, 778.0));
     let tray = StudioBridgeTray::new()?;
     let Some(_instance_guard) = claim_single_instance(window.as_weak(), start_in_background) else {
         return Ok(());

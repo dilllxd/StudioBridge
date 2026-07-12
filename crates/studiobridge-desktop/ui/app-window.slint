@@ -392,7 +392,7 @@ component SourceStrip inherits Rectangle {
             border-color: #303034;
             Text {
                 width: parent.width - 20px;
-                text: root.source.mute-action == "all" ? "Mute to All" : root.source.mute-action == "personal" ? "Mute to Self" : "Mute to Audience";
+                text: root.source.mute-action == "all" ? "Mute to All" : root.source.mute-action == "personal" ? "Mute to Chat" : "Mute to Audience";
                 color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center;
             }
             Rectangle {
@@ -431,7 +431,7 @@ component SourceStrip inherits Rectangle {
             }
             Rectangle {
                 height: 20px; background: self-touch.has-hover ? #3a393e : transparent;
-                Text { x: 7px; text: (root.source.mute-action == "personal" ? "✓  " : "    ") + "Mute to Self"; color: Theme.text; font-size: 9px; vertical-alignment: center; }
+                Text { x: 7px; text: (root.source.mute-action == "personal" ? "✓  " : "    ") + "Mute to Chat"; color: Theme.text; font-size: 9px; vertical-alignment: center; }
                 self-touch := TouchArea { clicked => { root.mute-menu-open = false; root.mute-action-selected("personal"); } }
             }
         }
@@ -800,9 +800,9 @@ export component MainWindow inherits Window {
                 spacing: 5px;
                 RailButton { glyph: "☷"; label: "MIXER"; active: root.active-page == 0; clicked => { root.active-page = 0; } }
                 RailButton { glyph: "▣"; label: "STUDIO"; active: root.active-page >= 1 && root.active-page <= 3; clicked => { root.active-page = 1; } }
-                if root.active-page >= 1 && root.active-page <= 3: RailButton { glyph: "◉"; label: "MIC"; active: root.active-page == 1; clicked => { root.active-page = 1; } }
-                if root.active-page >= 1 && root.active-page <= 3: RailButton { glyph: "✦"; label: "LIGHTING"; active: root.active-page == 2; clicked => { root.active-page = 2; } }
-                if root.active-page >= 1 && root.active-page <= 3: RailButton { glyph: "⚙"; label: "DEVICE"; active: root.active-page == 3; clicked => { root.active-page = 3; } }
+                RailButton { glyph: "◉"; label: "MIC"; active: root.active-page == 1; clicked => { root.active-page = 1; } }
+                RailButton { glyph: "✦"; label: "LIGHTING"; active: root.active-page == 2; clicked => { root.active-page = 2; } }
+                RailButton { glyph: "⚙"; label: "DEVICE"; active: root.active-page == 3; clicked => { root.active-page = 3; } }
                 Rectangle { vertical-stretch: 1; }
                 RailButton { glyph: "⚙"; label: "SETTINGS"; active: root.active-page == 4; clicked => { root.active-page = 4; } }
             }
