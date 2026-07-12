@@ -59,9 +59,10 @@ than copying its source or visual assets:
 - measured source-header Delete Knob popups with native outside-click and
   Escape dismissal plus keyboard opening and activation;
 - linked or independent submix faders;
-- a BEACN-matched add-source menu that keeps all source types visible, disables
-  occupied names before they reach the daemon, and creates available strips
-  directly;
+- a BEACN-matched add-source menu using the measured 82-by-238 popup and
+  thirteen 18-pixel rows, keeping every source type visible, disabling occupied
+  names before they reach the daemon, creating available strips directly, and
+  supporting native outside/Escape dismissal plus keyboard activation;
 - a persistent per-source mute action menu matching BEACN's measured
   112-by-60 popup, three 20-pixel rows, checked selection, outside/Escape
   dismissal, and keyboard activation for Mute to All, Mute to Audience, and

@@ -765,10 +765,32 @@ component AddSourceRow inherits Rectangle {
     in property <string> label;
     in property <bool> available: true;
     callback selected(string);
-    height: 24px;
-    background: root.available && touch.has-hover ? #3a393e : #27272b;
-    Text { x: 9px; text: root.label; color: root.available ? Theme.text : #6d6d71; font-size: 10px; font-weight: root.available ? 800 : 400; vertical-alignment: center; }
-    touch := TouchArea { clicked => { if root.available { root.selected(root.label); } } }
+    height: 18px;
+    background: root.available && touch.has-hover ? #3a393e : transparent;
+    add-source-row-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        enabled: root.available;
+        accessible-role: button;
+        accessible-label: "Add " + root.label;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                root.selected(root.label);
+                return accept;
+            }
+            return reject;
+        }
+        Text {
+            x: 20px; width: parent.width - 23px;
+            text: root.label;
+            color: root.available ? Theme.text : #6d6d71;
+            font-size: 10px; font-weight: root.available ? 800 : 400;
+            vertical-alignment: center;
+        }
+        touch := TouchArea {
+            enabled: root.available;
+            clicked => { add-source-row-focus.focus(); root.selected(root.label); }
+        }
+    }
 }
 
 export component MainWindow inherits Window {
@@ -840,7 +862,6 @@ export component MainWindow inherits Window {
     in-out property <bool> mixing-suite-enabled: true;
     in-out property <bool> automatic-default-reset: true;
     in-out property <bool> meter-crossfade: true;
-    in-out property <bool> add-source-menu-open: false;
     in-out property <bool> legal-dialog-open: false;
     in-out property <bool> profile-save-confirm-open: false;
     in-out property <string> pending-profile-save: "";
@@ -965,25 +986,46 @@ export component MainWindow inherits Window {
                             Rectangle {
                                 width: 133px; height: 398px; background: #19191c; border-width: 1px; border-color: Theme.border; border-radius: 2px;
                                 Text { text: "+"; color: Theme.quiet; font-size: 42px; font-weight: 200; horizontal-alignment: center; vertical-alignment: center; }
-                                TouchArea { clicked => { root.add-source-menu-open = !root.add-source-menu-open; } }
-                                Rectangle {
-                                    visible: root.add-source-menu-open; z: 30; x: 4px; y: 34px; width: 125px; height: 316px;
-                                    background: #27272b; border-width: 1px; border-color: #4b4b50;
-                                    VerticalLayout {
-                                        padding: 3px; spacing: 0px;
-                                        AddSourceRow { label: "Mic"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Game"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Music"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Chat"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Browser"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "System"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Aux 1"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Aux 2"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Hardware"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Link In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Link 2 In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Link 3 In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Link 4 In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                add-source-focus := FocusScope {
+                                    width: parent.width; height: parent.height;
+                                    accessible-role: button;
+                                    accessible-label: "Add mixer source";
+                                    key-pressed(event) => {
+                                        if event.text == Key.Return || event.text == Key.Space {
+                                            if add-source-menu.is-open { add-source-menu.close(); } else { add-source-menu.show(); }
+                                            return accept;
+                                        }
+                                        return reject;
+                                    }
+                                    TouchArea {
+                                        clicked => {
+                                            add-source-focus.focus();
+                                            if add-source-menu.is-open { add-source-menu.close(); } else { add-source-menu.show(); }
+                                        }
+                                    }
+                                }
+                                add-source-menu := PopupWindow {
+                                    x: -18px; y: 196px; width: 82px; height: 238px;
+                                    close-policy: close-on-click-outside;
+                                    Rectangle {
+                                        width: parent.width; height: parent.height;
+                                        background: #27272b; border-width: 1px; border-color: #242326;
+                                        VerticalLayout {
+                                            padding: 2px; spacing: 0px;
+                                            AddSourceRow { label: "Mic"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "Game"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "Music"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "Chat"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "Browser"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "System"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "Aux 1"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "Aux 2"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "Hardware"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "Link In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "Link 2 In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "Link 3 In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "Link 4 In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                        }
                                     }
                                 }
                             }
