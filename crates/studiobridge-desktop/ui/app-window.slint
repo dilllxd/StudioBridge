@@ -152,6 +152,7 @@ component VerticalFader inherits Rectangle {
     in property <bool> muted;
     in property <bool> personal;
     in property <bool> show-mute: true;
+    in property <bool> interactive: true;
     callback changed(float);
     callback mute-clicked;
     width: 34px;
@@ -190,6 +191,7 @@ component VerticalFader inherits Rectangle {
         TouchArea { clicked => { root.mute-clicked(); } }
     }
     TouchArea {
+        enabled: root.interactive;
         height: root.show-mute ? parent.height - 45px : parent.height;
         moved => {
             if (self.pressed) {
@@ -769,6 +771,84 @@ component Dial inherits Rectangle {
     Text { x: 0px; y: 89px; width: parent.width; text: root.value-label; color: root.active ? Theme.teal : Theme.quiet; font-size: 9px; horizontal-alignment: center; }
 }
 
+component ProcessorModeButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    in property <bool> interactive: true;
+    callback clicked;
+    height: 32px;
+    background: root.selected ? #4a494f : #29292d;
+    border-width: 1px;
+    border-color: root.selected ? #626168 : #34343a;
+    Text {
+        text: root.label;
+        color: root.selected ? Theme.text : Theme.quiet;
+        font-size: 10px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    TouchArea { enabled: root.interactive; clicked => { root.clicked(); } }
+}
+
+component ProcessorValueRow inherits Rectangle {
+    in property <string> label;
+    in property <string> value-label;
+    in property <bool> interactive;
+    callback decrease;
+    callback increase;
+    height: 25px;
+    Text { x: 0px; width: 82px; text: root.label; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
+    Text { x: 82px; width: parent.width - 110px; text: root.value-label; color: Theme.teal; font-size: 10px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
+    Text { x: parent.width - 24px; width: 10px; text: "‹"; color: root.interactive ? Theme.text : #55555a; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; TouchArea { enabled: root.interactive; clicked => { root.decrease(); } } }
+    Text { x: parent.width - 12px; width: 10px; text: "›"; color: root.interactive ? Theme.text : #55555a; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; TouchArea { enabled: root.interactive; clicked => { root.increase(); } } }
+}
+
+component ProcessorMeter inherits Rectangle {
+    in property <string> label;
+    in property <float> value;
+    in property <color> colour: Theme.teal;
+    width: 52px;
+    background: transparent;
+    Text { x: 0px; y: 0px; width: parent.width; height: 18px; text: root.label; color: Theme.quiet; font-size: 8px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    Rectangle {
+        x: 9px; y: 22px; width: 34px; height: parent.height - 45px;
+        background: #19191c; border-width: 1px; border-color: #34343a;
+        Rectangle { x: 2px; y: 2px; width: parent.width - 4px; height: (parent.height - 4px) * (1.0 - root.value / 100.0); background: #242428; }
+        Rectangle { x: 2px; y: 2px + (parent.height - 4px) * (1.0 - root.value / 100.0); width: parent.width - 4px; height: (parent.height - 4px) * root.value / 100.0; background: root.colour; }
+    }
+    Text { x: 0px; y: parent.height - 20px; width: parent.width; height: 18px; text: round(root.value) + "%"; color: Theme.text; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+}
+
+component ProcessorDial inherits Rectangle {
+    in property <string> label;
+    in-out property <float> value;
+    in property <float> minimum: -12;
+    in property <float> maximum: 12;
+    in property <bool> interactive;
+    callback changed(float);
+    width: 96px;
+    background: transparent;
+    Rectangle {
+        x: 15px; y: 18px; width: 66px; height: 66px;
+        border-radius: 33px; background: #18181b; border-width: 5px;
+        border-color: root.interactive ? Theme.teal : #4a494f;
+        Rectangle { x: 28px; y: 3px; width: 4px; height: 18px; background: root.interactive ? Theme.teal : Theme.quiet; border-radius: 2px; }
+    }
+    Text { x: 0px; y: 0px; width: parent.width; height: 16px; text: root.label; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; }
+    Text { x: 0px; y: 88px; width: parent.width; height: 18px; text: round(root.value * 10) / 10 + "dB"; color: root.interactive ? Theme.teal : Theme.quiet; font-size: 9px; horizontal-alignment: center; }
+    TouchArea {
+        enabled: root.interactive;
+        moved => {
+            if (self.pressed) {
+                let candidate = root.maximum - self.mouse-y / self.height * (root.maximum - root.minimum);
+                root.value = candidate < root.minimum ? root.minimum : candidate > root.maximum ? root.maximum : candidate;
+                root.changed(root.value);
+            }
+        }
+    }
+}
+
 component ToggleSwitch inherits Rectangle {
     in-out property <bool> checked;
     in property <bool> interactive: true;
@@ -1089,15 +1169,19 @@ export component MainWindow inherits Window {
     in property <string> dsp-label-a: "Bass dB";
     in property <string> dsp-label-b: "Mids dB";
     in property <string> dsp-label-c: "Treble dB";
+    in property <string> dsp-label-d: "";
     in-out property <float> dsp-value-a: 0;
     in-out property <float> dsp-value-b: 0;
     in-out property <float> dsp-value-c: 0;
+    in-out property <float> dsp-value-d: 0;
     in property <float> dsp-min-a: -12;
     in property <float> dsp-max-a: 12;
     in property <float> dsp-min-b: -12;
     in property <float> dsp-max-b: 12;
     in property <float> dsp-min-c: -12;
     in property <float> dsp-max-c: 12;
+    in property <float> dsp-min-d: 0;
+    in property <float> dsp-max-d: 1;
     in property <string> status-text: "Connecting to StudioBridge daemon";
     in property <string> device-name: "BEACN Studio";
     in property <string> device-serial: "Unavailable";
@@ -1154,10 +1238,12 @@ export component MainWindow inherits Window {
     callback assign-linux-application(string, string, int);
     callback assign-link-application(string, int);
     callback select-dsp-module(string);
+    callback select-dsp-mode(bool);
+    callback select-noise-style(bool);
     callback load-dsp;
     callback arm-dsp;
     callback disarm-dsp;
-    callback apply-dsp(float, float, float);
+    callback apply-dsp(float, float, float, float);
     callback revert-dsp;
     callback save-preferences(bool, bool, bool, bool, bool, bool, bool);
 
@@ -1665,10 +1751,11 @@ export component MainWindow inherits Window {
                     vertical-stretch: 1;
                     border-width: 1px; border-color: Theme.border; background: Theme.panel;
                     VerticalLayout {
-                        padding: 10px; spacing: 6px;
+                        padding: 0px; spacing: 0px;
                         HorizontalLayout {
-                            Text { text: root.dsp-editor-title; color: Theme.text; font-size: 15px; font-weight: 800; horizontal-stretch: 1; }
-                            StatusPill { label: root.dsp-active-module == root.dsp-selected-module ? "EDITING " + root.dsp-lease-seconds + "s" : "READ ONLY"; good: root.dsp-active-module == root.dsp-selected-module; }
+                            height: 18px; padding-left: 10px; padding-right: 8px;
+                            Text { text: root.dsp-editor-title; color: Theme.quiet; font-size: 9px; font-weight: 800; horizontal-stretch: 1; vertical-alignment: center; }
+                            StatusPill { width: 112px; height: 16px; horizontal-stretch: 0; label: root.dsp-active-module == root.dsp-selected-module ? "EDITING " + root.dsp-lease-seconds + "s" : "READ ONLY"; good: root.dsp-active-module == root.dsp-selected-module; }
                         }
 
                         if root.dsp-selected-module == "equalizer": HorizontalLayout {
@@ -1714,84 +1801,162 @@ export component MainWindow inherits Window {
                         }
 
                         if root.dsp-selected-module == "noise_suppression": HorizontalLayout {
-                            spacing: 14px;
-                            VerticalLayout {
-                                width: 250px; spacing: 7px;
-                                HorizontalLayout { Text { text: "Noise Suppression"; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-stretch: 1; } ToggleSwitch { checked: true; interactive: false; } }
-                                HorizontalLayout {
-                                    height: 28px; spacing: 2px;
-                                    Rectangle { horizontal-stretch: 1; background: !root.noise-snapshot ? Theme.teal : #27272b; Text { text: "ADAPTIVE"; color: Theme.text; font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } TouchArea { clicked => { root.noise-snapshot = false; } } }
-                                    Rectangle { horizontal-stretch: 1; background: root.noise-snapshot ? Theme.teal : #27272b; Text { text: "SNAPSHOT"; color: Theme.text; font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } TouchArea { clicked => { root.noise-snapshot = true; } } }
+                            spacing: 0px;
+                            Rectangle {
+                                width: 200px; background: #202023;
+                                Rectangle { x: parent.width - 1px; width: 1px; height: parent.height; background: Theme.border; }
+                                VerticalLayout {
+                                    padding-left: 10px; padding-right: 24px; padding-top: 5px; padding-bottom: 5px; spacing: 3px;
+                                    HorizontalLayout { height: 20px; ToggleSwitch { checked: true; interactive: false; } Text { text: "On"; color: Theme.text; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
+                                    Text { height: 16px; text: "Style"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
+                                    HorizontalLayout {
+                                        height: 32px; spacing: 4px;
+                                        ProcessorModeButton { horizontal-stretch: 1; label: "Adaptive"; selected: !root.noise-snapshot; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-noise-style(false); } }
+                                        ProcessorModeButton { horizontal-stretch: 1; label: "Snapshot"; selected: root.noise-snapshot; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-noise-style(true); } }
+                                    }
+                                    Rectangle { height: 8px; }
+                                    Text { height: 16px; text: "Amount"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
+                                    HorizontalLayout { height: 26px; spacing: 5px; Text { width: 34px; text: round(root.dsp-value-a) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } } }
+                                    Text { height: 16px; text: "Sensitivity"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
+                                    HorizontalLayout { height: 26px; spacing: 5px; Text { width: 34px; text: round(root.dsp-value-b) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } } }
+                                    Rectangle { vertical-stretch: 1; }
                                 }
-                                Text { text: "AMOUNT   " + round(root.dsp-value-a * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } }
-                                Text { text: "SENSITIVITY   " + round(root.dsp-value-b * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } }
                             }
                             Rectangle {
-                                horizontal-stretch: 1; background: #111518; border-width: 1px; border-color: Theme.border;
-                                Rectangle { x: 0px; y: parent.height * 0.66; width: parent.width; height: 1px; background: #343a3d; }
+                                horizontal-stretch: 1; background: #15191b;
                                 Rectangle { x: parent.width * 0.25; width: 1px; height: parent.height; background: #242a2d; }
                                 Rectangle { x: parent.width * 0.50; width: 1px; height: parent.height; background: #242a2d; }
                                 Rectangle { x: parent.width * 0.75; width: 1px; height: parent.height; background: #242a2d; }
-                                Path { width: parent.width; height: parent.height; commands: "M 0 45 C 90 48 145 62 225 82 C 315 106 410 115 510 116 C 630 117 760 119 900 119"; fill: transparent; stroke: Theme.teal; stroke-width: 2px; }
-                                Text { x: 8px; y: 8px; text: root.noise-snapshot ? "Captured noise profile" : "Adaptive noise floor"; color: Theme.quiet; font-size: 9px; }
+                                Rectangle { y: parent.height * 0.50; width: parent.width; height: 1px; background: #242a2d; }
+                                Rectangle { y: parent.height * 0.75; width: parent.width; height: 1px; background: #242a2d; }
+                                Path { width: parent.width; height: parent.height; commands: "M 0 80 C 72 82 130 92 205 115 C 285 140 385 151 500 153 C 610 154 760 155 900 155"; fill: transparent; stroke: Theme.teal; stroke-width: 2px; }
+                                Text { x: 8px; y: parent.height - 20px; text: root.noise-snapshot ? "Snapshot profile" : "Adaptive noise floor"; color: Theme.quiet; font-size: 8px; }
                             }
                         }
 
                         if root.dsp-selected-module == "expander": HorizontalLayout {
-                            spacing: 14px;
-                            VerticalLayout {
-                                width: 285px; spacing: 6px;
-                                Text { text: "THRESHOLD   " + round(root.dsp-value-a * 10) / 10 + " dB"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } }
-                                HorizontalLayout { height: 26px; Text { text: "SIMPLE"; color: !root.dsp-advanced ? Theme.teal : Theme.quiet; font-size: 9px; font-weight: 800; } ToggleSwitch { checked: root.dsp-advanced; toggled(value) => { root.dsp-advanced = value; } } Text { text: "ADVANCED"; color: root.dsp-advanced ? Theme.teal : Theme.quiet; font-size: 9px; font-weight: 800; } }
-                                Text { text: root.dsp-advanced ? "RATIO   " + round(root.dsp-value-b * 10) / 10 : "EXPAND AMOUNT   " + round(root.dsp-value-b * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } }
-                                if root.dsp-advanced: Text { text: "ATTACK / RELEASE   " + round(root.dsp-value-c * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                if root.dsp-advanced: Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; changed(value) => { root.dsp-value-c = value; } }
+                            spacing: 0px;
+                            Rectangle {
+                                width: 200px; background: #202023;
+                                VerticalLayout {
+                                    padding-left: 10px; padding-right: 24px; padding-top: 5px; padding-bottom: 4px; spacing: 3px;
+                                    HorizontalLayout { height: 20px; ToggleSwitch { checked: true; interactive: false; } Text { text: "On"; color: Theme.text; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
+                                    HorizontalLayout {
+                                        height: 50px;
+                                        Text { width: 18px; text: "‹"; color: root.dsp-active-module == root.dsp-selected-module ? Theme.text : #55555a; font-size: 21px; horizontal-alignment: center; vertical-alignment: center; TouchArea { enabled: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a - 1 < root.dsp-min-a ? root.dsp-min-a : root.dsp-value-a - 1; } } }
+                                        Text { horizontal-stretch: 1; text: round(root.dsp-value-a) + "dB"; color: Theme.text; font-size: 22px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                                        Text { width: 18px; text: "›"; color: root.dsp-active-module == root.dsp-selected-module ? Theme.text : #55555a; font-size: 21px; horizontal-alignment: center; vertical-alignment: center; TouchArea { enabled: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a + 1 > root.dsp-max-a ? root.dsp-max-a : root.dsp-value-a + 1; } } }
+                                    }
+                                    HorizontalLayout { height: 32px; spacing: 6px;
+                                        ProcessorModeButton { horizontal-stretch: 1; label: "Simple"; selected: !root.dsp-advanced; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(false); } }
+                                        ProcessorModeButton { horizontal-stretch: 1; label: "Advanced"; selected: root.dsp-advanced; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(true); } }
+                                    }
+                                    Rectangle { height: 7px; }
+                                    ProcessorValueRow { label: root.dsp-advanced ? "Ratio" : "Amount"; value-label: round(root.dsp-value-b * 10) / 10 + (root.dsp-advanced ? ":1" : "%"); interactive: root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-b = root.dsp-value-b - 0.1 < root.dsp-min-b ? root.dsp-min-b : root.dsp-value-b - 0.1; } increase => { root.dsp-value-b = root.dsp-value-b + 0.1 > root.dsp-max-b ? root.dsp-max-b : root.dsp-value-b + 0.1; } }
+                                    if root.dsp-advanced: ProcessorValueRow { label: "Attack"; value-label: round(root.dsp-value-c * 10) / 10 + "ms"; interactive: root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-c = root.dsp-value-c - 1 < root.dsp-min-c ? root.dsp-min-c : root.dsp-value-c - 1; } increase => { root.dsp-value-c = root.dsp-value-c + 1 > root.dsp-max-c ? root.dsp-max-c : root.dsp-value-c + 1; } }
+                                    if root.dsp-advanced: ProcessorValueRow { label: "Release"; value-label: round(root.dsp-value-d * 10) / 10 + "ms"; interactive: root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-d = root.dsp-value-d - 1 < root.dsp-min-d ? root.dsp-min-d : root.dsp-value-d - 1; } increase => { root.dsp-value-d = root.dsp-value-d + 1 > root.dsp-max-d ? root.dsp-max-d : root.dsp-value-d + 1; } }
+                                    Rectangle { vertical-stretch: 1; }
+                                }
                             }
                             Rectangle {
-                                horizontal-stretch: 1; background: #111518; border-width: 1px; border-color: Theme.border;
-                                Rectangle { x: 0px; y: parent.height * 0.75; width: parent.width; height: 1px; background: #343a3d; }
-                                Path { width: parent.width; height: parent.height; commands: "M 0 142 L 215 142 C 280 142 310 118 360 92 L 520 10 L 900 10"; fill: transparent; stroke: Theme.teal; stroke-width: 2px; }
-                                Text { x: 10px; y: 10px; text: root.dsp-advanced ? "Advanced expander curve" : "Simple expander curve"; color: Theme.quiet; font-size: 9px; }
+                                horizontal-stretch: 1; background: #15191b;
+                                Rectangle { width: 1px; height: parent.height; background: Theme.border; }
+                                for label[i] in ["0", "-20", "-40", "-60", "-80", "-100"]: Text { x: 6px; y: i * (parent.height - 14px) / 5; width: 28px; height: 14px; text: label; color: Theme.quiet; font-size: 8px; }
+                                Rectangle { x: 35px; y: parent.height * 0.42; width: parent.width - 35px; height: 1px; background: #dedee0; }
+                                Path { x: 35px; width: parent.width - 35px; height: parent.height; commands: "M 0 175 L 180 175 C 245 175 285 142 340 112 L 480 18 L 900 18"; fill: transparent; stroke: Theme.teal; stroke-width: 2px; }
+                                Path { x: 35px; width: parent.width - 35px; height: parent.height; commands: "M 0 202 C 110 194 185 198 265 187 C 345 176 430 194 520 186 C 620 178 735 190 900 183"; fill: transparent; stroke: #a7464d; stroke-width: 2px; }
                             }
                         }
 
                         if root.dsp-selected-module == "compressor": HorizontalLayout {
-                            spacing: 14px;
-                            VerticalLayout {
-                                width: 285px; spacing: 6px;
-                                Text { text: "THRESHOLD   " + round(root.dsp-value-a * 10) / 10 + " dB"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } }
-                                HorizontalLayout { height: 26px; Text { text: "SIMPLE"; color: !root.dsp-advanced ? Theme.teal : Theme.quiet; font-size: 9px; font-weight: 800; } ToggleSwitch { checked: root.dsp-advanced; toggled(value) => { root.dsp-advanced = value; } } Text { text: "ADVANCED"; color: root.dsp-advanced ? Theme.teal : Theme.quiet; font-size: 9px; font-weight: 800; } }
-                                Text { text: root.dsp-advanced ? "RATIO / ATTACK / RELEASE" : "COMPRESS AMOUNT   " + round(root.dsp-value-b * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } }
-                                Text { text: "MAKEUP GAIN   " + round(root.dsp-value-c * 10) / 10 + " dB"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; changed(value) => { root.dsp-value-c = value; } }
+                            spacing: 0px;
+                            Rectangle {
+                                width: 293px; background: #202023;
+                                VerticalLayout {
+                                    padding-left: 10px; padding-right: 34px; padding-top: 5px; padding-bottom: 4px; spacing: 3px;
+                                    HorizontalLayout { height: 20px; ToggleSwitch { checked: true; interactive: false; } Text { text: "On"; color: Theme.text; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
+                                    HorizontalLayout {
+                                        height: 50px;
+                                        Text { width: 18px; text: "‹"; color: root.dsp-active-module == root.dsp-selected-module ? Theme.text : #55555a; font-size: 21px; horizontal-alignment: center; vertical-alignment: center; TouchArea { enabled: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a - 1 < root.dsp-min-a ? root.dsp-min-a : root.dsp-value-a - 1; } } }
+                                        Text { horizontal-stretch: 1; text: round(root.dsp-value-a) + "dB"; color: Theme.text; font-size: 22px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
+                                        Text { width: 18px; text: "›"; color: root.dsp-active-module == root.dsp-selected-module ? Theme.text : #55555a; font-size: 21px; horizontal-alignment: center; vertical-alignment: center; TouchArea { enabled: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a + 1 > root.dsp-max-a ? root.dsp-max-a : root.dsp-value-a + 1; } } }
+                                    }
+                                    HorizontalLayout { height: 32px; spacing: 6px;
+                                        ProcessorModeButton { horizontal-stretch: 1; label: "Simple"; selected: !root.dsp-advanced; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(false); } }
+                                        ProcessorModeButton { horizontal-stretch: 1; label: "Advanced"; selected: root.dsp-advanced; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(true); } }
+                                    }
+                                    Rectangle { height: 8px; }
+                                    Text { height: 16px; text: root.dsp-advanced ? "Ratio / Attack / Release" : "Compress Amount"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
+                                    HorizontalLayout { height: 28px; spacing: 6px; Text { width: 36px; text: round(root.dsp-value-b) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } } }
+                                    Rectangle { vertical-stretch: 1; }
+                                }
                             }
                             Rectangle {
-                                horizontal-stretch: 1; background: #111518; border-width: 1px; border-color: Theme.border;
-                                Path { width: parent.width; height: parent.height; commands: "M 0 142 L 300 75 C 350 64 410 60 900 58"; fill: transparent; stroke: Theme.teal; stroke-width: 2px; }
-                                HorizontalLayout { x: 18px; y: 12px; width: parent.width - 36px; height: 24px; spacing: 8px; Text { text: "INPUT"; color: Theme.quiet; font-size: 8px; } Rectangle { horizontal-stretch: 1; background: #23282b; Rectangle { width: parent.width * 0.55; height: parent.height; background: Theme.teal; } } Text { text: "ATTENUATION"; color: Theme.quiet; font-size: 8px; } Rectangle { horizontal-stretch: 1; background: #23282b; Rectangle { width: parent.width * 0.22; height: parent.height; background: Theme.amber; } } Text { text: "OUTPUT"; color: Theme.quiet; font-size: 8px; } Rectangle { horizontal-stretch: 1; background: #23282b; Rectangle { width: parent.width * 0.48; height: parent.height; background: Theme.teal; } } }
+                                horizontal-stretch: 1; background: #19191c;
+                                ProcessorMeter { x: 28px; y: 5px; width: 52px; height: parent.height - 9px; label: "INPUT"; value: root.microphone-meter; colour: Theme.teal; }
+                                ProcessorMeter { x: 128px; y: 5px; width: 52px; height: parent.height - 9px; label: "ATTENUATION"; value: root.microphone-meter * 0.32; colour: Theme.amber; }
+                                ProcessorMeter { x: 228px; y: 5px; width: 52px; height: parent.height - 9px; label: "OUTPUT"; value: root.microphone-meter * 0.88; colour: Theme.teal; }
+                                VerticalLayout {
+                                    x: 428px; y: 5px; width: 78px; height: parent.height - 9px; spacing: 3px;
+                                    Text { height: 18px; text: "MAKE-UP GAIN"; color: Theme.quiet; font-size: 8px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: (root.dsp-value-c - root.dsp-min-c) / (root.dsp-max-c - root.dsp-min-c) * 100; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-c = root.dsp-min-c + value / 100 * (root.dsp-max-c - root.dsp-min-c); } } Rectangle { horizontal-stretch: 1; } }
+                                    Text { height: 18px; text: round(root.dsp-value-c * 10) / 10 + "dB"; color: Theme.text; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
+                                }
                             }
                         }
 
                         if root.dsp-selected-module == "headphone_equalizer": HorizontalLayout {
-                            spacing: 18px;
-                            VerticalLayout { width: 110px; Text { text: "MIC MONITOR"; color: Theme.text; font-size: 10px; font-weight: 800; horizontal-alignment: center; } HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: 42; accent: Theme.teal; muted: false; personal: true; show-mute: false; } Rectangle { horizontal-stretch: 1; } } }
-                            VerticalLayout { width: 110px; Text { text: "HEADPHONES"; color: Theme.text; font-size: 10px; font-weight: 800; horizontal-alignment: center; } HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: 66; accent: Theme.teal; muted: false; personal: true; show-mute: false; } Rectangle { horizontal-stretch: 1; } } }
-                            Dial { label: "BASS"; value-label: round(root.dsp-value-a * 10) / 10 + "dB"; }
-                            Dial { label: "MIDS"; value-label: round(root.dsp-value-b * 10) / 10 + "dB"; }
-                            Dial { label: "TREBLE"; value-label: round(root.dsp-value-c * 10) / 10 + "dB"; }
-                            VerticalLayout { horizontal-stretch: 1; Text { text: "SUBWOOFER"; color: Theme.text; font-size: 10px; font-weight: 800; } Slider { value: 45; } Text { text: "AMP POWER"; color: Theme.text; font-size: 10px; font-weight: 800; } Text { text: "○ Low     ● Medium     ○ High"; color: Theme.quiet; font-size: 10px; } }
+                            spacing: 0px;
+                            Rectangle {
+                                width: 268px; background: #202023;
+                                Text { x: 10px; y: 8px; text: "LEVEL CONTROLS"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
+                                VerticalLayout {
+                                    x: 20px; y: 30px; width: 82px; height: parent.height - 38px; spacing: 3px;
+                                    Text { height: 18px; text: "MIC MONITOR"; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: 0; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; } Rectangle { horizontal-stretch: 1; } }
+                                    Text { height: 18px; text: "-100.0dB"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                Text { x: 121px; y: parent.height / 2 - 12px; width: 26px; height: 24px; text: "⛓"; color: Theme.quiet; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                                VerticalLayout {
+                                    x: 164px; y: 30px; width: 82px; height: parent.height - 38px; spacing: 3px;
+                                    Text { height: 18px; text: "HEADPHONES"; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: 50; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; } Rectangle { horizontal-stretch: 1; } }
+                                    Text { height: 18px; text: "0.0dB"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                            }
+                            Rectangle {
+                                width: 405px; background: #19191c;
+                                Rectangle { width: 1px; height: parent.height; background: Theme.border; }
+                                Text { x: 12px; y: 8px; text: "EQUALIZER"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
+                                HorizontalLayout { x: 12px; y: 25px; width: 92px; height: 20px; ToggleSwitch { checked: true; interactive: false; } Text { text: "On"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
+                                HorizontalLayout {
+                                    x: 48px; y: 49px; width: parent.width - 70px; height: 110px; spacing: 12px;
+                                    ProcessorDial { label: "BASS"; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-a = value; } }
+                                    ProcessorDial { label: "MIDS"; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-b = value; } }
+                                    ProcessorDial { label: "TREBLE"; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-c = value; } }
+                                }
+                                Text { x: 14px; y: parent.height - 50px; width: 76px; height: 16px; text: "SUBWOOFER"; color: Theme.quiet; font-size: 8px; font-weight: 700; vertical-alignment: center; }
+                                Slider { x: 96px; y: parent.height - 49px; width: parent.width - 118px; height: 18px; enabled: false; value: 45; }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1; background: #202023;
+                                Rectangle { width: 1px; height: parent.height; background: Theme.border; }
+                                VerticalLayout {
+                                    padding-left: 18px; padding-right: 8px; padding-top: 8px; spacing: 10px;
+                                    Text { height: 16px; text: "AMP POWER"; color: Theme.quiet; font-size: 8px; font-weight: 800; vertical-alignment: center; }
+                                    HorizontalLayout { height: 22px; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; border-width: 1px; border-color: Theme.quiet; } Text { text: "In Ear Monitors"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
+                                    HorizontalLayout { height: 22px; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; border-width: 1px; border-color: Theme.teal; Rectangle { x: 3px; y: 3px; width: 6px; height: 6px; border-radius: 3px; background: Theme.teal; } } Text { text: "Line Level"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
+                                    HorizontalLayout { height: 22px; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; border-width: 1px; border-color: Theme.quiet; } Text { text: "Normal Power"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
+                                    HorizontalLayout { height: 22px; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; border-width: 1px; border-color: Theme.quiet; } Text { text: "High Impedance Mode"; color: Theme.text; font-size: 9px; vertical-alignment: center; wrap: word-wrap; } }
+                                    Rectangle { vertical-stretch: 1; }
+                                }
+                            }
                         }
 
                         HorizontalLayout {
-                            spacing: 7px;
+                            height: 27px; padding-left: 8px; padding-right: 8px; spacing: 7px;
                             Button { text: "Reload read-back"; clicked => { root.load-dsp(); } }
-                            if root.dsp-active-module == root.dsp-selected-module: Button { text: "Apply + verify"; clicked => { root.apply-dsp(root.dsp-value-a, root.dsp-value-b, root.dsp-value-c); } }
+                            if root.dsp-active-module == root.dsp-selected-module: Button { text: "Apply + verify"; clicked => { root.apply-dsp(root.dsp-value-a, root.dsp-value-b, root.dsp-value-c, root.dsp-value-d); } }
                             if root.dsp-active-module == root.dsp-selected-module: Button { text: "Revert captured"; clicked => { root.revert-dsp(); } }
                             if root.dsp-active-module != root.dsp-selected-module && !root.arm-confirm-pending: Button { text: "Enable editing for 5 minutes"; clicked => { root.arm-confirm-pending = true; } }
                             if root.dsp-active-module != root.dsp-selected-module && root.arm-confirm-pending: Button { text: "Confirm: this changes audio"; clicked => { root.arm-dsp(); } }
@@ -1799,7 +1964,7 @@ export component MainWindow inherits Window {
                             if root.dsp-active-module != "": Button { text: "Disarm now"; clicked => { root.disarm-dsp(); } }
                             Rectangle { horizontal-stretch: 1; }
                         }
-                        Text { text: "General hardware writes remain OFF. Phantom power, firmware, reset, lighting, limiter guesses, and storage are excluded."; color: Theme.amber; font-size: 9px; }
+                        Text { height: 11px; text: "General hardware writes remain OFF · phantom, firmware, reset, lighting, limiter guesses, and storage excluded"; color: Theme.amber; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
                     }
                 }
                 }

@@ -108,11 +108,26 @@ Relay in this matrix to match the familiar BEACN routing vocabulary.
 - Live speaking/peak regions provide context for gain and dynamics controls.
 - Mic Setup reads the live microphone gain and phantom state, keeps phantom
   read-only, and combines Peak/Speaking regions with a scrolling waveform.
+- Noise Suppression uses a fixed 200-pixel control column beside the response
+  graph. Its control order is On, Style (Adaptive/Snapshot), Amount, then
+  Sensitivity.
+- Expander also uses a 200-pixel control column. It presents a large threshold
+  readout, Simple/Advanced buttons, then the mode-specific values beside a
+  0-to--100 dB graph with threshold and input traces.
+- Compressor uses an approximately 293-pixel control column followed by
+  separate Input, Attenuation, and Output meters and a Make-up Gain fader; it
+  does not reuse the Expander graph.
+- Headphones divides the editor at 268 and 673 pixels into Level Controls,
+  Equalizer, and Amp Power panels. The EQ has three large Bass/Mids/Treble
+  controls and a Subwoofer row; the observed Amp Power selection is Line Level.
 
 StudioBridge adaptation: keep a persistent read-only spectrum/EQ overview and
 live meter, move the six validated DSP modules to a horizontal tab strip, and
 show the guarded editor below. Preserve explicit module arming, captured-state
 revert, read-back verification, and the permanent phantom-power exclusion.
+Simple/Advanced and Adaptive/Snapshot selections reflect the current read-back
+state and are staged only while that exact module is armed; Apply + verify is
+still the only operation that can send the staged state to the daemon.
 The unsupported Mic Output gain remains visibly read-only instead of guessing a
 device command or exposing a write path.
 

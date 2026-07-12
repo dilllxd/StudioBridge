@@ -34,7 +34,7 @@ use std::{
 };
 use studiobridge_core::{
     AppSnapshot, DspMode, DspWriteModule, LinkChannel, MicrophoneDspSnapshot, MicrophoneDspUpdate,
-    MixBus, MixerChannel, MuteState,
+    MixBus, MixerChannel, MuteState, NoiseSuppressionStyle,
 };
 
 mod client;
@@ -1115,6 +1115,51 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    let mode_window = window.as_weak();
+    let mode_session = dsp_session.clone();
+    window.on_select_dsp_mode(move |advanced| {
+        let staged = mode_session.lock().ok().and_then(|mut session| {
+            let selected = session.selected;
+            let snapshot = session.snapshot.as_mut()?;
+            let mode = if advanced {
+                DspMode::Advanced
+            } else {
+                DspMode::Simple
+            };
+            match selected {
+                DspSelection::Equalizer => snapshot.equalizer.active_mode = mode,
+                DspSelection::Compressor => snapshot.compressor.active_mode = mode,
+                DspSelection::Expander => snapshot.expander.active_mode = mode,
+                _ => return None,
+            }
+            Some((snapshot.clone(), selected))
+        });
+        if let Some((snapshot, selected)) = staged {
+            show_dsp_snapshot(&mode_window, &snapshot, selected);
+        }
+    });
+
+    let noise_style_window = window.as_weak();
+    let noise_style_session = dsp_session.clone();
+    window.on_select_noise_style(move |snapshot_style| {
+        let staged = noise_style_session.lock().ok().and_then(|mut session| {
+            let selected = session.selected;
+            let snapshot = session.snapshot.as_mut()?;
+            if !matches!(selected, DspSelection::NoiseSuppression) {
+                return None;
+            }
+            snapshot.noise_suppression.style = if snapshot_style {
+                NoiseSuppressionStyle::Snapshot
+            } else {
+                NoiseSuppressionStyle::Adaptive
+            };
+            Some((snapshot.clone(), selected))
+        });
+        if let Some((snapshot, selected)) = staged {
+            show_dsp_snapshot(&noise_style_window, &snapshot, selected);
+        }
+    });
+
     let load_window = window.as_weak();
     let load_client = client.clone();
     let load_session = dsp_session.clone();
@@ -1149,14 +1194,12 @@ fn main() -> Result<(), slint::PlatformError> {
     let apply_window = window.as_weak();
     let apply_client = client.clone();
     let apply_session = dsp_session.clone();
-    window.on_apply_dsp(move |a, b, c| {
+    window.on_apply_dsp(move |a, b, c, d| {
         apply_dsp(
             apply_window.clone(),
             apply_client.clone(),
             apply_session.clone(),
-            a,
-            b,
-            c,
+            (a, b, c, d),
             false,
         )
     });
@@ -1169,9 +1212,7 @@ fn main() -> Result<(), slint::PlatformError> {
             revert_window.clone(),
             revert_client.clone(),
             revert_session.clone(),
-            0.0,
-            0.0,
-            0.0,
+            (0.0, 0.0, 0.0, 0.0),
             true,
         )
     });
@@ -1722,9 +1763,7 @@ fn apply_dsp(
     window: Weak<MainWindow>,
     client: DaemonClient,
     session: Arc<Mutex<DspSession>>,
-    a: f32,
-    b: f32,
-    c: f32,
+    values: (f32, f32, f32, f32),
     revert: bool,
 ) {
     thread::spawn(move || {
@@ -1749,7 +1788,7 @@ fn apply_dsp(
         let update = if revert {
             update_from_snapshot(selected, &base)
         } else {
-            update_from_values(selected, base, a, b, c)
+            update_from_values(selected, base, values.0, values.1, values.2, values.3)
         };
         match client.set_microphone_dsp(&update) {
             Ok(result) if result.verified => {
@@ -1801,6 +1840,7 @@ fn update_from_values(
     a: f32,
     b: f32,
     c: f32,
+    d: f32,
 ) -> MicrophoneDspUpdate {
     match selected {
         DspSelection::Equalizer => {
@@ -1830,7 +1870,8 @@ fn update_from_values(
             };
             profile.threshold_db = a;
             profile.ratio = b;
-            profile.release_ms = c;
+            profile.attack_ms = c;
+            profile.release_ms = d;
             MicrophoneDspUpdate::Expander(snapshot.expander)
         }
         DspSelection::NoiseSuppression => {
@@ -1860,6 +1901,13 @@ fn show_dsp_snapshot(
     selected: DspSelection,
 ) {
     let (title, labels, values, ranges) = dsp_display(snapshot, selected);
+    let advanced = match selected {
+        DspSelection::Equalizer => snapshot.equalizer.active_mode == DspMode::Advanced,
+        DspSelection::Compressor => snapshot.compressor.active_mode == DspMode::Advanced,
+        DspSelection::Expander => snapshot.expander.active_mode == DspMode::Advanced,
+        _ => false,
+    };
+    let noise_snapshot = snapshot.noise_suppression.style == NoiseSuppressionStyle::Snapshot;
     let window = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(window) = window.upgrade() else {
@@ -1870,23 +1918,29 @@ fn show_dsp_snapshot(
         window.set_dsp_label_a(labels.0.into());
         window.set_dsp_label_b(labels.1.into());
         window.set_dsp_label_c(labels.2.into());
+        window.set_dsp_label_d(labels.3.into());
         window.set_dsp_value_a(values.0);
         window.set_dsp_value_b(values.1);
         window.set_dsp_value_c(values.2);
+        window.set_dsp_value_d(values.3);
+        window.set_dsp_advanced(advanced);
+        window.set_noise_snapshot(noise_snapshot);
         window.set_dsp_min_a(ranges.0.0);
         window.set_dsp_max_a(ranges.0.1);
         window.set_dsp_min_b(ranges.1.0);
         window.set_dsp_max_b(ranges.1.1);
         window.set_dsp_min_c(ranges.2.0);
         window.set_dsp_max_c(ranges.2.1);
+        window.set_dsp_min_d(ranges.3.0);
+        window.set_dsp_max_d(ranges.3.1);
     });
 }
 
 type DspDisplay = (
     &'static str,
-    (&'static str, &'static str, &'static str),
-    (f32, f32, f32),
-    ((f32, f32), (f32, f32), (f32, f32)),
+    (&'static str, &'static str, &'static str, &'static str),
+    (f32, f32, f32, f32),
+    ((f32, f32), (f32, f32), (f32, f32), (f32, f32)),
 );
 
 fn dsp_display(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> DspDisplay {
@@ -1899,9 +1953,9 @@ fn dsp_display(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> DspD
             let value = |index: usize| profile.bands.get(index).map_or(0.0, |band| band.gain_db);
             (
                 "VOICE EQUALIZER",
-                ("Band 1 gain", "Band 2 gain", "Band 3 gain"),
-                (value(0), value(1), value(2)),
-                ((-12.0, 12.0), (-12.0, 12.0), (-12.0, 12.0)),
+                ("Band 1 gain", "Band 2 gain", "Band 3 gain", ""),
+                (value(0), value(1), value(2), 0.0),
+                ((-12.0, 12.0), (-12.0, 12.0), (-12.0, 12.0), (0.0, 1.0)),
             )
         }
         DspSelection::Compressor => {
@@ -1911,9 +1965,9 @@ fn dsp_display(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> DspD
             };
             (
                 "COMPRESSOR",
-                ("Threshold dB", "Ratio", "Makeup gain dB"),
-                (p.threshold_db, p.ratio, p.makeup_gain_db),
-                ((-60.0, 0.0), (1.0, 20.0), (0.0, 24.0)),
+                ("Threshold dB", "Ratio", "Makeup gain dB", ""),
+                (p.threshold_db, p.ratio, p.makeup_gain_db, 0.0),
+                ((-60.0, 0.0), (1.0, 20.0), (0.0, 24.0), (0.0, 1.0)),
             )
         }
         DspSelection::Expander => {
@@ -1923,30 +1977,32 @@ fn dsp_display(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> DspD
             };
             (
                 "EXPANDER / GATE",
-                ("Threshold dB", "Ratio", "Release ms"),
-                (p.threshold_db, p.ratio, p.release_ms),
-                ((-90.0, 0.0), (1.0, 20.0), (1.0, 2000.0)),
+                ("Threshold dB", "Ratio", "Attack ms", "Release ms"),
+                (p.threshold_db, p.ratio, p.attack_ms, p.release_ms),
+                ((-90.0, 0.0), (1.0, 20.0), (1.0, 2000.0), (1.0, 2000.0)),
             )
         }
         DspSelection::NoiseSuppression => (
             "NOISE SUPPRESSION",
-            ("Amount %", "Sensitivity dB", "Adapt time ms"),
+            ("Amount %", "Sensitivity dB", "Adapt time ms", ""),
             (
                 snapshot.noise_suppression.amount_percent,
                 snapshot.noise_suppression.sensitivity_db,
                 snapshot.noise_suppression.adapt_time_ms,
+                0.0,
             ),
-            ((0.0, 100.0), (-90.0, 0.0), (10.0, 5000.0)),
+            ((0.0, 100.0), (-90.0, 0.0), (10.0, 5000.0), (0.0, 1.0)),
         ),
         DspSelection::EnhancementSuite => (
             "ENHANCEMENT SUITE",
-            ("Bass amount", "De-esser %", "Exciter %"),
+            ("Bass amount", "De-esser %", "Exciter %", ""),
             (
                 snapshot.enhancement_suite.bass.amount,
                 snapshot.enhancement_suite.de_esser.amount_percent,
                 snapshot.enhancement_suite.exciter.amount_percent,
+                0.0,
             ),
-            ((0.0, 100.0), (0.0, 100.0), (0.0, 100.0)),
+            ((0.0, 100.0), (0.0, 100.0), (0.0, 100.0), (0.0, 1.0)),
         ),
         DspSelection::HeadphoneEqualizer => {
             let value = |index: usize| {
@@ -1958,9 +2014,9 @@ fn dsp_display(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> DspD
             };
             (
                 "HEADPHONE EQUALIZER",
-                ("Bass dB", "Mids dB", "Treble dB"),
-                (value(0), value(1), value(2)),
-                ((-12.0, 12.0), (-12.0, 12.0), (-12.0, 12.0)),
+                ("Bass dB", "Mids dB", "Treble dB", ""),
+                (value(0), value(1), value(2), 0.0),
+                ((-12.0, 12.0), (-12.0, 12.0), (-12.0, 12.0), (0.0, 1.0)),
             )
         }
     }
