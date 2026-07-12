@@ -791,13 +791,20 @@ component ModuleTab inherits Rectangle {
     in property <string> label;
     in property <string> module;
     in property <string> selected;
+    in property <length> tab-width: 126px;
     callback clicked(string);
-    min-width: 126px;
+    width: root.tab-width;
     background: root.module == root.selected ? #1c2b2f : #111719;
     border-width: 1px;
     border-color: root.module == root.selected ? Theme.teal : Theme.border;
     Text { text: root.label; color: root.module == root.selected ? Theme.teal : Theme.quiet; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
-    TouchArea { clicked => { root.clicked(root.module); } }
+    tab-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: tab;
+        accessible-label: root.label;
+        key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.clicked(root.module); return accept; } return reject; }
+        TouchArea { clicked => { tab-focus.focus(); root.clicked(root.module); } }
+    }
 }
 
 component SaveProfileGlyph inherits Rectangle {
@@ -1011,6 +1018,7 @@ export component MainWindow inherits Window {
     in property <[TargetModel]> targets;
     in property <[ProfileModel]> mixer-profiles;
     in property <[HotkeyModel]> hotkeys;
+    property <float> microphone-meter: root.sources.length > 0 ? root.sources[0].meter : 0;
     in property <[string]> mixer-channel-names;
     in property <[string]> link-channel-names;
     in property <[string]> default-input-names;
@@ -1049,6 +1057,8 @@ export component MainWindow inherits Window {
     in property <string> device-name: "BEACN Studio";
     in property <string> device-serial: "Unavailable";
     in property <string> device-firmware: "Unavailable";
+    in property <float> microphone-gain-db: 0;
+    in property <bool> phantom-power: false;
     in-out property <float> lighting-speed: 0;
     in-out property <float> lighting-brightness: 100;
     in-out property <int> lighting-style: 2;
@@ -1133,8 +1143,8 @@ export component MainWindow inherits Window {
                 padding: 7px;
                 spacing: 5px;
                 RailButton { glyph: "☷"; label: "MIXER"; active: root.active-page == 0; clicked => { root.active-page = 0; } }
-                RailButton { glyph: "▣"; label: "STUDIO"; active: root.active-page >= 1 && root.active-page <= 3; clicked => { root.active-page = 1; } }
-                RailButton { glyph: "◉"; label: "MIC"; active: root.active-page == 1; clicked => { root.active-page = 1; } }
+                RailButton { glyph: "▣"; label: "STUDIO"; active: root.active-page >= 1 && root.active-page <= 3; clicked => { root.active-page = 1; root.dsp-selected-module = "mic_setup"; } }
+                RailButton { glyph: "◉"; label: "MIC"; active: root.active-page == 1; clicked => { root.active-page = 1; root.dsp-selected-module = "mic_setup"; } }
                 RailButton { glyph: "✦"; label: "LIGHTING"; active: root.active-page == 2; clicked => { root.active-page = 2; } }
                 RailButton { glyph: "⚙"; label: "DEVICE"; active: root.active-page == 3; clicked => { root.active-page = 3; } }
                 Rectangle { vertical-stretch: 1; }
@@ -1437,15 +1447,16 @@ export component MainWindow inherits Window {
                 }
             }
 
-            if root.active-page == 1: VerticalLayout {
-                padding: 10px;
-                spacing: 8px;
-                HorizontalLayout {
-                    height: 265px;
-                    horizontal-stretch: 1;
-                    spacing: 8px;
+            if root.active-page == 1: HorizontalLayout {
+                spacing: 0px;
+                VerticalLayout {
+                    width: 897px;
+                    spacing: 0px;
                     Rectangle {
-                        width: 869px;
+                        height: 280px;
+                        background: #202023;
+                    Rectangle {
+                        x: 28px; y: 20px; width: 864px; height: 256px;
                         border-width: 1px; border-color: Theme.border; background: #0d1214;
                         Rectangle { x: 0px; y: parent.height * 0.50; width: parent.width * 0.22; height: parent.height * 0.22; background: #421d20; opacity: 0.75; }
                         Rectangle { x: parent.width * 0.22; y: parent.height * 0.44; width: parent.width * 0.28; height: parent.height * 0.12; background: #173b3b; opacity: 0.55; }
@@ -1484,29 +1495,13 @@ export component MainWindow inherits Window {
                         Text { x: parent.width * 0.82; y: 10px; text: "5k"; color: #77777d; font-size: 9px; }
                         Text { x: parent.width * 0.92; y: 10px; text: "16k"; color: #77777d; font-size: 9px; }
                     }
-                    Rectangle {
-                        width: 150px;
-                        border-width: 1px; border-color: Theme.border; background: Theme.panel;
-                        VerticalLayout {
-                            padding: 12px;
-                            spacing: 8px;
-                            Text { text: "MIC OUTPUT"; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
-                            HorizontalLayout {
-                                vertical-stretch: 1;
-                                Rectangle { horizontal-stretch: 1; }
-                                LevelMeter { width: 24px; value: 36; colour: Theme.teal; }
-                                Rectangle { horizontal-stretch: 1; }
-                            }
-                            Text { text: "−18 dB"; color: Theme.teal; font-size: 18px; font-weight: 800; horizontal-alignment: center; }
-                        }
-                    }
                 }
 
                 HorizontalLayout {
                     height: 150px;
-                    spacing: 4px;
+                    spacing: 3px;
                     Rectangle {
-                        width: 420px;
+                        width: 438px;
                         background: Theme.panel;
                         border-width: 1px;
                         border-color: root.dsp-selected-module == "equalizer" ? Theme.teal : Theme.border;
@@ -1541,7 +1536,7 @@ export component MainWindow inherits Window {
                         TouchArea { clicked => { root.select-dsp-module("equalizer"); } }
                     }
                     Rectangle {
-                        width: 202px;
+                        width: 203px;
                         background: Theme.panel;
                         border-width: 1px;
                         border-color: root.dsp-selected-module == "enhancement_suite" ? Theme.teal : Theme.border;
@@ -1554,7 +1549,7 @@ export component MainWindow inherits Window {
                         TouchArea { clicked => { root.select-dsp-module("enhancement_suite"); } }
                     }
                     Rectangle {
-                        width: 202px;
+                        width: 201px;
                         background: Theme.panel;
                         border-width: 1px;
                         border-color: root.dsp-selected-module == "enhancement_suite" ? Theme.teal : Theme.border;
@@ -1569,14 +1564,14 @@ export component MainWindow inherits Window {
                 }
 
                 Rectangle {
-                    height: 34px;
+                    height: 30px;
                     HorizontalLayout {
-                        spacing: 2px;
-                        ModuleTab { label: "MIC SETUP"; module: "mic_setup"; selected: root.dsp-selected-module; clicked(module) => { root.dsp-selected-module = module; } }
-                        ModuleTab { label: "NOISE SUPPRESSION"; module: "noise_suppression"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
-                        ModuleTab { label: "EXPANDER"; module: "expander"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
-                        ModuleTab { label: "COMPRESSOR"; module: "compressor"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
-                        ModuleTab { label: "HEADPHONES"; module: "headphone_equalizer"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
+                        spacing: 0px;
+                        ModuleTab { tab-width: 81px; label: "MIC SETUP"; module: "mic_setup"; selected: root.dsp-selected-module; clicked(module) => { root.dsp-selected-module = module; } }
+                        ModuleTab { tab-width: 161px; label: "NOISE SUPPRESSION"; module: "noise_suppression"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
+                        ModuleTab { tab-width: 80px; label: "EXPANDER"; module: "expander"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
+                        ModuleTab { tab-width: 101px; label: "COMPRESSOR"; module: "compressor"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
+                        ModuleTab { tab-width: 108px; label: "HEADPHONES"; module: "headphone_equalizer"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
                 }
@@ -1590,8 +1585,8 @@ export component MainWindow inherits Window {
                         VerticalLayout {
                             width: 96px;
                             Text { text: "Mic Gain"; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
-                            HorizontalLayout { vertical-stretch: 1; Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: 59; accent: Theme.teal; muted: false; personal: true; show-mute: false; } Rectangle { horizontal-stretch: 1; } }
-                            Text { text: "41dB"; color: Theme.teal; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
+                            HorizontalLayout { vertical-stretch: 1; Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: root.microphone-gain-db / 70 * 100; accent: Theme.teal; muted: false; personal: true; show-mute: false; } Rectangle { horizontal-stretch: 1; } }
+                            Text { text: round(root.microphone-gain-db) + "dB"; color: Theme.teal; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
                         }
                         Rectangle {
                             horizontal-stretch: 1;
@@ -1599,14 +1594,23 @@ export component MainWindow inherits Window {
                             border-width: 1px; border-color: Theme.border;
                             Rectangle { x: 0px; y: 0px; width: parent.width; height: parent.height * 0.20; background: #8e7118; opacity: 0.75; }
                             Rectangle { x: 0px; y: parent.height * 0.20; width: parent.width; height: parent.height * 0.40; background: #237d79; opacity: 0.72; }
+                            Rectangle { x: 0px; y: parent.height * 0.20; width: parent.width; height: 1px; background: #70611c; }
+                            Rectangle { x: 0px; y: parent.height * 0.60; width: parent.width; height: 1px; background: #245d5a; }
+                            Rectangle { x: 0px; y: parent.height * 0.76; width: parent.width; height: 1px; background: #303034; }
+                            Rectangle { x: 0px; y: parent.height * 0.90; width: parent.width; height: 1px; background: #303034; }
+                            Path {
+                                width: parent.width; height: parent.height;
+                                commands: "M 0 196 C 55 205 72 221 108 211 C 138 202 120 151 163 151 C 205 151 213 164 239 201 C 266 235 294 174 326 174 C 364 174 379 195 420 197 C 460 199 483 193 518 184 C 552 173 573 181 610 201 C 624 207 632 213 650 220";
+                                fill: transparent; stroke: #efefed; stroke-width: 2px;
+                            }
                             Text { x: 10px; y: 8px; text: "Peak Area"; color: Theme.text; font-size: 10px; font-weight: 700; }
                             Text { x: 10px; y: parent.height * 0.38; text: "Speaking Area"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                            Text { x: parent.width - 96px; y: parent.height * 0.48; text: "-56.1dB"; color: #f2cf36; font-size: 22px; font-weight: 800; }
+                            Text { x: parent.width - 96px; y: parent.height * 0.48; text: round((root.microphone-meter * 0.7 - 70) * 10) / 10 + "dB"; color: #f2cf36; font-size: 22px; font-weight: 800; }
                         }
                         VerticalLayout {
                             width: 110px;
                             Text { text: "Phantom Power"; color: Theme.text; font-size: 10px; font-weight: 800; horizontal-alignment: center; }
-                            Rectangle { height: 28px; background: transparent; HorizontalLayout { Rectangle { horizontal-stretch: 1; } ToggleSwitch { checked: false; interactive: false; } Text { text: "OFF"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } } }
+                            Rectangle { height: 28px; background: transparent; HorizontalLayout { Rectangle { horizontal-stretch: 1; } ToggleSwitch { checked: root.phantom-power; interactive: false; } Text { text: root.phantom-power ? "ON" : "OFF"; color: root.phantom-power ? Theme.red : Theme.quiet; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } } }
                             Rectangle { vertical-stretch: 1; }
                             Text { text: "Phantom power is permanently read-only in StudioBridge"; color: Theme.amber; font-size: 8px; wrap: word-wrap; }
                         }
@@ -1752,6 +1756,49 @@ export component MainWindow inherits Window {
                             Rectangle { horizontal-stretch: 1; }
                         }
                         Text { text: "General hardware writes remain OFF. Phantom power, firmware, reset, lighting, limiter guesses, and storage are excluded."; color: Theme.amber; font-size: 9px; }
+                    }
+                }
+                }
+                Rectangle {
+                    width: 150px;
+                    border-width: 1px; border-color: Theme.border; background: #202023;
+                    VerticalLayout {
+                        spacing: 0px;
+                        Text { height: 40px; text: "Mic Output"; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                        Rectangle {
+                            vertical-stretch: 1;
+                            Text { x: 8px; y: 0px; text: "0"; color: Theme.quiet; font-size: 9px; }
+                            Text { x: 5px; y: parent.height * 0.18; text: "-10"; color: Theme.quiet; font-size: 9px; }
+                            Text { x: 5px; y: parent.height * 0.36; text: "-20"; color: Theme.quiet; font-size: 9px; }
+                            Text { x: 5px; y: parent.height * 0.54; text: "-30"; color: Theme.quiet; font-size: 9px; }
+                            Text { x: 5px; y: parent.height * 0.72; text: "-50"; color: Theme.quiet; font-size: 9px; }
+                            Text { x: 5px; y: parent.height - 14px; text: "-70"; color: Theme.quiet; font-size: 9px; }
+                            meter-track := Rectangle {
+                                x: 50px; y: 0px; width: 50px; height: parent.height;
+                                background: #242427; border-width: 1px; border-color: #303034;
+                                Rectangle { y: 0px; width: parent.width; height: parent.height * 0.06; background: #8e7118; }
+                                Rectangle { y: parent.height * 0.06; width: parent.width; height: parent.height * 0.14; background: #237d79; }
+                                Rectangle { y: parent.height * (1 - root.microphone-meter / 100); width: parent.width; height: parent.height * root.microphone-meter / 100; background: Theme.teal; }
+                            }
+                            Text { x: 104px; y: parent.height * 0.03; text: "Peak"; color: Theme.text; font-size: 9px; }
+                            Text { x: 104px; y: parent.height * 0.12; text: "Talk"; color: Theme.text; font-size: 9px; }
+                        }
+                        Text { height: 28px; text: "Output Gain"; color: Theme.quiet; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                        Rectangle {
+                            height: 130px;
+                            HorizontalLayout {
+                                Rectangle { horizontal-stretch: 1; }
+                                VerticalFader { width: 38px; value: 50; accent: Theme.teal; muted: false; personal: true; show-mute: false; }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                        }
+                        Text { height: 24px; text: "READ ONLY"; color: Theme.amber; font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                        Rectangle {
+                            height: 30px; background: #242427; border-width: 1px; border-color: Theme.border;
+                            Text { x: 5px; width: 78px; text: "10.0s / 10.0s"; color: Theme.text; font-size: 9px; vertical-alignment: center; }
+                            Text { x: 86px; width: 24px; text: "●"; color: Theme.red; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { x: 112px; width: 28px; text: "▶"; color: #48c65d; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+                        }
                     }
                 }
             }

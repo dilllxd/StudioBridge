@@ -93,6 +93,9 @@ than copying its source or visual assets:
   highlighting, an unassign target, and accessible selector fallback;
 - always-accessible voice EQ and enhancement controls;
 - secondary microphone processors grouped by module;
+- a measured 897/150 microphone editor/output-column split, 864-by-256 graph,
+  exact 30-pixel processor tab strip, live Mic source meter, read-back gain and
+  phantom state, and a deliberately read-only unsupported output-gain control;
 - live profiles plus a known captured state to revert to.
 
 StudioBridge uses its own name, icon, colors, layout code, terminology where

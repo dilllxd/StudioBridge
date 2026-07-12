@@ -88,15 +88,24 @@ list of source-to-target sentences.
 
 - A frequency graph and live output meter remain persistent while processors
   change.
+- The 1047-pixel workspace is divided into an approximately 897-pixel editor
+  and a persistent 150-pixel Mic Output column. The editor begins with an
+  864-by-256 frequency graph inset 28 pixels from its leading edge, followed by
+  a 150-pixel EQ/enhancement control row.
 - Voice EQ and enhancement controls are visually attached to that graph.
 - Mic Setup, Noise Suppression, Expander, Compressor, and Headphones are a
-  horizontal tab strip; selecting one swaps only the lower editor panel.
+  horizontal 30-pixel tab strip; selecting one swaps only the lower editor
+  panel. Their measured widths are 81, 161, 80, 101, and 108 pixels.
 - Live speaking/peak regions provide context for gain and dynamics controls.
+- Mic Setup reads the live microphone gain and phantom state, keeps phantom
+  read-only, and combines Peak/Speaking regions with a scrolling waveform.
 
 StudioBridge adaptation: keep a persistent read-only spectrum/EQ overview and
 live meter, move the six validated DSP modules to a horizontal tab strip, and
 show the guarded editor below. Preserve explicit module arming, captured-state
 revert, read-back verification, and the permanent phantom-power exclusion.
+The unsupported Mic Output gain remains visibly read-only instead of guessing a
+device command or exposing a write path.
 
 ## Device settings
 

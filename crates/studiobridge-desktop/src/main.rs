@@ -1187,6 +1187,7 @@ fn main() -> Result<(), slint::PlatformError> {
     tray.on_show_safe_mode(move || {
         if let Some(window) = safe_window.upgrade() {
             window.set_active_page(1);
+            window.set_dsp_selected_module("mic_setup".into());
             let _ = window.show();
         }
     });
@@ -1433,6 +1434,8 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
             .unwrap_or_else(|| "Unavailable".into())
             .into(),
     );
+    window.set_microphone_gain_db(snapshot.studio.microphone.gain_db as f32);
+    window.set_phantom_power(snapshot.studio.microphone.phantom_power);
     window.set_source_name_key(
         snapshot
             .mixer
