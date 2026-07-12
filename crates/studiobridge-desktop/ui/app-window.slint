@@ -219,10 +219,14 @@ component HorizontalFader inherits Rectangle {
     TouchArea {
         moved => {
             if (self.pressed) {
-                root.changed(self.mouse-x / self.width * 100.0);
+                let candidate = self.mouse-x / self.width * 100.0;
+                root.changed(candidate <= 1.0 ? 0.0 : candidate >= 99.0 ? 100.0 : candidate);
             }
         }
-        clicked => { root.changed(self.mouse-x / self.width * 100.0); }
+        clicked => {
+            let candidate = self.mouse-x / self.width * 100.0;
+            root.changed(candidate <= 1.0 ? 0.0 : candidate >= 99.0 ? 100.0 : candidate);
+        }
     }
 }
 
@@ -459,7 +463,10 @@ component ContextTab inherits Rectangle {
 
 component TargetStrip inherits Rectangle {
     in property <TargetModel> target;
+    in property <[string]> output-device-names;
+    in property <int> output-device-index: -1;
     callback volume-changed(float);
+    callback output-device-selected(int);
     // BEACN keeps the default Personal/Audience device cards compact instead
     // of stretching them across the entire mixer canvas.
     width: root.target.mix == "Personal" ? 396px : 398px;
@@ -467,9 +474,40 @@ component TargetStrip inherits Rectangle {
     border-width: 1px;
     border-color: Theme.border;
     background: Theme.raised;
-    HorizontalLayout {
-        padding: 7px;
-        spacing: 6px;
+    if root.target.target-id == "headphones" || root.target.target-id == "audience-mix": VerticalLayout {
+        padding-left: 7px; padding-right: 7px; padding-top: 4px; padding-bottom: 4px; spacing: 2px;
+        Text {
+            height: 14px;
+            text: root.target.target-id == "headphones" ? "Personal Mix Device" : "Audience Mix Device";
+            color: Theme.text; font-size: 10px; font-weight: 800;
+        }
+        HorizontalLayout {
+            height: 34px;
+            spacing: 7px;
+            if root.target.target-id == "headphones": ComboBox {
+                width: 170px;
+                height: 27px;
+                model: root.output-device-names;
+                current-index: root.output-device-index;
+                selected(value) => { root.output-device-selected(self.current-index); }
+            }
+            if root.target.target-id == "audience-mix": Rectangle {
+                width: 170px; height: 27px;
+                background: #1b1b1e; border-width: 1px; border-color: Theme.border;
+                Text { x: 7px; width: parent.width - 14px; text: root.target.name; color: Theme.teal; font-size: 10px; font-weight: 700; vertical-alignment: center; overflow: elide; }
+            }
+            LevelMeter { width: 8px; height: 24px; value: root.target.muted ? 0 : root.target.meter; colour: root.target.mix == "Personal" ? Theme.teal : Theme.amber; }
+            HorizontalFader { horizontal-stretch: 1; value: root.target.volume; changed(value) => { root.volume-changed(value); } }
+            Rectangle {
+                width: 34px; height: 27px; border-radius: 3px;
+                border-width: 1px; border-color: root.target.muted ? #6d3734 : Theme.border;
+                background: root.target.muted ? #351b1a : #1b1b1e;
+                Text { text: root.target.target-id == "headphones" ? "◉" : "((•))"; color: root.target.muted ? Theme.red : Theme.quiet; font-size: root.target.target-id == "headphones" ? 17px : 10px; horizontal-alignment: center; vertical-alignment: center; }
+            }
+        }
+    }
+    if root.target.target-id != "headphones" && root.target.target-id != "audience-mix": HorizontalLayout {
+        padding: 7px; spacing: 6px;
         VerticalLayout {
             horizontal-stretch: 1;
             Text { text: root.target.name; color: Theme.text; font-size: 12px; font-weight: 800; overflow: elide; }
@@ -892,10 +930,25 @@ export component MainWindow inherits Window {
                             // by scrolling this device region horizontally.
                             width: 812px;
                             height: parent.height;
+                            viewport-width: root.targets.length * 403px + 12px;
+                            viewport-height: parent.height;
+                            mouse-drag-pan-enabled: true;
+                            horizontal-scrollbar-policy: ScrollBarPolicy.always-on;
+                            vertical-scrollbar-policy: ScrollBarPolicy.always-off;
                             HorizontalLayout {
                                 padding: 6px;
                                 spacing: 5px;
-                                for target in root.targets: TargetStrip { target: target; volume-changed(value) => { root.set-target-volume(target.target-id, value); } }
+                                for target in root.targets: TargetStrip {
+                                    target: target;
+                                    output-device-names: root.default-output-names;
+                                    output-device-index: root.default-output-index;
+                                    volume-changed(value) => { root.set-target-volume(target.target-id, value); }
+                                    output-device-selected(index) => {
+                                        if index >= 0 && index < root.default-output-ids.length {
+                                            root.set-default-output(root.default-output-ids[index]);
+                                        }
+                                    }
+                                }
                             }
                         }
                         Rectangle { horizontal-stretch: 1; background: transparent; }

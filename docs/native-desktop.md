@@ -59,6 +59,8 @@ than copying its source or visual assets:
 - a persistent per-source mute action menu matching Mute to All, Mute to
   Audience, and Mute to Chat while retaining the internal Personal target;
 - a prominent Main Out section;
+- BEACN-aligned Personal and Audience master-device cards backed by the real
+  default-output selector and independent PipeWeaver target masters;
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
 - PipeWeaver-backed Linux default recording and playback device selectors;
 - a BEACN-style profile rail with instant numbered creation plus hover Save,

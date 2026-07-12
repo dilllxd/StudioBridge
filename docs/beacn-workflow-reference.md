@@ -20,7 +20,9 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
   with Mute to All, Mute to Audience, and Mute to Chat. Selecting an item changes
   the action (shown with a checkmark); pressing the main area applies that action.
 - Personal and Audience master devices remain visible directly below the
-  source strips.
+  source strips. The Personal card combines its playback-device selector and
+  master level, while the Audience card keeps the virtual mix and master level
+  together.
 - Assignments and Routing Table are contextual tabs below the mixer. They do
   not replace the mixer with unrelated full-screen pages.
 - Profiles occupy a secondary right rail and do not compete with live mixer
