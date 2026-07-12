@@ -64,7 +64,9 @@ than copying its source or visual assets:
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
 - PipeWeaver-backed Linux default recording and playback device selectors;
 - a BEACN-style profile rail with instant numbered creation plus hover Save,
-  Duplicate, and Delete actions;
+  Duplicate, and Delete actions, with the persisted Save Confirmation setting
+  controlling an attended overwrite dialog that supports mouse and keyboard
+  confirmation or cancellation;
 - BEACN-style key-mapping capture that listens for the next native key chord,
   previews its primary key, validates it, and persists the complete binding;
 - native application chips that drag onto source strips, with accepted-drop

@@ -28,6 +28,13 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
 - Profiles occupy a secondary right rail and do not compete with live mixer
   controls.
 
+StudioBridge adaptation: the observed BEACN settings surface exposes a Save
+Confirmation option, but its resulting dialog was not observable during the
+reference session. StudioBridge therefore implements the least-surprising
+meaning of that control: when enabled, Save asks before overwriting the selected
+profile; when disabled, Save is immediate. The dialog supports Save/Enter,
+Cancel/Escape, and backdrop dismissal.
+
 ## Assignments
 
 - Device defaults, outgoing Link assignments, and running applications appear

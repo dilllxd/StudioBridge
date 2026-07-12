@@ -769,6 +769,8 @@ export component MainWindow inherits Window {
     in-out property <bool> automatic-default-reset: true;
     in-out property <bool> meter-crossfade: true;
     in-out property <bool> add-source-menu-open: false;
+    in-out property <bool> profile-save-confirm-open: false;
+    in-out property <string> pending-profile-save: "";
     in-out property <bool> hotkey-editor-open: false;
     in-out property <string> hotkey-editor-action: "";
     in-out property <string> hotkey-editor-label: "";
@@ -1579,15 +1581,79 @@ export component MainWindow inherits Window {
                 link-active: root.link-active;
                 mixer-profiles: root.mixer-profiles;
                 create-profile => { root.create-mixer-profile(); }
-                save-profile(name) => { root.save-mixer-profile(name); }
+                save-profile(name) => {
+                    if root.save-confirmation {
+                        root.pending-profile-save = name;
+                        root.profile-save-confirm-open = true;
+                    } else {
+                        root.save-mixer-profile(name);
+                    }
+                }
                 duplicate-profile(name) => { root.duplicate-mixer-profile(name); }
                 select-profile(name) => { root.load-mixer-profile(name); }
                 delete-profile(name) => { root.delete-mixer-profile(name); }
             }
         }
     }
-    if root.hotkey-editor-open: Rectangle {
+    if root.profile-save-confirm-open: Rectangle {
         z: 100;
+        width: parent.width; height: parent.height; background: #00000099;
+        TouchArea {
+            width: parent.width; height: parent.height;
+            clicked => { root.profile-save-confirm-open = false; root.pending-profile-save = ""; }
+        }
+        Rectangle {
+            z: 1;
+            x: (parent.width - 390px) / 2; y: (parent.height - 184px) / 2; width: 390px; height: 184px;
+            background: #28282b; border-width: 1px; border-color: #4d4d51; border-radius: 5px;
+            VerticalLayout {
+                padding-top: 24px; padding-bottom: 18px; padding-left: 34px; padding-right: 34px; spacing: 11px;
+                Text { text: "Save mixer profile?"; color: Theme.text; font-size: 15px; font-weight: 800; horizontal-alignment: center; }
+                Text {
+                    text: "Overwrite \"" + root.pending-profile-save + "\" with the current mixer state?";
+                    color: Theme.text; font-size: 12px; horizontal-alignment: center; wrap: word-wrap;
+                }
+                Text {
+                    text: "This updates its routing, volumes, assignments, and source order.";
+                    color: Theme.quiet; font-size: 10px; horizontal-alignment: center; wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    alignment: center; spacing: 14px;
+                    Button {
+                        width: 76px; text: "Save";
+                        clicked => {
+                            let name = root.pending-profile-save;
+                            root.profile-save-confirm-open = false;
+                            root.pending-profile-save = "";
+                            root.save-mixer-profile(name);
+                        }
+                    }
+                    Button { text: "Cancel"; clicked => { root.profile-save-confirm-open = false; root.pending-profile-save = ""; } }
+                }
+            }
+        }
+        save-confirm-focus := FocusScope {
+            z: 2;
+            init => { self.focus(); }
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.profile-save-confirm-open = false;
+                    root.pending-profile-save = "";
+                    return accept;
+                }
+                if event.text == Key.Return {
+                    let name = root.pending-profile-save;
+                    root.profile-save-confirm-open = false;
+                    root.pending-profile-save = "";
+                    root.save-mixer-profile(name);
+                    return accept;
+                }
+                return accept;
+            }
+        }
+    }
+    if root.hotkey-editor-open: Rectangle {
+        z: 101;
         width: parent.width; height: parent.height; background: #00000099;
         Rectangle {
             x: (parent.width - 350px) / 2; y: (parent.height - 176px) / 2; width: 350px; height: 176px;
