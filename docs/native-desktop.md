@@ -63,6 +63,8 @@ than copying its source or visual assets:
   default-output selector and independent PipeWeaver target masters;
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
 - PipeWeaver-backed Linux default recording and playback device selectors;
+- a device-information card with the measured Legal and Regulatory modal,
+  keyboard dismissal, and permanently read-only USB2 driverless-mode state;
 - a BEACN-style profile rail with instant numbered creation plus hover Save,
   Duplicate, and Delete actions, with the persisted Save Confirmation setting
   controlling an attended overwrite dialog that supports mouse and keyboard

@@ -769,6 +769,7 @@ export component MainWindow inherits Window {
     in-out property <bool> automatic-default-reset: true;
     in-out property <bool> meter-crossfade: true;
     in-out property <bool> add-source-menu-open: false;
+    in-out property <bool> legal-dialog-open: false;
     in-out property <bool> profile-save-confirm-open: false;
     in-out property <string> pending-profile-save: "";
     in-out property <bool> hotkey-editor-open: false;
@@ -1521,6 +1522,11 @@ export component MainWindow inherits Window {
                     Text { x: 285px; y: 150px; text: root.device-serial; color: Theme.text; font-size: 11px; font-weight: 700; }
                     Text { x: 110px; y: 169px; text: "Firmware Version:"; color: Theme.quiet; font-size: 11px; font-weight: 700; }
                     Text { x: 285px; y: 169px; text: root.device-firmware; color: Theme.text; font-size: 11px; font-weight: 700; }
+                    Button {
+                        x: 520px; y: 145px; width: 140px; height: 28px;
+                        text: "Legal and Regulatory";
+                        clicked => { root.legal-dialog-open = true; }
+                    }
                     Text { x: 110px; y: 242px; text: "USB2 Driverless Mode"; color: Theme.quiet; font-size: 11px; font-weight: 700; }
                     ToggleSwitch { x: 610px; y: 239px; checked: false; interactive: false; }
                     Text { x: 450px; y: 244px; text: "read-only"; color: Theme.amber; font-size: 9px; }
@@ -1592,6 +1598,43 @@ export component MainWindow inherits Window {
                 duplicate-profile(name) => { root.duplicate-mixer-profile(name); }
                 select-profile(name) => { root.load-mixer-profile(name); }
                 delete-profile(name) => { root.delete-mixer-profile(name); }
+            }
+        }
+    }
+    if root.legal-dialog-open: Rectangle {
+        z: 102;
+        width: parent.width; height: parent.height; background: #00000099;
+        TouchArea { width: parent.width; height: parent.height; }
+        legal-panel := Rectangle {
+            x: (parent.width - 784px) / 2; y: (parent.height - 289px) / 2;
+            width: 784px; height: 289px;
+            background: #282629; border-width: 1px; border-color: #48464a; border-radius: 5px;
+            Rectangle {
+                x: 0px; y: 0px; width: 784px; height: 28px;
+                background: #18181a; border-width: 1px; border-color: #343438;
+                Text { x: 0px; y: 0px; width: 784px; height: 28px; text: "Useful Information"; color: Theme.text; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                Text { x: 750px; y: 0px; width: 28px; height: 28px; text: "×"; color: Theme.teal; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
+                TouchArea { x: 744px; y: 0px; width: 40px; height: 28px; clicked => { root.legal-dialog-open = false; } }
+            }
+            Text {
+                x: 12px; y: 66px; width: parent.width - 24px; height: 104px;
+                text: "This device complies with part 15 of the FCC Rules. Operation is subject to the following two conditions: (1) This device may not cause harmful interference, and (2) this device must accept any interference received, including interference that may cause undesired operation.\nCAN ICES-3 (B)/NMB-3(B)";
+                color: Theme.text; font-size: 14px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap;
+            }
+            Button {
+                x: (parent.width - 260px) / 2; y: 221px; width: 260px; height: 40px; text: "OK";
+                clicked => { root.legal-dialog-open = false; }
+            }
+        }
+        legal-dialog-focus := FocusScope {
+            z: 1;
+            init => { self.focus(); }
+            key-pressed(event) => {
+                if event.text == Key.Escape || event.text == Key.Return {
+                    root.legal-dialog-open = false;
+                    return accept;
+                }
+                return accept;
             }
         }
     }

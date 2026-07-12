@@ -74,6 +74,19 @@ live meter, move the six validated DSP modules to a horizontal tab strip, and
 show the guarded editor below. Preserve explicit module arming, captured-state
 revert, read-back verification, and the permanent phantom-power exclusion.
 
+## Device settings
+
+- Device Settings presents the device name, serial number, firmware version,
+  USB2 driverless-mode state, and a Legal and Regulatory action in one compact
+  information card.
+- Legal and Regulatory opens a measured 784-by-289 Useful Information modal
+  with a title-bar close control, centered FCC/ICES notice, and a large OK
+  action. Escape also dismisses the modal.
+
+StudioBridge adaptation: preserve this read-only information hierarchy and
+dialog workflow while continuing to expose USB2 driverless mode as read-only;
+opening or dismissing the dialog never enters a hardware write path.
+
 ## Originality boundary
 
 StudioBridge retains its own bridge icon, typography, teal/amber palette,
