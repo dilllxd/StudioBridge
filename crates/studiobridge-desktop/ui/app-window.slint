@@ -1,4 +1,4 @@
-import { Button, ComboBox, LineEdit, Slider, ScrollView } from "std-widgets.slint";
+import { Button, ComboBox, Slider, ScrollView } from "std-widgets.slint";
 
 export struct SourceModel {
     channel-id: string,
@@ -638,6 +638,7 @@ export component MainWindow inherits Window {
     in-out property <string> hotkey-editor-action: "";
     in-out property <string> hotkey-editor-label: "";
     in-out property <string> hotkey-editor-input: "";
+    in-out property <string> hotkey-editor-key-label: "";
 
     callback refresh;
     callback set-volume(string, string, float);
@@ -655,6 +656,8 @@ export component MainWindow inherits Window {
     callback load-mixer-profile(string);
     callback delete-mixer-profile(string);
     callback save-hotkey(string, string);
+    callback normalize-hotkey(string, bool, bool, bool, bool) -> string;
+    callback hotkey-key-label(string) -> string;
     callback assign-linux-application(string, string, int);
     callback assign-link-application(string, int);
     callback select-dsp-module(string);
@@ -1300,7 +1303,7 @@ export component MainWindow inherits Window {
                             height: 26px;
                             Text { x: 12px; width: 330px; text: hotkey.label; color: Theme.quiet; font-size: 10px; vertical-alignment: center; overflow: elide; }
                             Text { x: 350px; width: 210px; text: hotkey.binding == "" ? "+" : hotkey.binding; color: hotkey.binding == "" ? Theme.quiet : Theme.text; font-size: hotkey.binding == "" ? 18px : 9px; horizontal-alignment: right; vertical-alignment: center; }
-                            TouchArea { clicked => { root.hotkey-editor-action = hotkey.action; root.hotkey-editor-label = hotkey.label; root.hotkey-editor-input = hotkey.binding; root.hotkey-editor-open = true; } }
+                            TouchArea { clicked => { root.hotkey-editor-action = hotkey.action; root.hotkey-editor-label = hotkey.label; root.hotkey-editor-input = ""; root.hotkey-editor-key-label = ""; root.hotkey-editor-open = true; } }
                         }
                     }
                     Rectangle { height: 16px; }
@@ -1334,21 +1337,35 @@ export component MainWindow inherits Window {
         z: 100;
         width: parent.width; height: parent.height; background: #00000099;
         Rectangle {
-            x: (parent.width - 420px) / 2; y: (parent.height - 180px) / 2; width: 420px; height: 180px;
-            background: #28282c; border-width: 1px; border-color: #505057; border-radius: 4px;
+            x: (parent.width - 350px) / 2; y: (parent.height - 176px) / 2; width: 350px; height: 176px;
+            background: #28282b; border-width: 1px; border-color: #4d4d51; border-radius: 5px;
             VerticalLayout {
-                padding: 16px; spacing: 10px;
-                Text { text: "HOTKEY ASSIGNMENT"; color: Theme.text; font-size: 13px; font-weight: 800; }
-                Text { text: root.hotkey-editor-label; color: Theme.quiet; font-size: 11px; }
-                Text { text: "Enter a shortcut such as Ctrl+Shift+F9. Wayland will confirm it through the desktop portal."; color: Theme.quiet; font-size: 9px; wrap: word-wrap; }
-                LineEdit { text: root.hotkey-editor-input; edited(text) => { root.hotkey-editor-input = text; } }
-                HorizontalLayout {
-                    spacing: 6px;
-                    Button { text: "Save"; clicked => { root.save-hotkey(root.hotkey-editor-action, root.hotkey-editor-input); root.hotkey-editor-open = false; } }
-                    Button { text: "Clear"; clicked => { root.save-hotkey(root.hotkey-editor-action, ""); root.hotkey-editor-open = false; } }
-                    Button { text: "Cancel"; clicked => { root.hotkey-editor-open = false; } }
-                    Rectangle { horizontal-stretch: 1; }
+                padding-top: 27px; padding-bottom: 18px; padding-left: 36px; padding-right: 36px; spacing: 13px;
+                Text { text: "New key-mapping"; color: Theme.text; font-size: 15px; font-weight: 800; horizontal-alignment: center; }
+                Text {
+                    text: root.hotkey-editor-key-label == "" ? "Please press a key combination now..." : "Key: " + root.hotkey-editor-key-label;
+                    color: Theme.text; font-size: 13px; font-weight: 700; horizontal-alignment: center;
                 }
+                HorizontalLayout {
+                    alignment: center; spacing: 14px;
+                    Button { width: 76px; text: "OK"; enabled: root.hotkey-editor-input != ""; clicked => { root.save-hotkey(root.hotkey-editor-action, root.hotkey-editor-input); root.hotkey-editor-open = false; } }
+                    Button { text: "Cancel"; clicked => { root.hotkey-editor-open = false; } }
+                }
+            }
+        }
+        hotkey-capture := FocusScope {
+            init => { self.focus(); }
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.hotkey-editor-open = false;
+                    return accept;
+                }
+                let binding = root.normalize-hotkey(event.text, event.modifiers.control, event.modifiers.alt, event.modifiers.shift, event.modifiers.meta);
+                if binding != "" {
+                    root.hotkey-editor-input = binding;
+                    root.hotkey-editor-key-label = root.hotkey-key-label(event.text);
+                }
+                return accept;
             }
         }
     }

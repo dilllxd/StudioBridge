@@ -340,6 +340,133 @@ fn hotkey_description(action: &str) -> String {
     }
 }
 
+fn hotkey_key_name(text: &str) -> Option<String> {
+    use slint::platform::Key;
+
+    let mut chars = text.chars();
+    let key = chars.next()?;
+    if chars.next().is_some() {
+        return None;
+    }
+
+    let special_keys = [
+        (Key::Backspace, "Backspace"),
+        (Key::Tab, "Tab"),
+        (Key::Return, "Enter"),
+        (Key::Delete, "Delete"),
+        (Key::Space, "Space"),
+        (Key::UpArrow, "ArrowUp"),
+        (Key::DownArrow, "ArrowDown"),
+        (Key::LeftArrow, "ArrowLeft"),
+        (Key::RightArrow, "ArrowRight"),
+        (Key::F1, "F1"),
+        (Key::F2, "F2"),
+        (Key::F3, "F3"),
+        (Key::F4, "F4"),
+        (Key::F5, "F5"),
+        (Key::F6, "F6"),
+        (Key::F7, "F7"),
+        (Key::F8, "F8"),
+        (Key::F9, "F9"),
+        (Key::F10, "F10"),
+        (Key::F11, "F11"),
+        (Key::F12, "F12"),
+        (Key::F13, "F13"),
+        (Key::F14, "F14"),
+        (Key::F15, "F15"),
+        (Key::F16, "F16"),
+        (Key::F17, "F17"),
+        (Key::F18, "F18"),
+        (Key::F19, "F19"),
+        (Key::F20, "F20"),
+        (Key::F21, "F21"),
+        (Key::F22, "F22"),
+        (Key::F23, "F23"),
+        (Key::F24, "F24"),
+        (Key::Insert, "Insert"),
+        (Key::Home, "Home"),
+        (Key::End, "End"),
+        (Key::PageUp, "PageUp"),
+        (Key::PageDown, "PageDown"),
+        (Key::Pause, "Pause"),
+    ];
+    if let Some((_, name)) = special_keys
+        .into_iter()
+        .find(|(candidate, _)| char::from(*candidate) == key)
+    {
+        return Some(name.into());
+    }
+
+    if [
+        Key::Shift,
+        Key::ShiftR,
+        Key::Control,
+        Key::ControlR,
+        Key::Alt,
+        Key::AltGr,
+        Key::Meta,
+        Key::MetaR,
+    ]
+    .into_iter()
+    .any(|candidate| char::from(candidate) == key)
+    {
+        return None;
+    }
+
+    let name = match key {
+        'a'..='z' | 'A'..='Z' => key.to_ascii_uppercase().to_string(),
+        '0'..='9' => key.to_string(),
+        '`' | '~' => "Backquote".into(),
+        '\\' | '|' => "Backslash".into(),
+        '[' | '{' => "BracketLeft".into(),
+        ']' | '}' => "BracketRight".into(),
+        ',' | '<' => "Comma".into(),
+        '.' | '>' => "Period".into(),
+        '/' | '?' => "Slash".into(),
+        ';' | ':' => "Semicolon".into(),
+        '\'' | '"' => "Quote".into(),
+        '-' | '_' => "Minus".into(),
+        '=' | '+' => "Equal".into(),
+        '!' => "1".into(),
+        '@' => "2".into(),
+        '#' => "3".into(),
+        '$' => "4".into(),
+        '%' => "5".into(),
+        '^' => "6".into(),
+        '&' => "7".into(),
+        '*' => "8".into(),
+        '(' => "9".into(),
+        ')' => "0".into(),
+        _ => return None,
+    };
+    Some(name)
+}
+
+fn normalize_captured_hotkey(
+    text: &str,
+    control: bool,
+    alt: bool,
+    shift: bool,
+    meta: bool,
+) -> Option<String> {
+    let key = hotkey_key_name(text)?;
+    let mut parts = Vec::with_capacity(5);
+    if control {
+        parts.push("ctrl".to_string());
+    }
+    if shift {
+        parts.push("shift".to_string());
+    }
+    if alt {
+        parts.push("alt".to_string());
+    }
+    if meta {
+        parts.push("super".to_string());
+    }
+    parts.push(key);
+    Some(parts.join(" + "))
+}
+
 fn using_wayland() -> bool {
     cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some()
 }
@@ -512,6 +639,13 @@ fn main() -> Result<(), slint::PlatformError> {
         "Link 4".into(),
     ]));
 
+    window.on_normalize_hotkey(|text, control, alt, shift, meta| {
+        normalize_captured_hotkey(text.as_str(), control, alt, shift, meta)
+            .unwrap_or_default()
+            .into()
+    });
+    window.on_hotkey_key_label(|text| hotkey_key_name(text.as_str()).unwrap_or_default().into());
+
     let preferences_window = window.as_weak();
     window.on_save_preferences(
         move |start_at_login,
@@ -547,6 +681,13 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_save_hotkey(move |action, binding| {
         let action = action.trim().to_string();
         let binding = binding.trim().to_string();
+        if !binding.is_empty() && binding.parse::<HotKey>().is_err() {
+            set_status(
+                hotkey_window.clone(),
+                format!("Hotkey is not supported: {binding}"),
+            );
+            return;
+        }
         let mut preferences = load_preferences();
         if binding.is_empty() {
             preferences.hotkeys.remove(&action);
@@ -1890,7 +2031,9 @@ fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
 
 #[cfg(test)]
 mod desktop_tests {
-    use super::mock_meter_level;
+    use super::{hotkey_key_name, mock_meter_level, normalize_captured_hotkey};
+    use global_hotkey::hotkey::HotKey;
+    use slint::platform::Key;
 
     #[test]
     fn mock_meter_motion_is_bounded_and_changes_over_time() {
@@ -1901,5 +2044,31 @@ mod desktop_tests {
             assert!(samples.iter().all(|level| (0.0..=100.0).contains(level)));
             assert!(samples.windows(2).any(|pair| pair[0] != pair[1]));
         }
+    }
+
+    #[test]
+    fn captured_hotkey_matches_beacn_modifier_order_and_is_registerable() {
+        let f9 = char::from(Key::F9).to_string();
+        let binding = normalize_captured_hotkey(&f9, true, true, true, false).unwrap();
+        assert_eq!(binding, "ctrl + shift + alt + F9");
+        assert!(binding.parse::<HotKey>().is_ok());
+        assert_eq!(hotkey_key_name(&f9).as_deref(), Some("F9"));
+    }
+
+    #[test]
+    fn captured_hotkey_ignores_modifier_only_events_and_maps_shifted_keys() {
+        assert!(
+            normalize_captured_hotkey(
+                &char::from(Key::Control).to_string(),
+                true,
+                false,
+                false,
+                false
+            )
+            .is_none()
+        );
+        let shifted_digit = normalize_captured_hotkey("!", true, false, true, false).unwrap();
+        assert_eq!(shifted_digit, "ctrl + shift + 1");
+        assert!(shifted_digit.parse::<HotKey>().is_ok());
     }
 }

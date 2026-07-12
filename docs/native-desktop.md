@@ -55,6 +55,8 @@ than copying its source or visual assets:
 - PipeWeaver-backed Linux default recording and playback device selectors;
 - a BEACN-style profile rail with instant numbered creation plus hover Save,
   Duplicate, and Delete actions;
+- BEACN-style key-mapping capture that listens for the next native key chord,
+  previews its primary key, validates it, and persists the complete binding;
 - drag-and-drop application assignment;
 - always-accessible voice EQ and enhancement controls;
 - secondary microphone processors grouped by module;
@@ -126,8 +128,8 @@ and tray, launch-in-background and single-instance behavior, real daemon health,
 source discovery, independent Personal/Audience faders, 60 Hz interpolated live
 meters, arbitrary PipeWeaver output buses (including Voice Chat Mic and VOD
 Track), functional Linux default-device selectors and a cycling global hotkey,
-a BEACN-familiar assignment/routing workspace, and an attended guarded editor
-for all six validated microphone DSP modules. Application drag/drop and the
-final distribution validation remain in progress. The web assets continue
-to build and are served by the daemon until native parity and packaging complete
-physical validation.
+a BEACN-style native key-mapping workflow, a BEACN-familiar assignment/routing
+workspace, and an attended guarded editor for all six validated microphone DSP
+modules. Application drag/drop and the final distribution validation remain in
+progress. The web assets continue to build and are served by the daemon until
+native parity and packaging complete physical validation.
