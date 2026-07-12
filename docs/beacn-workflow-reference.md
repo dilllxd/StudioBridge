@@ -23,6 +23,10 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
   source strips. The Personal card combines its playback-device selector and
   master level, while the Audience card keeps the virtual mix and master level
   together.
+- The trailing add-source card opens a fixed list of Mic, Game, Music, Chat,
+  Browser, System, Aux 1, Aux 2, Hardware, and four Link inputs. Types already
+  present remain visible but are dimmed and inert; available types are bold and
+  create a strip directly.
 - Assignments and Routing Table are contextual tabs below the mixer. They do
   not replace the mixer with unrelated full-screen pages.
 - Profiles occupy a secondary right rail and do not compete with live mixer

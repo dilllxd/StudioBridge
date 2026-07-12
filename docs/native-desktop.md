@@ -57,6 +57,9 @@ than copying its source or visual assets:
 - draggable and keyboard-accessible source-strip grips backed by the native
   PipeWeaver order command, with saved profiles restoring the captured order;
 - linked or independent submix faders;
+- a BEACN-matched add-source menu that keeps all source types visible, disables
+  occupied names before they reach the daemon, and creates available strips
+  directly;
 - a persistent per-source mute action menu matching Mute to All, Mute to
   Audience, and Mute to Chat while retaining the internal Personal target;
 - a prominent Main Out section;

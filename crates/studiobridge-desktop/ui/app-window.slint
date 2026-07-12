@@ -694,11 +694,12 @@ component ProfileRail inherits Rectangle {
 
 component AddSourceRow inherits Rectangle {
     in property <string> label;
+    in property <bool> available: true;
     callback selected(string);
     height: 24px;
-    background: touch.has-hover ? #3a393e : #27272b;
-    Text { x: 9px; text: root.label; color: Theme.text; font-size: 10px; vertical-alignment: center; }
-    touch := TouchArea { clicked => { root.selected(root.label); } }
+    background: root.available && touch.has-hover ? #3a393e : #27272b;
+    Text { x: 9px; text: root.label; color: root.available ? Theme.text : #6d6d71; font-size: 10px; font-weight: root.available ? 800 : 400; vertical-alignment: center; }
+    touch := TouchArea { clicked => { if root.available { root.selected(root.label); } } }
 }
 
 export component MainWindow inherits Window {
@@ -726,6 +727,7 @@ export component MainWindow inherits Window {
     in property <[string]> default-input-ids;
     in property <[string]> default-output-names;
     in property <[string]> default-output-ids;
+    in property <string> source-name-key: "";
     in property <int> default-input-index: -1;
     in property <int> default-output-index: -1;
     in-out property <int> active-page: 0;
@@ -804,6 +806,7 @@ export component MainWindow inherits Window {
     callback save-hotkey(string, string);
     callback normalize-hotkey(string, bool, bool, bool, bool) -> string;
     callback hotkey-key-label(string) -> string;
+    pure callback source-name-available(string, string) -> bool;
     callback assign-linux-application(string, string, int);
     callback assign-link-application(string, int);
     callback select-dsp-module(string);
@@ -899,19 +902,19 @@ export component MainWindow inherits Window {
                                     background: #27272b; border-width: 1px; border-color: #4b4b50;
                                     VerticalLayout {
                                         padding: 3px; spacing: 0px;
-                                        AddSourceRow { label: "Mic"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Game"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Music"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Chat"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Browser"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "System"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Aux 1"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Aux 2"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Hardware"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Link In"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Link 2 In"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Link 3 In"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
-                                        AddSourceRow { label: "Link 4 In"; selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "Mic"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "Game"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "Music"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "Chat"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "Browser"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "System"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "Aux 1"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "Aux 2"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "Hardware"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "Link In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "Link 2 In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "Link 3 In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
+                                        AddSourceRow { label: "Link 4 In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { root.add-source-menu-open = false; root.create-source(name); } }
                                     }
                                 }
                             }

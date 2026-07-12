@@ -477,6 +477,12 @@ fn normalize_mute_action(action: &str) -> &'static str {
     }
 }
 
+fn source_name_available(name: &str, source_names: &str) -> bool {
+    !source_names
+        .lines()
+        .any(|source| source.eq_ignore_ascii_case(name))
+}
+
 fn mute_state_with_target(current: MuteState, target: &str, muted: bool) -> MuteState {
     let personal = if target == "personal" || target == "all" {
         muted
@@ -674,6 +680,9 @@ fn main() -> Result<(), slint::PlatformError> {
             .into()
     });
     window.on_hotkey_key_label(|text| hotkey_key_name(text.as_str()).unwrap_or_default().into());
+    window.on_source_name_available(|name, source_names| {
+        source_name_available(name.as_str(), source_names.as_str())
+    });
 
     let preferences_window = window.as_weak();
     window.on_save_preferences(
@@ -1423,6 +1432,16 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
             .unwrap_or_else(|| "Unavailable".into())
             .into(),
     );
+    window.set_source_name_key(
+        snapshot
+            .mixer
+            .channels
+            .iter()
+            .map(|channel| channel.name.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into(),
+    );
     let mut ordered_targets = snapshot.mixer.targets.iter().collect::<Vec<_>>();
     ordered_targets.sort_by_key(|target| match target.name.as_str() {
         "Headphones" => 0,
@@ -2101,7 +2120,7 @@ fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
 mod desktop_tests {
     use super::{
         hotkey_key_name, mock_meter_level, mute_state_with_target, normalize_captured_hotkey,
-        normalize_mute_action,
+        normalize_mute_action, source_name_available,
     };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
@@ -2167,5 +2186,15 @@ mod desktop_tests {
             mute_state_with_target(MuteState::MutedAudience, "audience", false),
             MuteState::Unmuted
         );
+    }
+
+    #[test]
+    fn add_source_menu_disables_existing_names_case_insensitively() {
+        let source_names = "Mic\nGame\nLink In";
+        assert!(!source_name_available("Mic", source_names));
+        assert!(!source_name_available("game", source_names));
+        assert!(!source_name_available("LINK IN", source_names));
+        assert!(source_name_available("Aux 1", source_names));
+        assert!(source_name_available("Link 2 In", source_names));
     }
 }
