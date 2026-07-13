@@ -750,6 +750,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_routes(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_linux_applications(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_link_applications(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
+    window.set_link_outputs(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_targets(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_eq_bands(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_mixer_profiles(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
@@ -763,6 +764,8 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_physical_output_ids(string_model(vec![String::new()]));
     window.set_physical_input_names(string_model(Vec::new()));
     window.set_physical_input_ids(string_model(Vec::new()));
+    window.set_link_output_target_names(string_model(vec!["Unassigned".into()]));
+    window.set_link_output_target_ids(string_model(vec![String::new()]));
     window.set_link_channel_names(string_model(vec![
         "System".into(),
         "Link 1".into(),
@@ -1027,6 +1030,33 @@ fn main() -> Result<(), slint::PlatformError> {
                 Err(error) => set_status(
                     window.clone(),
                     format!("Input device update failed: {error}"),
+                ),
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let link_output_window = window.as_weak();
+    let link_output_client = client.clone();
+    window.on_set_link_output_assignment(move |output_node_id, target_id| {
+        let window = link_output_window.clone();
+        let client = link_output_client.clone();
+        let output_node_id = output_node_id.to_string();
+        let target_id = target_id.to_string();
+        thread::spawn(move || {
+            let node_id = match output_node_id.parse::<u32>() {
+                Ok(node_id) => node_id,
+                Err(error) => {
+                    set_status(window, format!("Link output selection is invalid: {error}"));
+                    return;
+                }
+            };
+            let target_id = (!target_id.is_empty()).then_some(target_id);
+            match client.set_link_output_assignment(node_id, target_id.as_deref()) {
+                Ok(()) => set_status(window.clone(), "Outgoing Studio Link updated".into()),
+                Err(error) => set_status(
+                    window.clone(),
+                    format!("Outgoing Studio Link update failed: {error}"),
                 ),
             }
             refresh_all(window, client);
@@ -2112,6 +2142,40 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
                     .map_or(0, |index| index as i32 + 1),
             })
             .collect::<Vec<_>>();
+    let mut link_output_target_names = vec!["Unassigned".to_string()];
+    link_output_target_names.extend(ordered_targets.iter().map(|target| target.name.clone()));
+    let mut link_output_target_ids = vec![String::new()];
+    link_output_target_ids.extend(ordered_targets.iter().map(|target| target.id.clone()));
+    let link_outputs = (1..=4)
+        .map(|slot| {
+            let assignment = snapshot
+                .mixer
+                .link_outputs
+                .iter()
+                .find(|assignment| assignment.slot == slot);
+            LinkOutputModel {
+                slot: i32::from(slot),
+                node_id: assignment
+                    .map(|assignment| assignment.node_id.to_string())
+                    .unwrap_or_default()
+                    .into(),
+                label: if slot == 1 {
+                    "Link Out".into()
+                } else {
+                    format!("Link {slot} Out").into()
+                },
+                target_index: assignment
+                    .and_then(|assignment| assignment.target_id.as_ref())
+                    .and_then(|target_id| {
+                        ordered_targets
+                            .iter()
+                            .position(|target| &target.id == target_id)
+                    })
+                    .map_or(0, |index| index as i32 + 1),
+                available: assignment.is_some(),
+            }
+        })
+        .collect::<Vec<_>>();
     let default_input_index = snapshot
         .mixer
         .default_input
@@ -2202,12 +2266,15 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
             .map(|device| device.node_id.to_string())
             .collect(),
     ));
+    window.set_link_output_target_names(string_model(link_output_target_names));
+    window.set_link_output_target_ids(string_model(link_output_target_ids));
     window.set_default_input_index(default_input_index);
     window.set_default_output_index(default_output_index);
     window.set_sources(ModelRc::from(Rc::new(VecModel::from(sources))));
     window.set_routes(ModelRc::from(Rc::new(VecModel::from(routes))));
     window.set_linux_applications(ModelRc::from(Rc::new(VecModel::from(linux_applications))));
     window.set_link_applications(ModelRc::from(Rc::new(VecModel::from(link_applications))));
+    window.set_link_outputs(ModelRc::from(Rc::new(VecModel::from(link_outputs))));
     window.set_targets(ModelRc::from(Rc::new(VecModel::from(targets))));
     window.set_mixer_channel_names(string_model(channel_names));
 }

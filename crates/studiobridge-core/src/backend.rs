@@ -2,8 +2,9 @@ use crate::dsp::*;
 use crate::{
     BackendStatus, BridgeError, BridgeResult, HeadphoneState, LinkChannel, LinkedApplication,
     MicrophoneState, MixBus, MixerApplication, MixerChannel, MixerDeviceChoice,
-    MixerPhysicalDeviceChoice, MixerPhysicalDeviceDescriptor, MixerRoute, MixerSnapshot,
-    MixerSourceKind, MixerTarget, MuteState, SetMicrophoneRequest, StudioIdentity, StudioSnapshot,
+    MixerLinkOutputAssignment, MixerPhysicalDeviceChoice, MixerPhysicalDeviceDescriptor,
+    MixerRoute, MixerSnapshot, MixerSourceKind, MixerTarget, MuteState, SetMicrophoneRequest,
+    StudioIdentity, StudioSnapshot,
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -40,6 +41,11 @@ pub trait MixerBackend: Send + Sync {
         &self,
         channel_id: &str,
         device_node_id: Option<u32>,
+    ) -> BridgeResult<()>;
+    async fn set_link_output_assignment(
+        &self,
+        output_node_id: u32,
+        target_id: Option<&str>,
     ) -> BridgeResult<()>;
     async fn set_default_input(&self, device_id: &str) -> BridgeResult<()>;
     async fn set_default_output(&self, device_id: &str) -> BridgeResult<()>;
@@ -347,8 +353,8 @@ impl Default for MockMixerBackend {
                         volume: 100,
                         muted: false,
                         attached_devices: vec![MixerPhysicalDeviceDescriptor {
-                            name: Some("alsa_output.beacn_studio_link_out".into()),
-                            description: Some("BEACN Studio Link Out".into()),
+                            name: Some("alsa_output.beacn_studio_line4".into()),
+                            description: Some("BEACN Studio Link 1 Out (Line4)".into()),
                         }],
                     },
                     MixerTarget {
@@ -431,10 +437,10 @@ impl Default for MockMixerBackend {
                     },
                     MixerPhysicalDeviceChoice {
                         node_id: 102,
-                        name: "BEACN Studio Link Out".into(),
+                        name: "BEACN Studio Link 1 Out (Line4)".into(),
                         descriptor: MixerPhysicalDeviceDescriptor {
-                            name: Some("alsa_output.beacn_studio_link_out".into()),
-                            description: Some("BEACN Studio Link Out".into()),
+                            name: Some("alsa_output.beacn_studio_line4".into()),
+                            description: Some("BEACN Studio Link 1 Out (Line4)".into()),
                         },
                     },
                     MixerPhysicalDeviceChoice {
@@ -443,6 +449,30 @@ impl Default for MockMixerBackend {
                         descriptor: MixerPhysicalDeviceDescriptor {
                             name: Some("alsa_output.capture_card".into()),
                             description: Some("Capture Card Audio".into()),
+                        },
+                    },
+                    MixerPhysicalDeviceChoice {
+                        node_id: 104,
+                        name: "BEACN Studio Link 2 Out (Line3)".into(),
+                        descriptor: MixerPhysicalDeviceDescriptor {
+                            name: Some("alsa_output.beacn_studio_line3".into()),
+                            description: Some("BEACN Studio Link 2 Out (Line3)".into()),
+                        },
+                    },
+                    MixerPhysicalDeviceChoice {
+                        node_id: 105,
+                        name: "BEACN Studio Link 3 Out (Line2)".into(),
+                        descriptor: MixerPhysicalDeviceDescriptor {
+                            name: Some("alsa_output.beacn_studio_line2".into()),
+                            description: Some("BEACN Studio Link 3 Out (Line2)".into()),
+                        },
+                    },
+                    MixerPhysicalDeviceChoice {
+                        node_id: 106,
+                        name: "BEACN Studio Link 4 Out (Line1)".into(),
+                        descriptor: MixerPhysicalDeviceDescriptor {
+                            name: Some("alsa_output.beacn_studio_line1".into()),
+                            description: Some("BEACN Studio Link 4 Out (Line1)".into()),
                         },
                     },
                 ],
@@ -478,6 +508,32 @@ impl Default for MockMixerBackend {
                             name: Some("alsa_input.usb_camera".into()),
                             description: Some("Microphone (USB Camera)".into()),
                         },
+                    },
+                ],
+                link_outputs: vec![
+                    MixerLinkOutputAssignment {
+                        slot: 1,
+                        node_id: 102,
+                        name: "Link Out".into(),
+                        target_id: Some("voice-chat-mic".into()),
+                    },
+                    MixerLinkOutputAssignment {
+                        slot: 2,
+                        node_id: 104,
+                        name: "Link 2 Out".into(),
+                        target_id: None,
+                    },
+                    MixerLinkOutputAssignment {
+                        slot: 3,
+                        node_id: 105,
+                        name: "Link 3 Out".into(),
+                        target_id: None,
+                    },
+                    MixerLinkOutputAssignment {
+                        slot: 4,
+                        node_id: 106,
+                        name: "Link 4 Out".into(),
+                        target_id: None,
                     },
                 ],
             })),
@@ -563,6 +619,7 @@ impl MixerBackend for MockMixerBackend {
             .find(|target| target.id == target_id)
             .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
         target.attached_devices = descriptor.into_iter().collect();
+        sync_mock_link_outputs(&mut state);
         Ok(())
     }
 
@@ -595,6 +652,61 @@ impl MixerBackend for MockMixerBackend {
             )));
         }
         channel.attached_devices = descriptor.into_iter().collect();
+        Ok(())
+    }
+
+    async fn set_link_output_assignment(
+        &self,
+        output_node_id: u32,
+        target_id: Option<&str>,
+    ) -> BridgeResult<()> {
+        let mut state = self.state.write().await;
+        if let Some(target_id) = target_id
+            && !state.targets.iter().any(|target| target.id == target_id)
+        {
+            return Err(BridgeError::InvalidValue(format!(
+                "unknown target: {target_id}"
+            )));
+        }
+        let link_index = state
+            .link_outputs
+            .iter()
+            .position(|link| link.node_id == output_node_id)
+            .ok_or_else(|| {
+                BridgeError::InvalidValue(format!(
+                    "unknown BEACN Link output node: {output_node_id}"
+                ))
+            })?;
+        let descriptor = state
+            .physical_outputs
+            .iter()
+            .find(|output| output.node_id == output_node_id)
+            .map(|output| output.descriptor.clone())
+            .ok_or_else(|| {
+                BridgeError::InvalidValue(format!(
+                    "unknown BEACN Link output node: {output_node_id}"
+                ))
+            })?;
+        for target in &mut state.targets {
+            target
+                .attached_devices
+                .retain(|attached| attached != &descriptor);
+        }
+        if let Some(target_id) = target_id {
+            state
+                .targets
+                .iter_mut()
+                .find(|target| target.id == target_id)
+                .expect("target was validated before mutation")
+                .attached_devices
+                .push(descriptor);
+        }
+        let link = &mut state.link_outputs[link_index];
+        if let Some(target_id) = target_id {
+            link.target_id = Some(target_id.into());
+        } else {
+            link.target_id = None;
+        }
         Ok(())
     }
 
@@ -780,5 +892,30 @@ impl MixerBackend for MockMixerBackend {
             }
         }
         Ok(())
+    }
+}
+
+fn sync_mock_link_outputs(state: &mut MixerSnapshot) {
+    let target_ids = state
+        .link_outputs
+        .iter()
+        .map(|link| {
+            state
+                .physical_outputs
+                .iter()
+                .find(|output| output.node_id == link.node_id)
+                .and_then(|output| {
+                    state.targets.iter().find_map(|target| {
+                        target
+                            .attached_devices
+                            .iter()
+                            .any(|attached| attached == &output.descriptor)
+                            .then(|| target.id.clone())
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
+    for (link, target_id) in state.link_outputs.iter_mut().zip(target_ids) {
+        link.target_id = target_id;
     }
 }

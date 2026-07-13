@@ -5,9 +5,10 @@ use studiobridge_core::{
     AppSnapshot, CreateMixerSourceRequest, DspWriteModule, LinkChannel, MicrophoneDspSnapshot,
     MicrophoneDspUpdate, MicrophoneDspWriteResult, MixBus, MixerProfileRequest,
     MixerProfilesResponse, MuteState, RemoveMixerSourceRequest, ReorderMixerSourceRequest,
-    SetDefaultDeviceRequest, SetLinkAssignmentRequest, SetMixerApplicationRequest, SetMuteRequest,
-    SetRouteRequest, SetSourceDeviceRequest, SetTargetDeviceRequest, SetTargetMuteRequest,
-    SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
+    SetDefaultDeviceRequest, SetLinkAssignmentRequest, SetLinkOutputAssignmentRequest,
+    SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest, SetSourceDeviceRequest,
+    SetTargetDeviceRequest, SetTargetMuteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest,
+    SetVolumeRequest,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -129,6 +130,25 @@ impl DaemonClient {
             .json(&SetSourceDeviceRequest {
                 channel_id: channel_id.into(),
                 device_node_id,
+            })
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub fn set_link_output_assignment(
+        &self,
+        output_node_id: u32,
+        target_id: Option<&str>,
+    ) -> Result<(), reqwest::Error> {
+        self.client
+            .post(format!(
+                "{}/api/mixer/link-output-assignment",
+                self.base_url
+            ))
+            .json(&SetLinkOutputAssignmentRequest {
+                output_node_id,
+                target_id: target_id.map(str::to_owned),
             })
             .send()?
             .error_for_status()?;

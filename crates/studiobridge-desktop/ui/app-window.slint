@@ -149,6 +149,14 @@ component LevelMeter inherits Rectangle {
     }
 }
 
+export struct LinkOutputModel {
+    slot: int,
+    node-id: string,
+    label: string,
+    target-index: int,
+    available: bool,
+}
+
 export struct EqBandModel {
     band-index: int,
     x-percent: float,
@@ -428,11 +436,12 @@ component BeacnSelector inherits Rectangle {
     in property <int> current-index: -1;
     in property <string> placeholder: "Choose Audio to output...";
     in property <length> popup-width: root.width;
+    in property <bool> selector-enabled: true;
     property <bool> current-valid: root.current-index >= 0 && root.current-index < root.model.length;
     property <int> option-count: root.model.length - (root.current-valid ? 1 : 0);
     callback selected(int);
     height: 27px;
-    background: #1b1b1e;
+    background: root.selector-enabled ? #1b1b1e : #202023;
     border-width: 1px;
     border-color: Theme.border;
 
@@ -440,7 +449,7 @@ component BeacnSelector inherits Rectangle {
         x: 7px; width: parent.width - 34px;
         text: root.current-index >= 0 && root.current-index < root.model.length
             ? root.model[root.current-index] : root.placeholder;
-        color: root.current-index >= 0 ? Theme.text : Theme.quiet;
+        color: root.selector-enabled && root.current-index >= 0 ? Theme.text : Theme.quiet;
         font-size: 10px; font-weight: 700;
         vertical-alignment: center; overflow: elide;
     }
@@ -448,6 +457,7 @@ component BeacnSelector inherits Rectangle {
     Text { x: parent.width - 25px; width: 25px; text: "v"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
     selector-focus := FocusScope {
         width: parent.width; height: parent.height;
+        enabled: root.selector-enabled;
         accessible-role: combobox;
         accessible-label: root.current-index >= 0 && root.current-index < root.model.length
             ? root.model[root.current-index] : root.placeholder;
@@ -473,6 +483,7 @@ component BeacnSelector inherits Rectangle {
             return reject;
         }
         TouchArea {
+            enabled: root.selector-enabled;
             clicked => {
                 selector-focus.focus();
                 if selector-menu.is-open {
@@ -1808,6 +1819,7 @@ export component MainWindow inherits Window {
     in property <[RouteModel]> routes;
     in property <[ApplicationModel]> linux-applications;
     in property <[LinkApplicationModel]> link-applications;
+    in property <[LinkOutputModel]> link-outputs;
     in property <[TargetModel]> targets;
     in property <[EqBandModel]> eq-bands;
     in property <[ProfileModel]> mixer-profiles;
@@ -1823,6 +1835,8 @@ export component MainWindow inherits Window {
     in property <[string]> physical-output-ids;
     in property <[string]> physical-input-names;
     in property <[string]> physical-input-ids;
+    in property <[string]> link-output-target-names;
+    in property <[string]> link-output-target-ids;
     in property <string> source-name-key: "";
     in property <int> default-input-index: -1;
     in property <int> default-output-index: -1;
@@ -1924,6 +1938,7 @@ export component MainWindow inherits Window {
     callback set-target-mute(string, bool);
     callback set-target-device(string, string);
     callback set-source-device(string, string);
+    callback set-link-output-assignment(string, string);
     callback set-default-input(string);
     callback set-default-output(string);
     callback set-source-mute(string, string, bool);
@@ -2162,17 +2177,21 @@ export component MainWindow inherits Window {
                     spacing: 3px;
                     vertical-stretch: 1;
                     Rectangle {
-                        width: 300px;
+                        width: 250px;
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
-                            padding: 9px; spacing: 7px;
+                            padding: 8px; spacing: 2px;
                             Text { text: "RECORDING DEVICES"; color: Theme.text; font-size: 11px; font-weight: 800; }
                             Text { text: "DEFAULT"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                            BeacnSelector { width: 205px; height: 27px; model: root.default-input-names; current-index: root.default-input-index; placeholder: "Choose Audio to input..."; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-input-ids.length { root.set-default-input(root.default-input-ids[index]); } } }
-                            Text { text: "VOD / RECORDING"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                            Rectangle { height: 28px; background: Theme.raised; Text { x: 7px; text: "VOD Track · configure in Routing Table"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
-                            Text { text: "DEFAULT PLAYBACK DEVICE"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                            BeacnSelector { width: 205px; height: 27px; model: root.default-output-names; current-index: root.default-output-index; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-output-ids.length { root.set-default-output(root.default-output-ids[index]); } } }
+                            BeacnSelector { height: 22px; model: root.default-input-names; current-index: root.default-input-index; placeholder: "Choose Audio to input..."; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-input-ids.length { root.set-default-input(root.default-input-ids[index]); } } }
+                            Text { text: "DEFAULT COMMUNICATION"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
+                            BeacnSelector { height: 22px; model: root.default-input-names; current-index: root.default-input-index; placeholder: "Choose Audio to input..."; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-input-ids.length { root.set-default-input(root.default-input-ids[index]); } } }
+                            Rectangle { height: 3px; background: transparent; }
+                            Text { text: "PLAYBACK DEVICES"; color: Theme.text; font-size: 11px; font-weight: 800; }
+                            Text { text: "DEFAULT"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
+                            BeacnSelector { height: 22px; model: root.default-output-names; current-index: root.default-output-index; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-output-ids.length { root.set-default-output(root.default-output-ids[index]); } } }
+                            Text { text: "DEFAULT COMMUNICATION"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
+                            BeacnSelector { height: 22px; model: root.default-output-names; current-index: root.default-output-index; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-output-ids.length { root.set-default-output(root.default-output-ids[index]); } } }
                             Rectangle { vertical-stretch: 1; }
                         }
                     }
@@ -2180,41 +2199,27 @@ export component MainWindow inherits Window {
                         width: 250px;
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
-                            padding: 9px; spacing: 6px;
-                            Text { text: "OUTPUT BUS DEVICE ASSIGNMENTS"; color: Theme.text; font-size: 11px; font-weight: 800; }
-                            Text { text: "Attach each mix to a physical PipeWire output"; color: Theme.quiet; font-size: 9px; }
-                            ScrollView {
-                                vertical-stretch: 1;
-                                VerticalLayout {
-                                    spacing: 6px;
-                                    for target in root.targets: AssignmentRow {
-                                        title: target.name;
-                                        VerticalLayout {
-                                            padding-left: 8px; padding-right: 8px; padding-top: 4px; padding-bottom: 4px; spacing: 3px;
-                                            Text { height: 14px; text: target.name; color: Theme.text; font-size: 10px; font-weight: 700; overflow: elide; }
-                                            BeacnSelector {
-                                                horizontal-stretch: 1;
-                                                height: 27px;
-                                                model: root.physical-output-names;
-                                                current-index: target.output-device-index;
-                                                popup-width: 274px;
-                                                selected(index) => { if index >= 0 && index < root.physical-output-ids.length { root.set-target-device(target.target-id, root.physical-output-ids[index]); } }
-                                            }
-                                        }
-                                    }
-                                    Rectangle { height: 1px; background: Theme.border; }
-                                    Text { height: 20px; text: "WINDOWS LINK APPLICATIONS"; color: Theme.text; font-size: 10px; font-weight: 800; vertical-alignment: bottom; }
-                                    Text { text: "Multiple gaming-PC apps may share a Link channel"; color: Theme.quiet; font-size: 8px; }
-                                    for app in root.link-applications: AssignmentRow {
-                                        title: app.name;
-                                        HorizontalLayout {
-                                            padding-left: 10px; padding-right: 8px;
-                                            Text { text: app.name; color: Theme.text; font-size: 11px; font-weight: 700; horizontal-stretch: 1; overflow: elide; }
-                                            BeacnSelector { width: 140px; model: root.link-channel-names; current-index: app.channel-index; popup-width: 180px; selected(index) => { root.assign-link-application(app.name, index); } }
+                            padding: 8px; spacing: 2px;
+                            Text { text: "OUTGOING STUDIO LINK ASSIGNMENTS"; color: Theme.text; font-size: 11px; font-weight: 800; }
+                            for link in root.link-outputs: VerticalLayout {
+                                height: 42px;
+                                spacing: 2px;
+                                Text { text: link.label; color: Theme.quiet; font-size: 8px; font-weight: 800; }
+                                BeacnSelector {
+                                    height: 22px;
+                                    model: root.link-output-target-names;
+                                    current-index: link.target-index;
+                                    placeholder: link.available ? "Unassigned" : "BEACN Link endpoint unavailable";
+                                    popup-width: 274px;
+                                    selector-enabled: link.available;
+                                    selected(index) => {
+                                        if link.available && index >= 0 && index < root.link-output-target-ids.length {
+                                            root.set-link-output-assignment(link.node-id, root.link-output-target-ids[index]);
                                         }
                                     }
                                 }
                             }
+                            Rectangle { vertical-stretch: 1; }
                         }
                     }
                     Rectangle {
@@ -2240,6 +2245,16 @@ export component MainWindow inherits Window {
                                 vertical-stretch: 1;
                                 VerticalLayout {
                                     spacing: 6px;
+                                    Text { height: 18px; text: "WINDOWS LINK APPLICATIONS"; color: Theme.quiet; font-size: 8px; font-weight: 800; vertical-alignment: bottom; }
+                                    for app in root.link-applications: AssignmentRow {
+                                        title: app.name;
+                                        HorizontalLayout {
+                                            padding-left: 10px; padding-right: 8px;
+                                            Text { text: app.name; color: Theme.text; font-size: 11px; font-weight: 700; horizontal-stretch: 1; overflow: elide; }
+                                            BeacnSelector { width: 112px; model: root.link-channel-names; current-index: app.channel-index; popup-width: 180px; selected(index) => { root.assign-link-application(app.name, index); } }
+                                        }
+                                    }
+                                    Text { height: 18px; text: "LINUX APPLICATIONS"; color: Theme.quiet; font-size: 8px; font-weight: 800; vertical-alignment: bottom; }
                                     for app in root.linux-applications: AssignmentRow {
                                         title: app.title;
                                         background: root.application-pointer-dragging && root.dragged-application-process == app.process ? #24413f : Theme.raised;

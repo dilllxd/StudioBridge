@@ -11,8 +11,9 @@ use pipeweaver_shared::{
 use std::collections::HashMap;
 use studiobridge_core::{
     BackendStatus, BridgeError, BridgeResult, MixBus, MixerApplication, MixerBackend, MixerChannel,
-    MixerDeviceChoice, MixerPhysicalDeviceChoice, MixerPhysicalDeviceDescriptor, MixerRoute,
-    MixerSnapshot, MixerSourceKind, MixerTarget, MuteState,
+    MixerDeviceChoice, MixerLinkOutputAssignment, MixerPhysicalDeviceChoice,
+    MixerPhysicalDeviceDescriptor, MixerRoute, MixerSnapshot, MixerSourceKind, MixerTarget,
+    MuteState, beacn_link_output_slot,
 };
 use tokio::sync::Mutex;
 use ulid::Ulid;
@@ -275,6 +276,81 @@ impl MixerBackend for PipeweaverBackend {
         Ok(())
     }
 
+    async fn set_link_output_assignment(
+        &self,
+        output_node_id: u32,
+        target_id: Option<&str>,
+    ) -> BridgeResult<()> {
+        let status = self
+            .client
+            .lock()
+            .await
+            .get_status()
+            .await
+            .map_err(|error| BridgeError::BackendUnavailable(error.to_string()))?;
+        let snapshot = map_status(&status);
+        let output = snapshot
+            .physical_outputs
+            .iter()
+            .find(|output| output.node_id == output_node_id)
+            .filter(|output| beacn_link_output_slot(&output.name, &output.descriptor).is_some())
+            .ok_or_else(|| {
+                BridgeError::InvalidValue(format!(
+                    "unknown or unusable BEACN Link output node: {output_node_id}"
+                ))
+            })?;
+        let selected_target = target_id
+            .map(|target_id| {
+                snapshot
+                    .targets
+                    .iter()
+                    .find(|target| target.id == target_id)
+                    .ok_or_else(|| {
+                        BridgeError::InvalidValue(format!("unknown target: {target_id}"))
+                    })
+            })
+            .transpose()?;
+
+        if let Some(target) = selected_target
+            && !target
+                .attached_devices
+                .iter()
+                .any(|attached| physical_device_matches(attached, &output.descriptor))
+        {
+            // Preserve the selected target's other outputs and the current Link path
+            // until the replacement attachment has succeeded.
+            self.send(APICommand::AttachPhysicalNodeByName(
+                target.id.clone(),
+                output.node_id,
+            ))
+            .await?;
+        }
+
+        for target in &snapshot.targets {
+            let keep_first = selected_target.is_some_and(|selected| selected.id == target.id);
+            let matching_indices = target
+                .attached_devices
+                .iter()
+                .enumerate()
+                .filter_map(|(index, attached)| {
+                    physical_device_matches(attached, &output.descriptor).then_some(index)
+                })
+                .collect::<Vec<_>>();
+            let matching_count = matching_indices.len();
+            for (position, index) in matching_indices.into_iter().rev().enumerate() {
+                if keep_first && position + 1 == matching_count {
+                    continue;
+                }
+                self.send(APICommand::RemovePhysicalNodeByName(
+                    target.id.clone(),
+                    index,
+                ))
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn set_default_input(&self, device_id: &str) -> BridgeResult<()> {
         self.send(APICommand::SetDefaultInput(parse_device_id(device_id)?))
             .await
@@ -505,6 +581,7 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
     let (default_inputs, default_outputs) = default_device_choices(status);
     let physical_outputs = physical_output_choices(status);
     let physical_inputs = physical_input_choices(status);
+    let link_outputs = link_output_assignments(&targets, &physical_outputs);
 
     MixerSnapshot {
         status: BackendStatus::Connected,
@@ -520,7 +597,40 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
         default_outputs,
         physical_outputs,
         physical_inputs,
+        link_outputs,
     }
+}
+
+fn link_output_assignments(
+    targets: &[MixerTarget],
+    outputs: &[MixerPhysicalDeviceChoice],
+) -> Vec<MixerLinkOutputAssignment> {
+    let mut assignments = outputs
+        .iter()
+        .filter_map(|output| {
+            let slot = beacn_link_output_slot(&output.name, &output.descriptor)?;
+            let target_id = targets.iter().find_map(|target| {
+                target
+                    .attached_devices
+                    .iter()
+                    .any(|attached| physical_device_matches(attached, &output.descriptor))
+                    .then(|| target.id.clone())
+            });
+            Some(MixerLinkOutputAssignment {
+                slot,
+                node_id: output.node_id,
+                name: if slot == 1 {
+                    "Link Out".into()
+                } else {
+                    format!("Link {slot} Out")
+                },
+                target_id,
+            })
+        })
+        .collect::<Vec<_>>();
+    assignments.sort_by_key(|assignment| assignment.slot);
+    assignments.dedup_by_key(|assignment| assignment.slot);
+    assignments
 }
 
 fn map_attached_devices(
@@ -1157,6 +1267,79 @@ mod tests {
             requests.as_slice(),
             [DaemonRequest::GetStatus, DaemonRequest::GetStatus]
         ));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn link_output_assignment_attaches_new_target_before_detaching_old_target() {
+        let (backend, fake, server) = fake_backend().await;
+        let descriptor = pipeweaver_profile::PhysicalDeviceDescriptor {
+            name: Some("alsa_output.usb-BEACN_Studio__Line4__sink".into()),
+            description: Some("BEACN Studio Line4".into()),
+        };
+        let selected_target;
+        {
+            let mut status = fake.status.lock().await;
+            status.audio.profile.devices.targets.physical_devices[0]
+                .attached_devices
+                .push(descriptor.clone());
+            status.audio.devices[DeviceType::Target].push(
+                pipeweaver_ipc::commands::PhysicalDevice {
+                    node_id: 77,
+                    name: descriptor.name.clone(),
+                    description: descriptor.description.clone(),
+                    is_usable: true,
+                    ..Default::default()
+                },
+            );
+            selected_target = map_status(&status)
+                .targets
+                .iter()
+                .find(|target| target.id != "Headphones")
+                .expect("base profile should contain a second target")
+                .id
+                .clone();
+        }
+
+        backend
+            .set_link_output_assignment(77, Some(&selected_target))
+            .await
+            .unwrap();
+
+        let requests = fake.requests.lock().await;
+        assert!(matches!(requests.first(), Some(DaemonRequest::GetStatus)));
+        assert!(matches!(requests.get(1), Some(DaemonRequest::Pipewire(
+            APICommand::AttachPhysicalNodeByName(name, 77)
+        )) if name == &selected_target));
+        assert!(matches!(requests.get(2), Some(DaemonRequest::Pipewire(
+            APICommand::RemovePhysicalNodeByName(name, 0)
+        )) if name == "Headphones"));
+        assert_eq!(requests.len(), 3);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn link_output_assignment_rejects_non_beacn_nodes_without_writes() {
+        let (backend, fake, server) = fake_backend().await;
+        fake.status.lock().await.audio.devices[DeviceType::Target].push(
+            pipeweaver_ipc::commands::PhysicalDevice {
+                node_id: 77,
+                name: Some("alsa_output.interface_line4".into()),
+                description: Some("Interface Line 4".into()),
+                is_usable: true,
+                ..Default::default()
+            },
+        );
+
+        let error = backend
+            .set_link_output_assignment(77, Some("Headphones"))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("BEACN Link output"));
+        let requests = fake.requests.lock().await;
+        assert!(matches!(requests.as_slice(), [DaemonRequest::GetStatus]));
 
         server.abort();
     }

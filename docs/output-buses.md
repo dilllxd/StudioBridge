@@ -8,13 +8,16 @@ volume and mute state. Muting a bus uses PipeWeaver's target-mute command rather
 than replacing or forgetting its saved master volume, and mixer profiles
 restore both values.
 
-The Assignments panel keeps two device concepts separate. Recording and
+The Assignments panel keeps three device concepts separate. Recording and
 playback defaults read PipeWeaver's current `defaults_id` state and send the
-typed `SetDefaultInput` or `SetDefaultOutput` command. Output Bus Device
-Assignments lists usable physical PipeWire target nodes and attaches one to an
-individual mixer target with PipeWeaver's typed attach/remove commands. The
-Personal Mix device hotkey cycles the default-playback candidate list; it does
-not touch BEACN USB controls.
+typed `SetDefaultInput` or `SetDefaultOutput` command. PipeWeaver has one Linux
+default per direction, so BEACN's Default and Default Communication selectors
+mirror that same real default. Target-strip device selectors list usable
+physical PipeWire target nodes and attach one to an individual mixer target.
+The four fixed outgoing Studio Link selectors instead choose which mixer target
+feeds each discovered BEACN `Line4` through `Line1` playback endpoint. The
+Personal Mix device hotkey cycles the default-playback candidate list; none of
+these paths touch BEACN USB controls.
 
 Selecting a replacement output validates the node first, attaches it before
 removing stale attachments, and therefore leaves the existing path intact if
@@ -22,6 +25,12 @@ the new attach fails. `Unassigned` deliberately removes the target's current
 physical attachments. Mixer profiles persist and restore these per-target
 assignments when the saved physical descriptor is available; a missing device
 is never guessed.
+
+Outgoing Link replacement also validates a usable BEACN-labelled endpoint,
+attaches it to the new target before detaching it from the previous target, and
+preserves unrelated outputs already attached to either target. Mixer profiles
+restore Link assignments by stable Link slot and descriptor rather than stale
+PipeWire node IDs.
 
 ## VOD Track
 

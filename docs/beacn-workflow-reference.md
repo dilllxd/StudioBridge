@@ -92,6 +92,10 @@ profile icon likewise toggles and persists the complete 285-pixel rail.
 
 - Device defaults, outgoing Link assignments, and running applications appear
   in compact adjacent groups.
+- The device-default area is split into Recording Devices and Playback Devices;
+  each has Default and Default Communication selectors. Outgoing Studio Link
+  Assignments has the fixed rows Link Out, Link 2 Out, Link 3 Out, and Link 4
+  Out before the Applications group.
 - Applications are shown as recognizable chips near their current destination.
 - A destination can contain multiple applications. Reassignment is direct and
   does not imply a one-app-per-channel limit.
@@ -103,7 +107,16 @@ onto a source or the unassign target, while keyboard/touch selectors remain
 available and unassigned applications stay visible. The Personal device,
 recording/playback defaults, outgoing Link assignments, and application
 destinations share the measured BEACN selector treatment rather than native
-toolkit combo-box styling.
+toolkit combo-box styling. PipeWire exposes one default per direction, so the
+two BEACN-labelled default rows in each Linux group intentionally control and
+display that same real default instead of fabricating a communications role.
+
+The four outgoing rows use the upstream ALSA UCM channel map: BEACN Studio
+playback endpoints `Line4`, `Line3`, `Line2`, and `Line1` are Link 1, Link 2,
+Link 3, and Link 4 Out. StudioBridge recognizes only BEACN-labelled endpoints,
+selects an existing mixer target for each fixed slot, attaches the replacement
+before removing the former target, and keeps unrelated target attachments.
+This is typed PipeWire routing and never a BEACN USB hardware write.
 
 Physical PipeWire source nodes expose the same compact capture-device rows
 observed in BEACN. StudioBridge validates usable input nodes before a change,

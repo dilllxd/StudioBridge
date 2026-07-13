@@ -81,10 +81,16 @@ than copying its source or visual assets:
   170-by-27 master field, 24-pixel alternative rows, content-width popup,
   native outside/Escape dismissal, and mouse plus arrow-key activation;
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
-- an Output Bus Device Assignments workspace that attaches Personal, Audience,
-  Voice Chat Mic, VOD Track, and future mix buses to explicit usable PipeWire
-  outputs, including BEACN Studio Link playback endpoints, with Unassigned as a
-  deliberate detach state;
+- the measured adjacent Recording Devices, Playback Devices, Outgoing Studio
+  Link Assignments, and Applications groups from BEACN's Assignments workspace;
+- four fixed Link Out selectors discovered from the upstream BEACN ALSA UCM
+  mapping (`Line4` through `Line1` are Link 1 through Link 4 Out). Each selector
+  attaches a StudioBridge target to that usable PipeWire endpoint, preserves the
+  target's other outputs, attaches before detaching the previous target, and
+  exposes Unassigned as a deliberate detach state;
+- target-strip output selectors that continue to attach Personal, Audience,
+  Voice Chat Mic, VOD Track, and future mix buses to arbitrary usable PipeWire
+  outputs;
 - functional keyboard-accessible target-master volume sliders and mute controls
   for Personal, Audience, Voice Chat Mic, VOD Track, and future PipeWeaver
   outputs, backed by PipeWeaver's exact target commands and restored by mixer
@@ -95,6 +101,9 @@ than copying its source or visual assets:
   columns, 34-pixel row cadence, drawn teal/red state indicators, and accessible
   keyboard toggles backed by exact PipeWeaver route commands;
 - PipeWeaver-backed Linux default recording and playback device selectors;
+- BEACN's separate Default and Default Communication rows, both backed by the
+  single corresponding PipeWire default because PipeWeaver exposes no distinct
+  Linux communications-default command;
 - a device-information card with the measured Legal and Regulatory modal,
   keyboard dismissal, and permanently read-only USB2 driverless-mode state;
 - a BEACN-style profile rail with instant numbered creation plus hover Save,

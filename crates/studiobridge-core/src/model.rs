@@ -152,6 +152,45 @@ pub struct MixerPhysicalDeviceChoice {
     pub descriptor: MixerPhysicalDeviceDescriptor,
 }
 
+pub fn beacn_link_output_slot(
+    name: &str,
+    descriptor: &MixerPhysicalDeviceDescriptor,
+) -> Option<u8> {
+    let text = format!(
+        "{} {} {}",
+        name,
+        descriptor.name.as_deref().unwrap_or_default(),
+        descriptor.description.as_deref().unwrap_or_default()
+    );
+    let compact = text
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    if !compact.contains("beacn") {
+        return None;
+    }
+    if compact.contains("line4") || compact.contains("link1") {
+        Some(1)
+    } else if compact.contains("line3") || compact.contains("link2") {
+        Some(2)
+    } else if compact.contains("line2") || compact.contains("link3") {
+        Some(3)
+    } else if compact.contains("line1") || compact.contains("link4") {
+        Some(4)
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MixerLinkOutputAssignment {
+    pub slot: u8,
+    pub node_id: u32,
+    pub name: String,
+    pub target_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MixerSnapshot {
     pub status: BackendStatus,
@@ -173,6 +212,8 @@ pub struct MixerSnapshot {
     pub physical_outputs: Vec<MixerPhysicalDeviceChoice>,
     #[serde(default)]
     pub physical_inputs: Vec<MixerPhysicalDeviceChoice>,
+    #[serde(default)]
+    pub link_outputs: Vec<MixerLinkOutputAssignment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -230,6 +271,42 @@ pub struct SetTargetDeviceRequest {
 pub struct SetSourceDeviceRequest {
     pub channel_id: String,
     pub device_node_id: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetLinkOutputAssignmentRequest {
+    pub output_node_id: u32,
+    pub target_id: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_alsa_ucm_line_order_to_beacn_link_slots() {
+        for (line, slot) in [(4, 1), (3, 2), (2, 3), (1, 4)] {
+            let descriptor = MixerPhysicalDeviceDescriptor {
+                name: Some(format!("alsa_output.usb-BEACN_Studio__Line{line}__sink")),
+                description: Some(format!("BEACN Studio Line{line}")),
+            };
+            assert_eq!(beacn_link_output_slot("", &descriptor), Some(slot));
+        }
+    }
+
+    #[test]
+    fn rejects_non_beacn_and_non_link_outputs() {
+        let unrelated = MixerPhysicalDeviceDescriptor {
+            name: Some("alsa_output.interface_line4".into()),
+            description: Some("Interface Line 4".into()),
+        };
+        let headphones = MixerPhysicalDeviceDescriptor {
+            name: Some("alsa_output.beacn_studio_headphones".into()),
+            description: Some("BEACN Studio Headphones".into()),
+        };
+        assert_eq!(beacn_link_output_slot("", &unrelated), None);
+        assert_eq!(beacn_link_output_slot("", &headphones), None);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
