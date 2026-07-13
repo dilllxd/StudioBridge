@@ -34,8 +34,8 @@ use std::{
 };
 use studiobridge_core::{
     AppSnapshot, DspMode, DspWriteModule, EqualizerBandType, EqualizerProfile, HeadphoneOutputMode,
-    LinkChannel, MicrophoneDspSnapshot, MicrophoneDspUpdate, MixBus, MixerChannel, MuteState,
-    NoiseSuppressionStyle,
+    LinkChannel, MicrophoneDspSnapshot, MicrophoneDspUpdate, MixBus, MixerChannel,
+    MixerDeviceChoice, MuteState, NoiseSuppressionStyle,
 };
 
 mod client;
@@ -57,6 +57,8 @@ struct AppPreferences {
     beta_opt_in: bool,
     mixing_suite_enabled: bool,
     automatic_default_reset: bool,
+    preferred_default_input: Option<String>,
+    preferred_default_output: Option<String>,
     meter_crossfade: bool,
     studio_profiles_expanded: bool,
     mixer_profiles_expanded: bool,
@@ -74,6 +76,8 @@ impl Default for AppPreferences {
             beta_opt_in: false,
             mixing_suite_enabled: true,
             automatic_default_reset: true,
+            preferred_default_input: None,
+            preferred_default_output: None,
             meter_crossfade: true,
             studio_profiles_expanded: true,
             mixer_profiles_expanded: true,
@@ -127,6 +131,55 @@ fn external_link_url(destination: &str) -> Option<&'static str> {
         "support" => Some(SUPPORT_URL),
         _ => None,
     }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct DefaultDeviceRepair {
+    input: Option<String>,
+    output: Option<String>,
+}
+
+fn preferred_default_repair(
+    enabled: bool,
+    preferred: Option<&str>,
+    current: Option<&str>,
+    choices: &[MixerDeviceChoice],
+) -> Option<String> {
+    let preferred = enabled.then_some(preferred).flatten()?;
+    if current == Some(preferred) || !choices.iter().any(|choice| choice.id == preferred) {
+        return None;
+    }
+    Some(preferred.into())
+}
+
+fn default_device_repair(
+    preferences: &AppPreferences,
+    snapshot: &AppSnapshot,
+) -> DefaultDeviceRepair {
+    DefaultDeviceRepair {
+        input: preferred_default_repair(
+            preferences.automatic_default_reset,
+            preferences.preferred_default_input.as_deref(),
+            snapshot.mixer.default_input.as_deref(),
+            &snapshot.mixer.default_inputs,
+        ),
+        output: preferred_default_repair(
+            preferences.automatic_default_reset,
+            preferences.preferred_default_output.as_deref(),
+            snapshot.mixer.default_output.as_deref(),
+            &snapshot.mixer.default_outputs,
+        ),
+    }
+}
+
+fn remember_preferred_default(input: bool, device_id: &str) -> Result<(), String> {
+    let mut preferences = load_preferences();
+    if input {
+        preferences.preferred_default_input = Some(device_id.into());
+    } else {
+        preferences.preferred_default_output = Some(device_id.into());
+    }
+    save_preferences(&preferences)
 }
 
 fn save_preferences(preferences: &AppPreferences) -> Result<(), String> {
@@ -572,10 +625,18 @@ fn execute_hotkey_action(action: String, client: DaemonClient, window: Weak<Main
                     let next = &snapshot.mixer.default_outputs
                         [(current + 1) % snapshot.mixer.default_outputs.len()];
                     match client.set_default_output(&next.id) {
-                        Ok(()) => set_status(
-                            window.clone(),
-                            format!("Personal Mix device: {}", next.name),
-                        ),
+                        Ok(()) => match remember_preferred_default(false, &next.id) {
+                            Ok(()) => set_status(
+                                window.clone(),
+                                format!("Personal Mix device: {}", next.name),
+                            ),
+                            Err(error) => set_status(
+                                window.clone(),
+                                format!(
+                                    "Personal Mix device updated; automatic reset save failed: {error}"
+                                ),
+                            ),
+                        },
                         Err(error) => set_status(window.clone(), format!("Hotkey failed: {error}")),
                     }
                 }
@@ -732,6 +793,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 beta_opt_in,
                 mixing_suite_enabled,
                 automatic_default_reset,
+                preferred_default_input: existing.preferred_default_input,
+                preferred_default_output: existing.preferred_default_output,
                 meter_crossfade,
                 studio_profiles_expanded: existing.studio_profiles_expanded,
                 mixer_profiles_expanded: existing.mixer_profiles_expanded,
@@ -890,7 +953,15 @@ fn main() -> Result<(), slint::PlatformError> {
         let device_id = device_id.to_string();
         thread::spawn(move || {
             match client.set_default_input(&device_id) {
-                Ok(()) => set_status(window.clone(), "Default recording device updated".into()),
+                Ok(()) => match remember_preferred_default(true, &device_id) {
+                    Ok(()) => set_status(window.clone(), "Default recording device updated".into()),
+                    Err(error) => set_status(
+                        window.clone(),
+                        format!(
+                            "Default recording device updated; automatic reset save failed: {error}"
+                        ),
+                    ),
+                },
                 Err(error) => set_status(
                     window.clone(),
                     format!("Default recording device failed: {error}"),
@@ -908,7 +979,15 @@ fn main() -> Result<(), slint::PlatformError> {
         let device_id = device_id.to_string();
         thread::spawn(move || {
             match client.set_default_output(&device_id) {
-                Ok(()) => set_status(window.clone(), "Default playback device updated".into()),
+                Ok(()) => match remember_preferred_default(false, &device_id) {
+                    Ok(()) => set_status(window.clone(), "Default playback device updated".into()),
+                    Err(error) => set_status(
+                        window.clone(),
+                        format!(
+                            "Default playback device updated; automatic reset save failed: {error}"
+                        ),
+                    ),
+                },
                 Err(error) => set_status(
                     window.clone(),
                     format!("Default playback device failed: {error}"),
@@ -1557,6 +1636,7 @@ fn main() -> Result<(), slint::PlatformError> {
         false,
     );
     start_health_monitor(window.as_weak(), client.clone(), dsp_session);
+    start_default_device_monitor(window.as_weak(), client.clone());
     start_meter_stream(window.as_weak(), client);
     if !start_in_background {
         window.show()?;
@@ -2657,6 +2737,62 @@ fn set_dsp_lease(window: Weak<MainWindow>, module: Option<String>, seconds: Opti
     });
 }
 
+fn apply_default_device_repair(
+    client: &DaemonClient,
+    repair: &DefaultDeviceRepair,
+) -> Result<Option<String>, String> {
+    if let Some(device_id) = repair.input.as_deref() {
+        client
+            .set_default_input(device_id)
+            .map_err(|error| format!("recording device restore failed: {error}"))?;
+    }
+    if let Some(device_id) = repair.output.as_deref() {
+        client
+            .set_default_output(device_id)
+            .map_err(|error| format!("playback device restore failed: {error}"))?;
+    }
+    let status = match (repair.input.is_some(), repair.output.is_some()) {
+        (true, true) => Some("Preferred recording and playback devices restored".into()),
+        (true, false) => Some("Preferred recording device restored".into()),
+        (false, true) => Some("Preferred playback device restored".into()),
+        (false, false) => None,
+    };
+    Ok(status)
+}
+
+fn start_default_device_monitor(window: Weak<MainWindow>, client: DaemonClient) {
+    thread::spawn(move || {
+        let mut last_error = None;
+        loop {
+            let preferences = load_preferences();
+            if preferences.automatic_default_reset
+                && let Ok(snapshot) = client.snapshot()
+            {
+                let repair = default_device_repair(&preferences, &snapshot);
+                match apply_default_device_repair(&client, &repair) {
+                    Ok(Some(status)) => {
+                        last_error = None;
+                        set_status(window.clone(), status);
+                        refresh_all(window.clone(), client.clone());
+                    }
+                    Ok(None) => last_error = None,
+                    Err(error) if last_error.as_ref() != Some(&error) => {
+                        set_status(
+                            window.clone(),
+                            format!("Automatic default device reset failed: {error}"),
+                        );
+                        last_error = Some(error);
+                    }
+                    Err(_) => {}
+                }
+            } else {
+                last_error = None;
+            }
+            thread::sleep(Duration::from_secs(2));
+        }
+    });
+}
+
 fn start_health_monitor(
     window: Weak<MainWindow>,
     client: DaemonClient,
@@ -2829,17 +2965,18 @@ mod desktop_tests {
     use super::{
         AppPreferences, DspSelection, active_eq_profile, add_eq_band, adjust_eq_band_value,
         external_link_url, hotkey_key_name, mock_meter_level, mute_state_with_target,
-        normalize_captured_hotkey, normalize_mute_action, remove_eq_band, selected_dsp_enabled,
-        set_enhancement_preset, set_enhancement_value, set_eq_band_type_value, set_eq_band_value,
-        set_headphone_eq_band_value, set_headphone_subwoofer_value, set_selected_dsp_enabled,
-        should_start_in_background, source_name_available, update_from_values,
+        normalize_captured_hotkey, normalize_mute_action, preferred_default_repair, remove_eq_band,
+        selected_dsp_enabled, set_enhancement_preset, set_enhancement_value,
+        set_eq_band_type_value, set_eq_band_value, set_headphone_eq_band_value,
+        set_headphone_subwoofer_value, set_selected_dsp_enabled, should_start_in_background,
+        source_name_available, update_from_values,
     };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
     use studiobridge_core::{
         DspMode, EqualizerBandState, EqualizerBandType, HeadphoneEqualizerState,
-        HeadphoneOutputMode, HeadphoneState, MicrophoneDspSnapshot, MicrophoneDspUpdate, MuteState,
-        StudioIdentity,
+        HeadphoneOutputMode, HeadphoneState, MicrophoneDspSnapshot, MicrophoneDspUpdate,
+        MixerDeviceChoice, MuteState, StudioIdentity,
     };
 
     fn dsp_snapshot() -> MicrophoneDspSnapshot {
@@ -2912,23 +3049,72 @@ mod desktop_tests {
         assert!(disabled.studio_profiles_expanded);
         assert!(disabled.mixer_profiles_expanded);
         assert!(disabled.profiles_drawer_open);
+        assert!(disabled.preferred_default_input.is_none());
+        assert!(disabled.preferred_default_output.is_none());
         assert!(!should_start_in_background(true, &disabled));
 
         let mut collapsed = disabled;
         collapsed.studio_profiles_expanded = false;
         collapsed.mixer_profiles_expanded = false;
         collapsed.profiles_drawer_open = false;
+        collapsed.preferred_default_input = Some("voice-chat-mic".into());
+        collapsed.preferred_default_output = Some("headphones".into());
         let serialized = serde_json::to_value(collapsed).unwrap();
         assert_eq!(serialized["open_to_system_tray"], false);
         assert_eq!(serialized["studio_profiles_expanded"], false);
         assert_eq!(serialized["mixer_profiles_expanded"], false);
         assert_eq!(serialized["profiles_drawer_open"], false);
+        assert_eq!(serialized["preferred_default_input"], "voice-chat-mic");
+        assert_eq!(serialized["preferred_default_output"], "headphones");
         assert!(serialized.get("close_to_tray").is_none());
 
         let restored: AppPreferences = serde_json::from_value(serialized).unwrap();
         assert!(!restored.studio_profiles_expanded);
         assert!(!restored.mixer_profiles_expanded);
         assert!(!restored.profiles_drawer_open);
+        assert_eq!(
+            restored.preferred_default_input.as_deref(),
+            Some("voice-chat-mic")
+        );
+        assert_eq!(
+            restored.preferred_default_output.as_deref(),
+            Some("headphones")
+        );
+    }
+
+    #[test]
+    fn automatic_default_reset_only_restores_an_available_explicit_preference() {
+        let choices = vec![
+            MixerDeviceChoice {
+                id: "headphones".into(),
+                name: "Headphones".into(),
+            },
+            MixerDeviceChoice {
+                id: "system".into(),
+                name: "System".into(),
+            },
+        ];
+
+        assert_eq!(
+            preferred_default_repair(true, Some("headphones"), Some("system"), &choices),
+            Some("headphones".into())
+        );
+        assert_eq!(
+            preferred_default_repair(false, Some("headphones"), Some("system"), &choices),
+            None
+        );
+        assert_eq!(
+            preferred_default_repair(true, None, Some("system"), &choices),
+            None
+        );
+        assert_eq!(
+            preferred_default_repair(true, Some("headphones"), Some("headphones"), &choices),
+            None
+        );
+        assert_eq!(
+            preferred_default_repair(true, Some("disconnected"), Some("system"), &choices),
+            None
+        );
     }
 
     #[test]
