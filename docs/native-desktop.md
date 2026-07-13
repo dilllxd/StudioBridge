@@ -104,7 +104,8 @@ than copying its source or visual assets:
 - BEACN-style key-mapping capture that listens for the next native key chord,
   previews its primary key, validates it, and persists the complete binding in
   a measured 350-by-175 blocking dialog with disabled-until-valid confirmation
-  and BEACN-matched Escape-key capture;
+  and BEACN-matched Escape-key capture; every assignment row has visible focus,
+  keyboard activation, and a binding-aware accessible label;
 - BEACN-measured application settings rows with 18-by-18 square checkboxes,
   keyboard toggling, checkbox accessibility state, Linux-specific labels, and
   an Open to System Tray preference that controls whether an autostart launch
@@ -119,6 +120,8 @@ than copying its source or visual assets:
 - functional read-back Enhancement Suite cards with all four Bass Enhance
   styles, guarded De-Esser/Bass/Exciter dials, Exciter frequency, continuous
   editor sliders, keyboard stepping, and protocol-valid staged enabled states;
+  processor selectors, modes, dials, sliders, and threshold steppers expose
+  descriptive names plus native range/value/action semantics;
 - secondary microphone processors grouped by module;
 - a measured 897/150 microphone editor/output-column split, 864-by-256 graph,
   exact 30-pixel processor tab strip, live Mic source meter, read-back gain and

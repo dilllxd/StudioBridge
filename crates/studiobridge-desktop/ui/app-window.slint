@@ -680,7 +680,19 @@ component SourceStrip inherits Rectangle {
                     TouchArea { clicked => { mute-menu-focus.focus(); if mute-menu.is-open { mute-menu.close(); } else { mute-menu.show(); } } }
                 }
             }
-            TouchArea { width: parent.width - 20px; clicked => { root.mute-action(root.source.mute-action); } }
+            mute-action-focus := FocusScope {
+                width: parent.width - 20px; height: parent.height;
+                accessible-role: button;
+                accessible-label: "Apply " + (root.source.mute-action == "all" ? "Mute to All" : root.source.mute-action == "personal" ? "Mute to Self" : "Mute to Audience") + " to " + root.source.name;
+                key-pressed(event) => {
+                    if event.text == Key.Return || event.text == Key.Space {
+                        root.mute-action(root.source.mute-action);
+                        return accept;
+                    }
+                    return reject;
+                }
+                TouchArea { clicked => { mute-action-focus.focus(); root.mute-action(root.source.mute-action); } }
+            }
         }
     }
     channel-menu := PopupWindow {
@@ -702,7 +714,7 @@ component SourceStrip inherits Rectangle {
                     return reject;
                 }
                 Text { text: "Delete Knob"; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                TouchArea { clicked => { channel-menu.close(); root.delete-source(); } }
+                TouchArea { clicked => { delete-focus.focus(); channel-menu.close(); root.delete-source(); } }
             }
         }
     }
@@ -998,9 +1010,24 @@ component EnhancementDial inherits Rectangle {
     dial-focus := FocusScope {
         width: parent.width;
         height: parent.height;
-        accessible-role: button;
-        accessible-label: root.control-label + " " + root.dial-accessible-value;
+        accessible-role: slider;
+        accessible-label: root.control-label;
         accessible-enabled: root.interactive;
+        accessible-value: root.dial-accessible-value;
+        accessible-value-minimum: root.minimum;
+        accessible-value-maximum: root.maximum;
+        accessible-value-step: root.step;
+        accessible-action-set-value(value) => {
+            if root.interactive && value.is-float() {
+                root.changed(clamp(value.to-float(), root.minimum, root.maximum));
+            }
+        }
+        accessible-action-increment => {
+            if root.interactive { root.changed(clamp(root.value + root.step, root.minimum, root.maximum)); }
+        }
+        accessible-action-decrement => {
+            if root.interactive { root.changed(clamp(root.value - root.step, root.minimum, root.maximum)); }
+        }
         key-pressed(event) => {
             if root.interactive && (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                 root.changed(root.value + root.step > root.maximum ? root.maximum : root.value + root.step);
@@ -1035,9 +1062,9 @@ component ProcessorModeButton inherits Rectangle {
     in property <bool> interactive: true;
     callback clicked;
     height: 32px;
-    background: root.selected ? #4a494f : #29292d;
+    background: root.selected ? #4a494f : mode-focus.has-focus ? #38383d : #29292d;
     border-width: 1px;
-    border-color: root.selected ? #626168 : #34343a;
+    border-color: root.selected ? #626168 : mode-focus.has-focus ? Theme.teal : #34343a;
     Text {
         text: root.label;
         color: root.selected ? Theme.text : Theme.quiet;
@@ -1046,7 +1073,52 @@ component ProcessorModeButton inherits Rectangle {
         horizontal-alignment: center;
         vertical-alignment: center;
     }
-    TouchArea { enabled: root.interactive; clicked => { root.clicked(); } }
+    mode-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: button;
+        accessible-label: root.label + (root.selected ? ", selected" : "");
+        accessible-enabled: root.interactive;
+        key-pressed(event) => {
+            if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+        TouchArea { enabled: root.interactive; clicked => { mode-focus.focus(); root.clicked(); } }
+    }
+}
+
+component ProcessorStepButton inherits Rectangle {
+    in property <string> glyph;
+    in property <string> control-label;
+    in property <bool> interactive;
+    callback clicked;
+    width: 18px;
+    background: step-focus.has-focus ? #34343a : transparent;
+    border-width: step-focus.has-focus ? 1px : 0px;
+    border-color: Theme.teal;
+    Text {
+        text: root.glyph;
+        color: root.interactive ? Theme.text : #55555a;
+        font-size: 21px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    step-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: button;
+        accessible-label: root.control-label;
+        accessible-enabled: root.interactive;
+        key-pressed(event) => {
+            if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+        TouchArea { enabled: root.interactive; clicked => { step-focus.focus(); root.clicked(); } }
+    }
 }
 
 component EqTypeButton inherits Rectangle {
@@ -1085,6 +1157,7 @@ component LightingStyleRow inherits Rectangle {
     background: root.selected ? #3a393e : transparent;
     Text { x: 10px; text: root.label; color: root.selected ? Theme.text : Theme.quiet; font-size: 11px; font-weight: root.selected ? 700 : 400; vertical-alignment: center; }
     style-focus := FocusScope {
+        width: parent.width; height: parent.height;
         accessible-role: button;
         accessible-label: root.label;
         key-pressed(event) => {
@@ -1110,6 +1183,7 @@ component LightingRadioRow inherits Rectangle {
     }
     Text { x: 30px; width: parent.width - 30px; text: root.label; color: root.selected ? Theme.text : Theme.quiet; font-size: 10px; font-weight: root.selected ? 700 : 400; vertical-alignment: center; }
     radio-focus := FocusScope {
+        width: parent.width; height: parent.height;
         accessible-role: button;
         accessible-label: root.label;
         key-pressed(event) => {
@@ -1132,6 +1206,7 @@ component LightingColourSwatch inherits Rectangle {
     border-width: root.selected ? 2px : 1px;
     border-color: root.selected ? Theme.text : #242428;
     colour-focus := FocusScope {
+        width: parent.width; height: parent.height;
         accessible-role: button;
         accessible-label: "Choose preview colour";
         key-pressed(event) => {
@@ -1209,9 +1284,24 @@ component ProcessorDial inherits Rectangle {
     dial-focus := FocusScope {
         width: parent.width;
         height: parent.height;
-        accessible-role: button;
-        accessible-label: root.label + " " + round(root.value * 10) / 10 + " decibels";
+        accessible-role: slider;
+        accessible-label: root.label;
         accessible-enabled: root.interactive;
+        accessible-value: round(root.value * 10) / 10 + " decibels";
+        accessible-value-minimum: root.minimum;
+        accessible-value-maximum: root.maximum;
+        accessible-value-step: root.step;
+        accessible-action-set-value(value) => {
+            if root.interactive && value.is-float() {
+                root.changed(clamp(value.to-float(), root.minimum, root.maximum));
+            }
+        }
+        accessible-action-increment => {
+            if root.interactive { root.changed(clamp(root.value + root.step, root.minimum, root.maximum)); }
+        }
+        accessible-action-decrement => {
+            if root.interactive { root.changed(clamp(root.value - root.step, root.minimum, root.maximum)); }
+        }
         key-pressed(event) => {
             if root.interactive && (event.text == Key.UpArrow || event.text == Key.RightArrow) {
                 root.changed(root.value + root.step > root.maximum ? root.maximum : root.value + root.step);
@@ -1307,6 +1397,7 @@ component ToggleSwitch inherits Rectangle {
 
 component SettingCheckbox inherits Rectangle {
     in-out property <bool> checked;
+    in property <string> control-label: "Toggle setting";
     callback toggled(bool);
     width: 18px;
     height: 18px;
@@ -1318,7 +1409,7 @@ component SettingCheckbox inherits Rectangle {
         width: parent.width; height: parent.height;
         accessible-role: checkbox;
         accessible-checked: root.checked;
-        accessible-label: "Toggle setting";
+        accessible-label: root.control-label;
         key-pressed(event) => {
             if event.text == Key.Return || event.text == Key.Space {
                 root.checked = !root.checked;
@@ -1345,7 +1436,7 @@ component SettingRow inherits Rectangle {
     background: transparent;
     Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: #2f2f33; }
     Text { x: 4px; width: parent.width - 58px; text: root.label; color: Theme.quiet; font-size: 11px; font-weight: 700; vertical-alignment: center; }
-    SettingCheckbox { x: parent.width - 26px; y: 11px; checked: root.checked; toggled(value) => { root.checked = value; root.toggled(value); } }
+    SettingCheckbox { x: parent.width - 26px; y: 11px; checked: root.checked; control-label: root.label; toggled(value) => { root.checked = value; root.toggled(value); } }
 }
 
 component ModuleTab inherits Rectangle {
@@ -2254,7 +2345,13 @@ export component MainWindow inherits Window {
                                 }
                             }
                         }
-                        TouchArea { x: 0px; y: 0px; width: parent.width; height: 8px; clicked => { root.select-dsp-module("equalizer"); } }
+                        equalizer-card-focus := FocusScope {
+                            x: 0px; y: 0px; width: parent.width; height: 8px;
+                            accessible-role: button;
+                            accessible-label: "Select Equalizer processor";
+                            key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.select-dsp-module("equalizer"); return accept; } return reject; }
+                            TouchArea { clicked => { equalizer-card-focus.focus(); root.select-dsp-module("equalizer"); } }
+                        }
                     }
                     Rectangle {
                         width: 203px;
@@ -2276,7 +2373,13 @@ export component MainWindow inherits Window {
                                 EnhancementDial { label: "AMOUNT"; control-label: "Bass Enhance amount"; value: root.enhancement-bass-amount; value-label: ""; dial-accessible-value: round(root.enhancement-bass-amount * 10) / 10 + ""; minimum: 0; maximum: 10; step: 0.5; enabled-state: root.enhancement-bass-enabled; interactive: root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("bass_amount", value); } }
                             }
                         }
-                        TouchArea { x: 0px; y: 0px; width: parent.width; height: 20px; clicked => { root.select-dsp-module("enhancement_suite"); } }
+                        bass-card-focus := FocusScope {
+                            x: 0px; y: 0px; width: parent.width; height: 20px;
+                            accessible-role: button;
+                            accessible-label: "Select Enhancement Suite Bass Enhance";
+                            key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.select-dsp-module("enhancement_suite"); return accept; } return reject; }
+                            TouchArea { clicked => { bass-card-focus.focus(); root.select-dsp-module("enhancement_suite"); } }
+                        }
                     }
                     Rectangle {
                         width: 201px;
@@ -2291,7 +2394,13 @@ export component MainWindow inherits Window {
                                 EnhancementDial { label: "FREQUENCY"; control-label: "Exciter frequency"; value: root.enhancement-exciter-frequency; value-label: round(root.enhancement-exciter-frequency) + "Hz"; minimum: 0; maximum: 5000; step: 100; enabled-state: root.enhancement-exciter-enabled; interactive: root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("exciter_frequency", value); } }
                             }
                         }
-                        TouchArea { x: 0px; y: 0px; width: parent.width; height: 20px; clicked => { root.select-dsp-module("enhancement_suite"); } }
+                        exciter-card-focus := FocusScope {
+                            x: 0px; y: 0px; width: parent.width; height: 20px;
+                            accessible-role: button;
+                            accessible-label: "Select Enhancement Suite Exciter";
+                            key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.select-dsp-module("enhancement_suite"); return accept; } return reject; }
+                            TouchArea { clicked => { exciter-card-focus.focus(); root.select-dsp-module("enhancement_suite"); } }
+                        }
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
                 }
@@ -2318,7 +2427,7 @@ export component MainWindow inherits Window {
                         VerticalLayout {
                             width: 96px;
                             Text { text: "Mic Gain"; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
-                            HorizontalLayout { vertical-stretch: 1; Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: root.microphone-gain-db / 70 * 100; accent: Theme.teal; muted: false; personal: true; show-mute: false; } Rectangle { horizontal-stretch: 1; } }
+                            HorizontalLayout { vertical-stretch: 1; Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: root.microphone-gain-db / 70 * 100; control-label: "Microphone gain readback"; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; } Rectangle { horizontal-stretch: 1; } }
                             Text { text: round(root.microphone-gain-db) + "dB"; color: Theme.teal; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
                         }
                         Rectangle {
@@ -2366,11 +2475,11 @@ export component MainWindow inherits Window {
                             VerticalLayout {
                                 width: 330px; spacing: 7px;
                                 Text { text: "BAND " + (root.eq-selected-band + 1) + " FREQUENCY   " + round(root.eq-frequency-hz) + " Hz"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.eq-frequency-hz; minimum: 20; maximum: 20000; changed(value) => { root.set-eq-band-value("frequency", value); } }
+                                Slider { accessible-label: "Equalizer band frequency"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.eq-frequency-hz; minimum: 20; maximum: 20000; changed(value) => { root.set-eq-band-value("frequency", value); } }
                                 Text { text: "GAIN   " + round(root.eq-gain-db * 10) / 10 + " dB"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.eq-gain-db; minimum: -12; maximum: 12; changed(value) => { root.set-eq-band-value("gain", value); } }
+                                Slider { accessible-label: "Equalizer band gain"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.eq-gain-db; minimum: -12; maximum: 12; changed(value) => { root.set-eq-band-value("gain", value); } }
                                 Text { text: "Q   " + round(root.eq-q * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.eq-q; minimum: 0.1; maximum: 10; changed(value) => { root.set-eq-band-value("q", value); } }
+                                Slider { accessible-label: "Equalizer band Q"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.eq-q; minimum: 0.1; maximum: 10; changed(value) => { root.set-eq-band-value("q", value); } }
                             }
                             Rectangle {
                                 horizontal-stretch: 1; background: #111518; border-width: 1px; border-color: Theme.border;
@@ -2388,13 +2497,13 @@ export component MainWindow inherits Window {
                             VerticalLayout {
                                 width: 330px; spacing: 7px;
                                 Text { text: "BASS AMOUNT   " + round(root.enhancement-bass-amount * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-bass-amount; minimum: 0; maximum: 10; changed(value) => { root.set-enhancement-value("bass_amount", value); } }
+                                Slider { accessible-label: "Bass Enhance amount"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-bass-amount; minimum: 0; maximum: 10; changed(value) => { root.set-enhancement-value("bass_amount", value); } }
                                 Text { text: "DE-ESSER   " + round(root.enhancement-de-esser-amount) + "%"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-de-esser-amount; minimum: 0; maximum: 100; changed(value) => { root.set-enhancement-value("de_esser_amount", value); } }
+                                Slider { accessible-label: "De-Esser amount"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-de-esser-amount; minimum: 0; maximum: 100; changed(value) => { root.set-enhancement-value("de_esser_amount", value); } }
                                 Text { text: "EXCITER   " + round(root.enhancement-exciter-amount) + "%"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-exciter-amount; minimum: 0; maximum: 100; changed(value) => { root.set-enhancement-value("exciter_amount", value); } }
+                                Slider { accessible-label: "Exciter amount"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-exciter-amount; minimum: 0; maximum: 100; changed(value) => { root.set-enhancement-value("exciter_amount", value); } }
                                 Text { text: "EXCITER FREQUENCY   " + round(root.enhancement-exciter-frequency) + " Hz"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-exciter-frequency; minimum: 0; maximum: 5000; changed(value) => { root.set-enhancement-value("exciter_frequency", value); } }
+                                Slider { accessible-label: "Exciter frequency"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-exciter-frequency; minimum: 0; maximum: 5000; changed(value) => { root.set-enhancement-value("exciter_frequency", value); } }
                             }
                             HorizontalLayout {
                                 horizontal-stretch: 1; spacing: 12px;
@@ -2421,9 +2530,9 @@ export component MainWindow inherits Window {
                                     }
                                     Rectangle { height: 8px; }
                                     Text { height: 16px; text: "Amount"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
-                                    HorizontalLayout { height: 26px; spacing: 5px; Text { width: 34px; text: round(root.dsp-value-a) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } } }
+                                    HorizontalLayout { height: 26px; spacing: 5px; Text { width: 34px; text: round(root.dsp-value-a) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { accessible-label: "Noise Suppression amount"; horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } } }
                                     Text { height: 16px; text: "Sensitivity"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
-                                    HorizontalLayout { height: 26px; spacing: 5px; Text { width: 34px; text: round(root.dsp-value-b) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } } }
+                                    HorizontalLayout { height: 26px; spacing: 5px; Text { width: 34px; text: round(root.dsp-value-b) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { accessible-label: "Noise Suppression sensitivity"; horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } } }
                                     Rectangle { vertical-stretch: 1; }
                                 }
                             }
@@ -2448,9 +2557,9 @@ export component MainWindow inherits Window {
                                     HorizontalLayout { height: 20px; ToggleSwitch { checked: root.dsp-enabled; interactive: root.dsp-active-module == root.dsp-selected-module; control-label: "Expander enabled"; toggled(value) => { root.set-dsp-enabled(value); } } Text { text: root.dsp-enabled ? "On" : "Off"; color: Theme.text; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
                                     HorizontalLayout {
                                         height: 50px;
-                                        Text { width: 18px; text: "‹"; color: root.dsp-active-module == root.dsp-selected-module ? Theme.text : #55555a; font-size: 21px; horizontal-alignment: center; vertical-alignment: center; TouchArea { enabled: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a - 1 < root.dsp-min-a ? root.dsp-min-a : root.dsp-value-a - 1; } } }
+                                        ProcessorStepButton { glyph: "‹"; control-label: "Decrease Expander threshold"; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a - 1 < root.dsp-min-a ? root.dsp-min-a : root.dsp-value-a - 1; } }
                                         Text { horizontal-stretch: 1; text: round(root.dsp-value-a) + "dB"; color: Theme.text; font-size: 22px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
-                                        Text { width: 18px; text: "›"; color: root.dsp-active-module == root.dsp-selected-module ? Theme.text : #55555a; font-size: 21px; horizontal-alignment: center; vertical-alignment: center; TouchArea { enabled: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a + 1 > root.dsp-max-a ? root.dsp-max-a : root.dsp-value-a + 1; } } }
+                                        ProcessorStepButton { glyph: "›"; control-label: "Increase Expander threshold"; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a + 1 > root.dsp-max-a ? root.dsp-max-a : root.dsp-value-a + 1; } }
                                     }
                                     HorizontalLayout { height: 32px; spacing: 6px;
                                         ProcessorModeButton { horizontal-stretch: 1; label: "Simple"; selected: !root.dsp-advanced; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(false); } }
@@ -2482,9 +2591,9 @@ export component MainWindow inherits Window {
                                     HorizontalLayout { height: 20px; ToggleSwitch { checked: root.dsp-enabled; interactive: root.dsp-active-module == root.dsp-selected-module; control-label: "Compressor enabled"; toggled(value) => { root.set-dsp-enabled(value); } } Text { text: root.dsp-enabled ? "On" : "Off"; color: Theme.text; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
                                     HorizontalLayout {
                                         height: 50px;
-                                        Text { width: 18px; text: "‹"; color: root.dsp-active-module == root.dsp-selected-module ? Theme.text : #55555a; font-size: 21px; horizontal-alignment: center; vertical-alignment: center; TouchArea { enabled: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a - 1 < root.dsp-min-a ? root.dsp-min-a : root.dsp-value-a - 1; } } }
+                                        ProcessorStepButton { glyph: "‹"; control-label: "Decrease Compressor threshold"; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a - 1 < root.dsp-min-a ? root.dsp-min-a : root.dsp-value-a - 1; } }
                                         Text { horizontal-stretch: 1; text: round(root.dsp-value-a) + "dB"; color: Theme.text; font-size: 22px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
-                                        Text { width: 18px; text: "›"; color: root.dsp-active-module == root.dsp-selected-module ? Theme.text : #55555a; font-size: 21px; horizontal-alignment: center; vertical-alignment: center; TouchArea { enabled: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a + 1 > root.dsp-max-a ? root.dsp-max-a : root.dsp-value-a + 1; } } }
+                                        ProcessorStepButton { glyph: "›"; control-label: "Increase Compressor threshold"; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a + 1 > root.dsp-max-a ? root.dsp-max-a : root.dsp-value-a + 1; } }
                                     }
                                     HorizontalLayout { height: 32px; spacing: 6px;
                                         ProcessorModeButton { horizontal-stretch: 1; label: "Simple"; selected: !root.dsp-advanced; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(false); } }
@@ -2492,7 +2601,7 @@ export component MainWindow inherits Window {
                                     }
                                     Rectangle { height: 8px; }
                                     Text { height: 16px; text: root.dsp-advanced ? "Ratio / Attack / Release" : "Compress Amount"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
-                                    HorizontalLayout { height: 28px; spacing: 6px; Text { width: 36px; text: round(root.dsp-value-b) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } } }
+                                    HorizontalLayout { height: 28px; spacing: 6px; Text { width: 36px; text: round(root.dsp-value-b) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { accessible-label: "Compressor amount"; horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } } }
                                     Rectangle { vertical-stretch: 1; }
                                 }
                             }
@@ -2504,7 +2613,7 @@ export component MainWindow inherits Window {
                                 VerticalLayout {
                                     x: 428px; y: 5px; width: 78px; height: parent.height - 9px; spacing: 3px;
                                     Text { height: 18px; text: "MAKE-UP GAIN"; color: Theme.quiet; font-size: 8px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: (root.dsp-value-c - root.dsp-min-c) / (root.dsp-max-c - root.dsp-min-c) * 100; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-c = root.dsp-min-c + value / 100 * (root.dsp-max-c - root.dsp-min-c); } } Rectangle { horizontal-stretch: 1; } }
+                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: (root.dsp-value-c - root.dsp-min-c) / (root.dsp-max-c - root.dsp-min-c) * 100; control-label: "Compressor make-up gain"; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-c = root.dsp-min-c + value / 100 * (root.dsp-max-c - root.dsp-min-c); } } Rectangle { horizontal-stretch: 1; } }
                                     Text { height: 18px; text: round(root.dsp-value-c * 10) / 10 + "dB"; color: Theme.text; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
                             }
@@ -2518,14 +2627,14 @@ export component MainWindow inherits Window {
                                 VerticalLayout {
                                     x: 20px; y: 30px; width: 82px; height: parent.height - 38px; spacing: 3px;
                                     Text { height: 18px; text: "MIC MONITOR"; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: root.headphone-monitor-percent; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; } Rectangle { horizontal-stretch: 1; } }
+                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: root.headphone-monitor-percent; control-label: "Mic monitor level readback"; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; } Rectangle { horizontal-stretch: 1; } }
                                     Text { height: 18px; text: round((-100 + root.headphone-monitor-percent / 100 * 106) * 10) / 10 + "dB"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
                                 Text { x: 121px; y: parent.height / 2 - 12px; width: 26px; height: 24px; text: "∞"; color: root.headphone-channels-linked ? Theme.teal : Theme.quiet; font-size: 19px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                                 VerticalLayout {
                                     x: 164px; y: 30px; width: 82px; height: parent.height - 38px; spacing: 3px;
                                     Text { height: 18px; text: "HEADPHONES"; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: root.headphone-volume-percent; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; } Rectangle { horizontal-stretch: 1; } }
+                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: root.headphone-volume-percent; control-label: "Headphone level readback"; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; } Rectangle { horizontal-stretch: 1; } }
                                     Text { height: 18px; text: round((-70 + root.headphone-volume-percent / 100 * 70) * 10) / 10 + "dB"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
                             }
@@ -2542,7 +2651,7 @@ export component MainWindow inherits Window {
                                 }
                                 Text { x: 14px; y: parent.height - 50px; width: 76px; height: 16px; text: "SUBWOOFER"; color: Theme.quiet; font-size: 8px; font-weight: 700; vertical-alignment: center; }
                                 Text { x: 78px; y: parent.height - 50px; width: 20px; height: 16px; text: round(root.headphone-subwoofer-amount); color: root.headphone-subwoofer-enabled ? Theme.teal : Theme.quiet; font-size: 8px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
-                                Slider { x: 106px; y: parent.height - 49px; width: parent.width - 128px; height: 18px; enabled: root.dsp-active-module == root.dsp-selected-module; value <=> root.headphone-subwoofer-amount; minimum: 0; maximum: 10; changed(value) => { root.set-headphone-subwoofer(value); } }
+                                Slider { x: 106px; y: parent.height - 49px; width: parent.width - 128px; height: 18px; accessible-label: "Headphone subwoofer amount"; enabled: root.dsp-active-module == root.dsp-selected-module; value <=> root.headphone-subwoofer-amount; minimum: 0; maximum: 10; changed(value) => { root.set-headphone-subwoofer(value); } }
                             }
                             Rectangle {
                                 horizontal-stretch: 1; background: #202023;
@@ -2603,7 +2712,7 @@ export component MainWindow inherits Window {
                             height: 130px;
                             HorizontalLayout {
                                 Rectangle { horizontal-stretch: 1; }
-                                VerticalFader { width: 38px; value: root.mic-output-gain-db / 12 * 100; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; }
+                                VerticalFader { width: 38px; value: root.mic-output-gain-db / 12 * 100; control-label: "Microphone output gain readback"; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; }
                                 Rectangle { horizontal-stretch: 1; }
                             }
                         }
@@ -2641,10 +2750,10 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1; background: #252528; border-width: 1px; border-color: Theme.border;
                         Text { x: 16px; y: 10px; height: 18px; text: "Speed and Direction"; color: Theme.text; font-size: 11px; font-weight: 800; vertical-alignment: center; }
                         Text { x: 24px; y: 31px; width: 28px; height: 18px; text: round(root.lighting-speed); color: Theme.teal; font-size: 10px; vertical-alignment: center; }
-                        Slider { x: 55px; y: 27px; width: 243px; height: 22px; value: root.lighting-speed; minimum: -100; maximum: 100; changed(value) => { root.lighting-speed = value; } }
+                        Slider { x: 55px; y: 27px; width: 243px; height: 22px; accessible-label: "Lighting preview speed"; value: root.lighting-speed; minimum: -100; maximum: 100; changed(value) => { root.lighting-speed = value; } }
                         Text { x: 16px; y: 58px; height: 18px; text: "Ring Brightness"; color: Theme.text; font-size: 11px; font-weight: 800; vertical-alignment: center; }
                         Text { x: 24px; y: 80px; width: 28px; height: 18px; text: round(root.lighting-brightness); color: Theme.teal; font-size: 10px; vertical-alignment: center; }
-                        Slider { x: 55px; y: 76px; width: 243px; height: 22px; value: root.lighting-brightness; minimum: 0; maximum: 100; changed(value) => { root.lighting-brightness = value; } }
+                        Slider { x: 55px; y: 76px; width: 243px; height: 22px; accessible-label: "Lighting preview brightness"; value: root.lighting-brightness; minimum: 0; maximum: 100; changed(value) => { root.lighting-brightness = value; } }
                     }
                 }
                 Rectangle { height: 32px; background: #1b1b1e; border-width: 1px; border-color: Theme.border; Text { x: 10px; text: "BEACN STUDIO OTHER LIGHTING OPTIONS"; color: Theme.text; font-size: 12px; font-weight: 800; vertical-alignment: center; } }
@@ -2697,7 +2806,7 @@ export component MainWindow inherits Window {
                             LightingRadioRow { label: "Turn Off LED Ring"; selected: root.lighting-suspended-mode == 1; clicked => { root.lighting-suspended-mode = 1; } }
                             LightingRadioRow { label: "Change the Brightness to:"; selected: root.lighting-suspended-mode == 2; clicked => { root.lighting-suspended-mode = 2; } }
                         }
-                        Slider { x: 44px; y: 114px; width: 277px; height: 22px; enabled: root.lighting-suspended-mode == 2; value: root.lighting-suspended-brightness; minimum: 0; maximum: 100; changed(value) => { root.lighting-suspended-brightness = value; } }
+                        Slider { x: 44px; y: 114px; width: 277px; height: 22px; accessible-label: "Suspended lighting preview brightness"; enabled: root.lighting-suspended-mode == 2; value: root.lighting-suspended-brightness; minimum: 0; maximum: 100; changed(value) => { root.lighting-suspended-brightness = value; } }
                         Text { x: 12px; y: parent.height - 22px; width: parent.width - 24px; height: 16px; text: "Local visual preview only — StudioBridge never sends lighting commands."; color: Theme.amber; font-size: 8px; vertical-alignment: center; }
                     }
                 }
@@ -2760,9 +2869,37 @@ export component MainWindow inherits Window {
                         if hotkey.section != "": Text { height: 18px; text: hotkey.section; color: Theme.text; font-size: 10px; font-weight: 800; }
                         Rectangle {
                             height: 26px;
+                            background: hotkey-row-focus.has-focus ? #2d2d31 : transparent;
+                            border-width: hotkey-row-focus.has-focus ? 1px : 0px;
+                            border-color: Theme.teal;
                             Text { x: 12px; width: 330px; text: hotkey.label; color: Theme.quiet; font-size: 10px; vertical-alignment: center; overflow: elide; }
                             Text { x: 350px; width: 210px; text: hotkey.binding == "" ? "+" : hotkey.binding; color: hotkey.binding == "" ? Theme.quiet : Theme.text; font-size: hotkey.binding == "" ? 18px : 9px; horizontal-alignment: right; vertical-alignment: center; }
-                            TouchArea { clicked => { root.hotkey-editor-action = hotkey.action; root.hotkey-editor-label = hotkey.label; root.hotkey-editor-input = ""; root.hotkey-editor-key-label = ""; root.hotkey-editor-open = true; } }
+                            hotkey-row-focus := FocusScope {
+                                width: parent.width; height: parent.height;
+                                accessible-role: button;
+                                accessible-label: "Edit " + hotkey.label + " hotkey, " + (hotkey.binding == "" ? "not assigned" : hotkey.binding);
+                                key-pressed(event) => {
+                                    if event.text == Key.Return || event.text == Key.Space {
+                                        root.hotkey-editor-action = hotkey.action;
+                                        root.hotkey-editor-label = hotkey.label;
+                                        root.hotkey-editor-input = "";
+                                        root.hotkey-editor-key-label = "";
+                                        root.hotkey-editor-open = true;
+                                        return accept;
+                                    }
+                                    return reject;
+                                }
+                                TouchArea {
+                                    clicked => {
+                                        hotkey-row-focus.focus();
+                                        root.hotkey-editor-action = hotkey.action;
+                                        root.hotkey-editor-label = hotkey.label;
+                                        root.hotkey-editor-input = "";
+                                        root.hotkey-editor-key-label = "";
+                                        root.hotkey-editor-open = true;
+                                    }
+                                }
+                            }
                         }
                     }
                     Rectangle { height: 16px; }
