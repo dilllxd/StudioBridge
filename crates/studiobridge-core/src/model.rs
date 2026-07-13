@@ -194,6 +194,12 @@ pub struct SetTargetVolumeRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetTargetMuteRequest {
+    pub target_id: String,
+    pub muted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetDefaultDeviceRequest {
     pub device_id: String,
 }

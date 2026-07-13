@@ -254,7 +254,7 @@ button { color: inherit; }
 .channel.is-personal-muted .fader-personal, .channel.is-audience-muted .fader-audience { opacity: .45; }
 
 .target-list { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); gap: 7px; min-height: 0; padding: 7px; }
-.target-card { min-width: 0; display: grid; grid-template-rows: 58px minmax(180px, 1fr) 28px 30px; justify-items: center; border: 1px solid #3a4145; background: #151c20; }
+.target-card { min-width: 0; display: grid; grid-template-rows: 58px minmax(180px, 1fr) 28px 30px 34px 30px; justify-items: center; border: 1px solid #3a4145; background: #151c20; }
 .target-card header { width: 100%; padding: 9px 7px; border-top: 3px solid #e6df69; border-bottom: 1px solid var(--line); text-align: center; }
 .target-card header h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 17px "Barlow Condensed", sans-serif; }
 .target-card header span { color: var(--quiet); font-size: 11px; text-transform: capitalize; }
@@ -262,6 +262,8 @@ button { color: inherit; }
 .target-meter b { position: absolute; inset: auto 1px 1px; background: var(--personal); }
 .target-meter.meter-audience b { background: var(--audience); }
 .target-card > strong { font: 600 15px "Barlow Condensed", sans-serif; }
+.target-mute { align-self: center; min-width: 76px; padding: 5px 12px; border: 1px solid #4a5559; border-radius: 3px; background: #1a2226; color: var(--quiet); font: 600 12px "Atkinson Hyperlegible", sans-serif; }
+.target-mute.is-active { border-color: #9b4740; background: #3a211f; color: #ffb2aa; }
 .target-card > small { width: 100%; padding: 7px; border-top: 1px solid var(--line); color: var(--quiet); text-align: center; text-transform: capitalize; }
 
 .routing-deck, .applications-deck, .hardware-deck { grid-column: 1; grid-row: 2; margin: 10px; min-width: 0; min-height: 0; overflow: auto; }

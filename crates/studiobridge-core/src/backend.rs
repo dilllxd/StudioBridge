@@ -30,6 +30,7 @@ pub trait MixerBackend: Send + Sync {
     async fn snapshot(&self) -> BridgeResult<MixerSnapshot>;
     async fn set_volume(&self, channel_id: &str, mix: MixBus, volume: u8) -> BridgeResult<()>;
     async fn set_target_volume(&self, target_id: &str, volume: u8) -> BridgeResult<()>;
+    async fn set_target_mute(&self, target_id: &str, muted: bool) -> BridgeResult<()>;
     async fn set_default_input(&self, device_id: &str) -> BridgeResult<()>;
     async fn set_default_output(&self, device_id: &str) -> BridgeResult<()>;
     async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()>;
@@ -435,6 +436,17 @@ impl MixerBackend for MockMixerBackend {
             .find(|target| target.id == target_id)
             .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
         target.volume = volume;
+        Ok(())
+    }
+
+    async fn set_target_mute(&self, target_id: &str, muted: bool) -> BridgeResult<()> {
+        let mut state = self.state.write().await;
+        let target = state
+            .targets
+            .iter_mut()
+            .find(|target| target.id == target_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
+        target.muted = muted;
         Ok(())
     }
 

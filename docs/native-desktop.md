@@ -77,6 +77,9 @@ than copying its source or visual assets:
   170-by-27 master field, 24-pixel alternative rows, content-width popup,
   native outside/Escape dismissal, and mouse plus arrow-key activation;
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
+- functional keyboard-accessible target-master mute controls for Personal,
+  Audience, Voice Chat Mic, VOD Track, and future PipeWeaver outputs, backed by
+  PipeWeaver's exact target mute-state command and restored by mixer profiles;
 - measured 126/135-pixel Assignments and Routing Table tabs with native tab
   accessibility and keyboard activation;
 - a measured routing matrix with 112-pixel destinations, 90-pixel source

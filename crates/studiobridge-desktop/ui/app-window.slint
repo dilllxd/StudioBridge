@@ -696,6 +696,7 @@ component TargetStrip inherits Rectangle {
     in property <[string]> output-device-names;
     in property <int> output-device-index: -1;
     callback volume-changed(float);
+    callback mute-clicked;
     callback output-device-selected(int);
     // BEACN keeps the default Personal/Audience device cards compact instead
     // of stretching them across the entire mixer canvas.
@@ -734,6 +735,19 @@ component TargetStrip inherits Rectangle {
                 border-width: 1px; border-color: root.target.muted ? #6d3734 : Theme.border;
                 background: root.target.muted ? #351b1a : #1b1b1e;
                 Text { text: root.target.target-id == "headphones" ? "◉" : "((•))"; color: root.target.muted ? Theme.red : Theme.quiet; font-size: root.target.target-id == "headphones" ? 17px : 10px; horizontal-alignment: center; vertical-alignment: center; }
+                target-mute-focus := FocusScope {
+                    width: parent.width; height: parent.height;
+                    accessible-role: button;
+                    accessible-label: (root.target.muted ? "Unmute " : "Mute ") + root.target.name;
+                    key-pressed(event) => {
+                        if event.text == Key.Return || event.text == Key.Space {
+                            root.mute-clicked();
+                            return accept;
+                        }
+                        return reject;
+                    }
+                    TouchArea { clicked => { target-mute-focus.focus(); root.mute-clicked(); } }
+                }
             }
         }
     }
@@ -747,6 +761,25 @@ component TargetStrip inherits Rectangle {
         }
         LevelMeter { width: 12px; value: root.target.muted ? 0 : root.target.meter; colour: root.target.mix == "Personal" ? Theme.teal : Theme.amber; }
         Text { text: round(root.target.volume) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; }
+        Rectangle {
+            width: 28px; height: 28px; border-radius: 3px;
+            border-width: 1px; border-color: root.target.muted ? #6d3734 : Theme.border;
+            background: root.target.muted ? #351b1a : #1b1b1e;
+            Text { text: root.target.muted ? "×" : "◉"; color: root.target.muted ? Theme.red : Theme.quiet; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+            extra-target-mute-focus := FocusScope {
+                width: parent.width; height: parent.height;
+                accessible-role: button;
+                accessible-label: (root.target.muted ? "Unmute " : "Mute ") + root.target.name;
+                key-pressed(event) => {
+                    if event.text == Key.Return || event.text == Key.Space {
+                        root.mute-clicked();
+                        return accept;
+                    }
+                    return reject;
+                }
+                TouchArea { clicked => { extra-target-mute-focus.focus(); root.mute-clicked(); } }
+            }
+        }
     }
 }
 
@@ -1611,6 +1644,7 @@ export component MainWindow inherits Window {
     callback refresh;
     callback set-volume(string, string, float);
     callback set-target-volume(string, float);
+    callback set-target-mute(string, bool);
     callback set-default-input(string);
     callback set-default-output(string);
     callback set-source-mute(string, string, bool);
@@ -1813,6 +1847,7 @@ export component MainWindow inherits Window {
                                     output-device-names: root.default-output-names;
                                     output-device-index: root.default-output-index;
                                     volume-changed(value) => { root.set-target-volume(target.target-id, value); }
+                                    mute-clicked => { root.set-target-mute(target.target-id, !target.muted); }
                                     output-device-selected(index) => {
                                         if index >= 0 && index < root.default-output-ids.length {
                                             root.set-default-output(root.default-output-ids[index]);

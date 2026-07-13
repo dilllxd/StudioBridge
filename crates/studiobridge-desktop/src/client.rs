@@ -6,7 +6,8 @@ use studiobridge_core::{
     MicrophoneDspUpdate, MicrophoneDspWriteResult, MixBus, MixerProfileRequest,
     MixerProfilesResponse, MuteState, RemoveMixerSourceRequest, ReorderMixerSourceRequest,
     SetDefaultDeviceRequest, SetLinkAssignmentRequest, SetMixerApplicationRequest, SetMuteRequest,
-    SetRouteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
+    SetRouteRequest, SetTargetMuteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest,
+    SetVolumeRequest,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -84,6 +85,18 @@ impl DaemonClient {
             .json(&SetTargetVolumeRequest {
                 target_id: target_id.into(),
                 volume,
+            })
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub fn set_target_mute(&self, target_id: &str, muted: bool) -> Result<(), reqwest::Error> {
+        self.client
+            .post(format!("{}/api/mixer/target-mute", self.base_url))
+            .json(&SetTargetMuteRequest {
+                target_id: target_id.into(),
+                muted,
             })
             .send()?
             .error_for_status()?;

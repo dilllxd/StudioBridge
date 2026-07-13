@@ -106,6 +106,10 @@ impl StudioBridgeService {
         .await
     }
 
+    pub async fn set_target_mute(&self, target_id: &str, muted: bool) -> BridgeResult<()> {
+        backend_call("PipeWeaver", self.mixer.set_target_mute(target_id, muted)).await
+    }
+
     pub async fn set_default_input(&self, device_id: &str) -> BridgeResult<()> {
         backend_call("PipeWeaver", self.mixer.set_default_input(device_id)).await
     }
@@ -196,6 +200,7 @@ impl StudioBridgeService {
         for target in &desired.targets {
             if current.targets.iter().any(|item| item.id == target.id) {
                 self.set_target_volume(&target.id, target.volume).await?;
+                self.set_target_mute(&target.id, target.muted).await?;
             }
         }
 
@@ -325,6 +330,7 @@ mod tests {
             .unwrap();
         service.set_volume_linked("game", false).await.unwrap();
         service.set_target_volume("vod-track", 83).await.unwrap();
+        service.set_target_mute("vod-track", true).await.unwrap();
         service.set_default_input("vod-track").await.unwrap();
         service.set_default_output("system").await.unwrap();
 
@@ -366,6 +372,15 @@ mod tests {
                 .unwrap()
                 .volume,
             83
+        );
+        assert!(
+            state
+                .mixer
+                .targets
+                .iter()
+                .find(|target| target.id == "vod-track")
+                .unwrap()
+                .muted
         );
         assert!(
             state
@@ -427,6 +442,7 @@ mod tests {
             .unwrap();
         service.set_source_order("game", 0).await.unwrap();
         service.create_source("Aux 1").await.unwrap();
+        service.set_target_mute("headphones", true).await.unwrap();
 
         service.apply_mixer_profile(&saved).await.unwrap();
         let restored = service.snapshot().await.unwrap().mixer;
@@ -449,6 +465,14 @@ mod tests {
                 .channels
                 .iter()
                 .any(|channel| channel.id == "aux-1")
+        );
+        assert!(
+            !restored
+                .targets
+                .iter()
+                .find(|target| target.id == "headphones")
+                .unwrap()
+                .muted
         );
         assert_eq!(
             restored

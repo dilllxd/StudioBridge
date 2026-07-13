@@ -95,6 +95,14 @@ impl MixerBackend for PipeweaverBackend {
         .await
     }
 
+    async fn set_target_mute(&self, target_id: &str, muted: bool) -> BridgeResult<()> {
+        self.send(APICommand::SetTargetMuteStatesByName(
+            target_id.to_string(),
+            target_mute_state(muted),
+        ))
+        .await
+    }
+
     async fn set_default_input(&self, device_id: &str) -> BridgeResult<()> {
         self.send(APICommand::SetDefaultInput(parse_device_id(device_id)?))
             .await
@@ -571,7 +579,6 @@ fn mute_targets(state: MuteState) -> (bool, bool) {
     }
 }
 
-#[allow(dead_code)]
 fn target_mute_state(muted: bool) -> PwMuteState {
     if muted {
         PwMuteState::Muted
@@ -690,6 +697,7 @@ mod tests {
             .unwrap();
         backend.set_volume_linked("System", false).await.unwrap();
         backend.set_target_volume("Headphones", 77).await.unwrap();
+        backend.set_target_mute("Headphones", true).await.unwrap();
         let default_input = Ulid::new();
         let default_output = Ulid::new();
         backend
@@ -734,15 +742,18 @@ mod tests {
             APICommand::SetVolumeByName(name, None, 77)
         )) if name == "Headphones"));
         assert!(matches!(requests.get(9), Some(DaemonRequest::Pipewire(
+            APICommand::SetTargetMuteStatesByName(name, PwMuteState::Muted)
+        )) if name == "Headphones"));
+        assert!(matches!(requests.get(10), Some(DaemonRequest::Pipewire(
             APICommand::SetDefaultInput(id)
         )) if id == &default_input));
-        assert!(matches!(requests.get(10), Some(DaemonRequest::Pipewire(
+        assert!(matches!(requests.get(11), Some(DaemonRequest::Pipewire(
             APICommand::SetDefaultOutput(id)
         )) if id == &default_output));
-        assert!(matches!(requests.get(11), Some(DaemonRequest::Pipewire(
+        assert!(matches!(requests.get(12), Some(DaemonRequest::Pipewire(
             APICommand::CreateNode(NodeType::VirtualSource, name)
         )) if name == "Aux 1"));
-        assert!(matches!(requests.get(12), Some(DaemonRequest::Pipewire(
+        assert!(matches!(requests.get(13), Some(DaemonRequest::Pipewire(
             APICommand::RemoveNodeByName(name)
         )) if name == "Aux 1"));
 

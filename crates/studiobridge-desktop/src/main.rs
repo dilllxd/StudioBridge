@@ -945,6 +945,23 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
+    let target_mute_window = window.as_weak();
+    let target_mute_client = client.clone();
+    window.on_set_target_mute(move |target_id, muted| {
+        let window = target_mute_window.clone();
+        let client = target_mute_client.clone();
+        let target_id = target_id.to_string();
+        thread::spawn(move || {
+            if let Err(error) = client.set_target_mute(&target_id, muted) {
+                set_status(
+                    window.clone(),
+                    format!("Output mute update failed: {error}"),
+                );
+            }
+            refresh_all(window, client);
+        });
+    });
+
     let default_input_window = window.as_weak();
     let default_input_client = client.clone();
     window.on_set_default_input(move |device_id| {
