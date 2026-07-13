@@ -2263,6 +2263,36 @@ export component MainWindow inherits Window {
             }
         }
     }
+    if !root.daemon-connected: Rectangle {
+        z: 90;
+        x: 72px;
+        y: 28px;
+        width: parent.width - 72px;
+        height: parent.height - 52px;
+        background: #121214d9;
+        TouchArea { width: parent.width; height: parent.height; }
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: 350px;
+            height: 154px;
+            border-radius: 7px;
+            border-width: 1px;
+            border-color: #44444a;
+            background: #222225;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 9px;
+                Text { text: "STUDIOBRIDGE IS OFFLINE"; color: Theme.text; font-size: 13px; font-weight: 800; horizontal-alignment: center; }
+                Text { text: "The audio service is unavailable. Controls are paused to prevent stale changes."; color: Theme.quiet; font-size: 10px; horizontal-alignment: center; wrap: word-wrap; }
+                Text { text: root.status-text; color: Theme.red; font-size: 9px; horizontal-alignment: center; overflow: elide; }
+                HorizontalLayout {
+                    alignment: center;
+                    Button { text: "Retry connection"; clicked => { root.refresh(); } }
+                }
+            }
+        }
+    }
     if root.legal-dialog-open: Rectangle {
         z: 102;
         width: parent.width; height: parent.height; background: #00000099;

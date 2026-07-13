@@ -102,6 +102,10 @@ than copying its source or visual assets:
   exact 30-pixel processor tab strip, live Mic source meter, read-back gain and
   phantom state, and a deliberately read-only unsupported output-gain control;
 - live profiles plus a known captured state to revert to.
+- fail-closed daemon monitoring that marks the client offline within one health
+  interval, clears transient Link and DSP lease indicators, blocks every stale
+  mixer/profile control behind a native retry panel, and automatically refreshes
+  the complete snapshot after the service recovers.
 
 StudioBridge uses its own name, icon, colors, layout code, terminology where
 needed for Linux, and all-original assets.

@@ -2037,9 +2037,12 @@ fn set_dsp_lease(window: Weak<MainWindow>, module: Option<String>, seconds: Opti
 
 fn start_health_monitor(window: Weak<MainWindow>, client: DaemonClient) {
     thread::spawn(move || {
+        let mut was_connected = false;
         loop {
             match client.health() {
                 Ok(health) => {
+                    let recovered = health.ok && !was_connected;
+                    was_connected = health.ok;
                     let active = health.dsp_write_active_module.clone();
                     let seconds = health.dsp_write_lease_seconds;
                     let update_window = window.clone();
@@ -2053,8 +2056,25 @@ fn start_health_monitor(window: Weak<MainWindow>, client: DaemonClient) {
                         window.set_dsp_gate_count(health.dsp_write_modules.len() as i32);
                     });
                     set_dsp_lease(window.clone(), active, seconds);
+                    if recovered {
+                        refresh_all(window.clone(), client.clone());
+                    }
                 }
-                Err(_) => set_dsp_lease(window.clone(), None, None),
+                Err(error) => {
+                    was_connected = false;
+                    let update_window = window.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        let Some(window) = update_window.upgrade() else {
+                            return;
+                        };
+                        window.set_daemon_connected(false);
+                        window.set_hardware_safe(true);
+                        window.set_link_active(false);
+                        window.set_dsp_gate_count(0);
+                        window.set_status_text(format!("Daemon unavailable: {error}").into());
+                    });
+                    set_dsp_lease(window.clone(), None, None);
+                }
             }
             thread::sleep(Duration::from_secs(1));
         }
