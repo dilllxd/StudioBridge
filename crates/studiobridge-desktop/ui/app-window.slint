@@ -134,6 +134,15 @@ component LevelMeter inherits Rectangle {
     }
 }
 
+export struct EqBandModel {
+    band-index: int,
+    x-percent: float,
+    y-percent: float,
+    colour: color,
+    selected: bool,
+    enabled: bool,
+}
+
 export struct ProfileModel {
     name: string,
     active: bool,
@@ -791,6 +800,34 @@ component ProcessorModeButton inherits Rectangle {
     TouchArea { enabled: root.interactive; clicked => { root.clicked(); } }
 }
 
+component EqTypeButton inherits Rectangle {
+    in property <string> glyph;
+    in property <string> label;
+    in property <bool> selected;
+    in property <bool> interactive;
+    callback clicked;
+    width: 38px;
+    height: 34px;
+    border-radius: 3px;
+    background: root.selected ? Theme.teal : #18181b;
+    border-width: 1px;
+    border-color: root.selected ? #78e5df : #2c2c31;
+    Text { text: root.glyph; color: root.selected ? #ffffff : root.interactive ? Theme.text : #66666b; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
+    type-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: button;
+        accessible-label: root.label;
+        key-pressed(event) => {
+            if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+        TouchArea { enabled: root.interactive; clicked => { type-focus.focus(); root.clicked(); } }
+    }
+}
+
 component LightingStyleRow inherits Rectangle {
     in property <string> label;
     in property <bool> selected;
@@ -868,8 +905,22 @@ component ProcessorValueRow inherits Rectangle {
     height: 25px;
     Text { x: 0px; width: 82px; text: root.label; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
     Text { x: 82px; width: parent.width - 110px; text: root.value-label; color: Theme.teal; font-size: 10px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
-    Text { x: parent.width - 24px; width: 10px; text: "‹"; color: root.interactive ? Theme.text : #55555a; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; TouchArea { enabled: root.interactive; clicked => { root.decrease(); } } }
-    Text { x: parent.width - 12px; width: 10px; text: "›"; color: root.interactive ? Theme.text : #55555a; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; TouchArea { enabled: root.interactive; clicked => { root.increase(); } } }
+    Text {
+        x: parent.width - 24px; width: 10px; text: "‹"; color: root.interactive ? Theme.text : #55555a; font-size: 15px; horizontal-alignment: center; vertical-alignment: center;
+        decrease-focus := FocusScope {
+            width: parent.width; height: parent.height; accessible-role: button; accessible-label: "Decrease " + root.label;
+            key-pressed(event) => { if root.interactive && (event.text == Key.Return || event.text == Key.Space) { root.decrease(); return accept; } return reject; }
+            TouchArea { enabled: root.interactive; clicked => { decrease-focus.focus(); root.decrease(); } }
+        }
+    }
+    Text {
+        x: parent.width - 12px; width: 10px; text: "›"; color: root.interactive ? Theme.text : #55555a; font-size: 15px; horizontal-alignment: center; vertical-alignment: center;
+        increase-focus := FocusScope {
+            width: parent.width; height: parent.height; accessible-role: button; accessible-label: "Increase " + root.label;
+            key-pressed(event) => { if root.interactive && (event.text == Key.Return || event.text == Key.Space) { root.increase(); return accept; } return reject; }
+            TouchArea { enabled: root.interactive; clicked => { increase-focus.focus(); root.increase(); } }
+        }
+    }
 }
 
 component ProcessorMeter inherits Rectangle {
@@ -1224,6 +1275,7 @@ export component MainWindow inherits Window {
     in property <[ApplicationModel]> linux-applications;
     in property <[LinkApplicationModel]> link-applications;
     in property <[TargetModel]> targets;
+    in property <[EqBandModel]> eq-bands;
     in property <[ProfileModel]> mixer-profiles;
     in property <[HotkeyModel]> hotkeys;
     property <float> microphone-meter: root.sources.length > 0 ? root.sources[0].meter : 0;
@@ -1249,6 +1301,15 @@ export component MainWindow inherits Window {
     in-out property <bool> dsp-advanced: false;
     in-out property <bool> dsp-enabled: true;
     in-out property <bool> noise-snapshot: false;
+    in-out property <bool> eq-guide: false;
+    in property <bool> eq-advanced: false;
+    in property <int> eq-selected-band: 0;
+    in property <string> eq-band-type: "bell";
+    in property <float> eq-frequency-hz: 1000;
+    in property <float> eq-gain-db: 0;
+    in property <float> eq-q: 1;
+    in property <bool> eq-band-enabled: true;
+    in property <bool> eq-can-add-band: false;
     in property <string> dsp-editor-title: "HEADPHONE EQUALIZER";
     in property <string> dsp-label-a: "Bass dB";
     in property <string> dsp-label-b: "Mids dB";
@@ -1325,6 +1386,12 @@ export component MainWindow inherits Window {
     callback assign-link-application(string, int);
     callback select-dsp-module(string);
     callback select-dsp-mode(bool);
+    callback select-eq-band(int);
+    callback set-eq-band-type(string);
+    callback adjust-eq-band(string, int);
+    callback set-eq-band-value(string, float);
+    callback add-eq-band;
+    callback remove-eq-band;
     callback set-dsp-enabled(bool);
     callback select-noise-style(bool);
     callback load-dsp;
@@ -1699,10 +1766,31 @@ export component MainWindow inherits Window {
                             stroke: #65656a;
                             stroke-width: 1px;
                         }
-                        Rectangle { x: parent.width * 0.12; y: parent.height * 0.63; width: 16px; height: 16px; border-radius: 8px; background: Theme.red; }
-                        Rectangle { x: parent.width * 0.34; y: parent.height * 0.44; width: 16px; height: 16px; border-radius: 8px; background: Theme.teal; }
-                        Rectangle { x: parent.width * 0.58; y: parent.height * 0.57; width: 16px; height: 16px; border-radius: 8px; background: Theme.amber; }
-                        Rectangle { x: parent.width * 0.78; y: parent.height * 0.42; width: 16px; height: 16px; border-radius: 8px; background: #ef4c8c; }
+                        if root.eq-guide: Rectangle { x: 8px; y: 26px; width: 155px; height: 38px; background: #111518cc; border-width: 1px; border-color: Theme.border; Text { x: 7px; width: parent.width - 14px; text: "Drag-free guarded EQ\nSelect a point, then use controls below"; color: Theme.quiet; font-size: 8px; wrap: word-wrap; vertical-alignment: center; } }
+                        for band in root.eq-bands: Rectangle {
+                            x: (parent.width - 18px) * band.x-percent / 100;
+                            y: 18px + (parent.height - 36px) * band.y-percent / 100;
+                            width: band.selected ? 18px : 14px;
+                            height: self.width;
+                            border-radius: self.width / 2;
+                            border-width: band.selected ? 3px : 1px;
+                            border-color: band.selected ? #ffffff : #171719;
+                            background: band.colour;
+                            opacity: band.enabled ? 1 : 0.32;
+                            band-focus := FocusScope {
+                                width: parent.width; height: parent.height;
+                                accessible-role: button;
+                                accessible-label: "Select EQ band " + (band.band-index + 1);
+                                key-pressed(event) => {
+                                    if event.text == Key.Return || event.text == Key.Space {
+                                        root.select-eq-band(band.band-index);
+                                        return accept;
+                                    }
+                                    return reject;
+                                }
+                                TouchArea { clicked => { band-focus.focus(); root.select-eq-band(band.band-index); } }
+                            }
+                        }
                         Text { x: parent.width * 0.05; y: 10px; text: "30"; color: #77777d; font-size: 9px; }
                         Text { x: parent.width * 0.18; y: 10px; text: "100"; color: #77777d; font-size: 9px; }
                         Text { x: parent.width * 0.32; y: 10px; text: "250"; color: #77777d; font-size: 9px; }
@@ -1728,29 +1816,39 @@ export component MainWindow inherits Window {
                             VerticalLayout {
                                 width: 150px;
                                 spacing: 5px;
-                                Text { text: "ADD BAND"; color: Theme.red; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
+                                HorizontalLayout {
+                                    height: 25px; spacing: 4px;
+                                    Button { horizontal-stretch: 1; text: "ADD BAND"; enabled: root.dsp-active-module == "equalizer" && root.eq-can-add-band; clicked => { root.add-eq-band(); } }
+                                    Button { width: 28px; text: "−"; enabled: root.dsp-active-module == "equalizer" && root.eq-band-enabled; clicked => { root.remove-eq-band(); } }
+                                }
                                 Text { text: "Presets"; color: Theme.quiet; font-size: 9px; }
-                                Rectangle { height: 24px; background: #1a1a1d; Text { x: 6px; text: "Low Broadcast Voice      v"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
-                                HorizontalLayout { height: 22px; Text { text: "Advanced EQ"; color: Theme.quiet; font-size: 9px; horizontal-stretch: 1; vertical-alignment: center; } ToggleSwitch { checked: true; control-label: "Advanced EQ"; } }
-                                HorizontalLayout { height: 22px; Text { text: "Guide"; color: Theme.quiet; font-size: 9px; horizontal-stretch: 1; vertical-alignment: center; } ToggleSwitch { checked: false; control-label: "EQ guide"; } }
+                                Rectangle { height: 24px; background: #1a1a1d; Text { x: 6px; text: "Custom / read-back"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
+                                HorizontalLayout { height: 22px; Text { text: "Advanced EQ"; color: Theme.quiet; font-size: 9px; horizontal-stretch: 1; vertical-alignment: center; } ToggleSwitch { checked: root.eq-advanced; interactive: root.dsp-active-module == "equalizer"; control-label: "Advanced EQ"; toggled(value) => { root.select-dsp-mode(value); } } }
+                                HorizontalLayout { height: 22px; Text { text: "Guide"; color: Theme.quiet; font-size: 9px; horizontal-stretch: 1; vertical-alignment: center; } ToggleSwitch { checked: root.eq-guide; control-label: "EQ guide"; toggled(value) => { root.eq-guide = value; } } }
                             }
-                            VerticalLayout {
+                            HorizontalLayout {
                                 horizontal-stretch: 1;
                                 spacing: 5px;
-                                HorizontalLayout {
-                                    height: 58px;
-                                    spacing: 4px;
-                                    Rectangle { width: 42px; background: #18181b; border-radius: 4px; Text { text: "⌒"; color: Theme.text; font-size: 25px; horizontal-alignment: center; vertical-alignment: center; } }
-                                    Rectangle { width: 42px; background: #18181b; border-radius: 4px; Text { text: "∿"; color: Theme.text; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; } }
-                                    Rectangle { width: 42px; background: #18181b; border-radius: 4px; Text { text: "⌁"; color: Theme.text; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; } }
-                                    Rectangle { width: 42px; background: Theme.teal; border-radius: 4px; Text { text: "∿"; color: Theme.text; font-size: 22px; horizontal-alignment: center; vertical-alignment: center; } }
+                                GridLayout {
+                                    width: 120px; spacing: 3px;
+                                    EqTypeButton { row: 0; col: 0; glyph: "⌒"; label: "Low-pass filter"; selected: root.eq-band-type == "low_pass"; interactive: root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("low_pass"); } }
+                                    EqTypeButton { row: 0; col: 1; glyph: "⌊"; label: "Low shelf"; selected: root.eq-band-type == "low_shelf"; interactive: root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("low_shelf"); } }
+                                    EqTypeButton { row: 0; col: 2; glyph: "⌁"; label: "Notch filter"; selected: root.eq-band-type == "notch"; interactive: root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("notch"); } }
+                                    EqTypeButton { row: 1; col: 0; glyph: "⌄"; label: "Bell band"; selected: root.eq-band-type == "bell"; interactive: root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("bell"); } }
+                                    EqTypeButton { row: 1; col: 1; glyph: "⌉"; label: "High shelf"; selected: root.eq-band-type == "high_shelf"; interactive: root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("high_shelf"); } }
+                                    EqTypeButton { row: 1; col: 2; glyph: "∿"; label: "High-pass filter"; selected: root.eq-band-type == "high_pass"; interactive: root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("high_pass"); } }
                                 }
-                                Text { text: "FREQ    ◀   40Hz    ▶"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Text { text: "GAIN    ◀   -2.0dB  ▶"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Text { text: "Q       ◀   0.8     ▶"; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                VerticalLayout {
+                                    horizontal-stretch: 1; spacing: 4px;
+                                    Rectangle { vertical-stretch: 1; }
+                                    ProcessorValueRow { height: 28px; label: "FREQ"; value-label: round(root.eq-frequency-hz) + "Hz"; interactive: root.dsp-active-module == "equalizer"; decrease => { root.adjust-eq-band("frequency", -1); } increase => { root.adjust-eq-band("frequency", 1); } }
+                                    ProcessorValueRow { height: 28px; label: "GAIN"; value-label: round(root.eq-gain-db * 10) / 10 + "dB"; interactive: root.dsp-active-module == "equalizer"; decrease => { root.adjust-eq-band("gain", -1); } increase => { root.adjust-eq-band("gain", 1); } }
+                                    ProcessorValueRow { height: 28px; label: "Q"; value-label: round(root.eq-q * 10) / 10 + ""; interactive: root.dsp-active-module == "equalizer"; decrease => { root.adjust-eq-band("q", -1); } increase => { root.adjust-eq-band("q", 1); } }
+                                    Rectangle { vertical-stretch: 1; }
+                                }
                             }
                         }
-                        TouchArea { clicked => { root.select-dsp-module("equalizer"); } }
+                        TouchArea { x: 0px; y: 0px; width: parent.width; height: 8px; clicked => { root.select-dsp-module("equalizer"); } }
                     }
                     Rectangle {
                         width: 203px;
@@ -1849,12 +1947,12 @@ export component MainWindow inherits Window {
                             spacing: 16px;
                             VerticalLayout {
                                 width: 330px; spacing: 7px;
-                                Text { text: root.dsp-label-a.to-uppercase() + "   " + round(root.dsp-value-a * 10) / 10 + " dB"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } }
-                                Text { text: root.dsp-label-b.to-uppercase() + "   " + round(root.dsp-value-b * 10) / 10 + " dB"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } }
-                                Text { text: root.dsp-label-c.to-uppercase() + "   " + round(root.dsp-value-c * 10) / 10 + " dB"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; changed(value) => { root.dsp-value-c = value; } }
+                                Text { text: "BAND " + (root.eq-selected-band + 1) + " FREQUENCY   " + round(root.eq-frequency-hz) + " Hz"; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.eq-frequency-hz; minimum: 20; maximum: 20000; changed(value) => { root.set-eq-band-value("frequency", value); } }
+                                Text { text: "GAIN   " + round(root.eq-gain-db * 10) / 10 + " dB"; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.eq-gain-db; minimum: -12; maximum: 12; changed(value) => { root.set-eq-band-value("gain", value); } }
+                                Text { text: "Q   " + round(root.eq-q * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.eq-q; minimum: 0.1; maximum: 10; changed(value) => { root.set-eq-band-value("q", value); } }
                             }
                             Rectangle {
                                 horizontal-stretch: 1; background: #111518; border-width: 1px; border-color: Theme.border;

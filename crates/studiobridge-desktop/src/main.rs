@@ -33,8 +33,9 @@ use std::{
     path::PathBuf,
 };
 use studiobridge_core::{
-    AppSnapshot, DspMode, DspWriteModule, LinkChannel, MicrophoneDspSnapshot, MicrophoneDspUpdate,
-    MixBus, MixerChannel, MuteState, NoiseSuppressionStyle,
+    AppSnapshot, DspMode, DspWriteModule, EqualizerBandType, EqualizerProfile, LinkChannel,
+    MicrophoneDspSnapshot, MicrophoneDspUpdate, MixBus, MixerChannel, MuteState,
+    NoiseSuppressionStyle,
 };
 
 mod client;
@@ -588,6 +589,7 @@ struct DspSession {
     snapshot: Option<MicrophoneDspSnapshot>,
     captured: Option<MicrophoneDspSnapshot>,
     selected: DspSelection,
+    selected_eq_band: usize,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -660,6 +662,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_linux_applications(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_link_applications(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_targets(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
+    window.set_eq_bands(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_mixer_profiles(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_hotkeys(ModelRc::from(Rc::new(VecModel::from(Vec::new()))));
     window.set_mixer_channel_names(string_model(vec!["Unassigned".into()]));
@@ -1110,7 +1113,12 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Ok(mut session) = select_session.lock() {
             session.selected = DspSelection::parse(module.as_str());
             if let Some(snapshot) = session.snapshot.clone() {
-                show_dsp_snapshot(&select_window, &snapshot, session.selected);
+                show_dsp_snapshot(
+                    &select_window,
+                    &snapshot,
+                    session.selected,
+                    session.selected_eq_band,
+                );
             }
         }
     });
@@ -1132,10 +1140,126 @@ fn main() -> Result<(), slint::PlatformError> {
                 DspSelection::Expander => snapshot.expander.active_mode = mode,
                 _ => return None,
             }
-            Some((snapshot.clone(), selected))
+            Some((snapshot.clone(), selected, session.selected_eq_band))
         });
-        if let Some((snapshot, selected)) = staged {
-            show_dsp_snapshot(&mode_window, &snapshot, selected);
+        if let Some((snapshot, selected, eq_band)) = staged {
+            show_dsp_snapshot(&mode_window, &snapshot, selected, eq_band);
+        }
+    });
+
+    let eq_select_window = window.as_weak();
+    let eq_select_session = dsp_session.clone();
+    window.on_select_eq_band(move |index| {
+        let staged = eq_select_session.lock().ok().and_then(|mut session| {
+            let snapshot = session.snapshot.clone()?;
+            let band_count = active_eq_profile(&snapshot).bands.len();
+            if band_count == 0 {
+                return None;
+            }
+            session.selected = DspSelection::Equalizer;
+            session.selected_eq_band = (index.max(0) as usize).min(band_count - 1);
+            Some((snapshot, session.selected_eq_band))
+        });
+        if let Some((snapshot, eq_band)) = staged {
+            show_dsp_snapshot(
+                &eq_select_window,
+                &snapshot,
+                DspSelection::Equalizer,
+                eq_band,
+            );
+        }
+    });
+
+    let eq_type_window = window.as_weak();
+    let eq_type_session = dsp_session.clone();
+    window.on_set_eq_band_type(move |band_type| {
+        let staged = eq_type_session.lock().ok().and_then(|mut session| {
+            let eq_band = session.selected_eq_band;
+            session.selected = DspSelection::Equalizer;
+            let snapshot = session.snapshot.as_mut()?;
+            set_eq_band_type_value(snapshot, eq_band, band_type.as_str())?;
+            Some((snapshot.clone(), eq_band))
+        });
+        if let Some((snapshot, eq_band)) = staged {
+            show_dsp_snapshot(&eq_type_window, &snapshot, DspSelection::Equalizer, eq_band);
+        }
+    });
+
+    let eq_adjust_window = window.as_weak();
+    let eq_adjust_session = dsp_session.clone();
+    window.on_adjust_eq_band(move |field, direction| {
+        let staged = eq_adjust_session.lock().ok().and_then(|mut session| {
+            let eq_band = session.selected_eq_band;
+            session.selected = DspSelection::Equalizer;
+            let snapshot = session.snapshot.as_mut()?;
+            adjust_eq_band_value(snapshot, eq_band, field.as_str(), direction)?;
+            Some((snapshot.clone(), eq_band))
+        });
+        if let Some((snapshot, eq_band)) = staged {
+            show_dsp_snapshot(
+                &eq_adjust_window,
+                &snapshot,
+                DspSelection::Equalizer,
+                eq_band,
+            );
+        }
+    });
+
+    let eq_value_window = window.as_weak();
+    let eq_value_session = dsp_session.clone();
+    window.on_set_eq_band_value(move |field, value| {
+        let staged = eq_value_session.lock().ok().and_then(|mut session| {
+            let eq_band = session.selected_eq_band;
+            session.selected = DspSelection::Equalizer;
+            let snapshot = session.snapshot.as_mut()?;
+            set_eq_band_value(snapshot, eq_band, field.as_str(), value)?;
+            Some((snapshot.clone(), eq_band))
+        });
+        if let Some((snapshot, eq_band)) = staged {
+            show_dsp_snapshot(
+                &eq_value_window,
+                &snapshot,
+                DspSelection::Equalizer,
+                eq_band,
+            );
+        }
+    });
+
+    let eq_add_window = window.as_weak();
+    let eq_add_session = dsp_session.clone();
+    window.on_add_eq_band(move || {
+        let staged = eq_add_session.lock().ok().and_then(|mut session| {
+            session.selected = DspSelection::Equalizer;
+            let (snapshot, eq_band) = {
+                let snapshot = session.snapshot.as_mut()?;
+                let eq_band = add_eq_band(snapshot)?;
+                (snapshot.clone(), eq_band)
+            };
+            session.selected_eq_band = eq_band;
+            Some((snapshot, eq_band))
+        });
+        if let Some((snapshot, eq_band)) = staged {
+            show_dsp_snapshot(&eq_add_window, &snapshot, DspSelection::Equalizer, eq_band);
+        }
+    });
+
+    let eq_remove_window = window.as_weak();
+    let eq_remove_session = dsp_session.clone();
+    window.on_remove_eq_band(move || {
+        let staged = eq_remove_session.lock().ok().and_then(|mut session| {
+            let eq_band = session.selected_eq_band;
+            session.selected = DspSelection::Equalizer;
+            let snapshot = session.snapshot.as_mut()?;
+            remove_eq_band(snapshot, eq_band)?;
+            Some((snapshot.clone(), eq_band))
+        });
+        if let Some((snapshot, eq_band)) = staged {
+            show_dsp_snapshot(
+                &eq_remove_window,
+                &snapshot,
+                DspSelection::Equalizer,
+                eq_band,
+            );
         }
     });
 
@@ -1146,10 +1270,10 @@ fn main() -> Result<(), slint::PlatformError> {
             let selected = session.selected;
             let snapshot = session.snapshot.as_mut()?;
             set_selected_dsp_enabled(snapshot, selected, enabled);
-            Some((snapshot.clone(), selected))
+            Some((snapshot.clone(), selected, session.selected_eq_band))
         });
-        if let Some((snapshot, selected)) = staged {
-            show_dsp_snapshot(&enabled_window, &snapshot, selected);
+        if let Some((snapshot, selected, eq_band)) = staged {
+            show_dsp_snapshot(&enabled_window, &snapshot, selected, eq_band);
         }
     });
 
@@ -1167,10 +1291,10 @@ fn main() -> Result<(), slint::PlatformError> {
             } else {
                 NoiseSuppressionStyle::Adaptive
             };
-            Some((snapshot.clone(), selected))
+            Some((snapshot.clone(), selected, session.selected_eq_band))
         });
-        if let Some((snapshot, selected)) = staged {
-            show_dsp_snapshot(&noise_style_window, &snapshot, selected);
+        if let Some((snapshot, selected, eq_band)) = staged {
+            show_dsp_snapshot(&noise_style_window, &snapshot, selected, eq_band);
         }
     });
 
@@ -1723,16 +1847,16 @@ fn load_dsp(
 ) {
     thread::spawn(move || match client.microphone_dsp() {
         Ok(snapshot) => {
-            let selected = if let Ok(mut state) = session.lock() {
+            let (selected, eq_band) = if let Ok(mut state) = session.lock() {
                 state.snapshot = Some(snapshot.clone());
                 if capture {
                     state.captured = Some(snapshot.clone());
                 }
-                state.selected
+                (state.selected, state.selected_eq_band)
             } else {
                 return;
             };
-            show_dsp_snapshot(&window, &snapshot, selected);
+            show_dsp_snapshot(&window, &snapshot, selected, eq_band);
             set_status(window, "Microphone DSP read-back is current".into());
         }
         Err(error) => set_status(window, format!("DSP read-back failed: {error}")),
@@ -1741,9 +1865,9 @@ fn load_dsp(
 
 fn arm_dsp(window: Weak<MainWindow>, client: DaemonClient, session: Arc<Mutex<DspSession>>) {
     thread::spawn(move || {
-        let selected = session
+        let (selected, eq_band) = session
             .lock()
-            .map(|state| state.selected)
+            .map(|state| (state.selected, state.selected_eq_band))
             .unwrap_or_default();
         let snapshot = match client.microphone_dsp() {
             Ok(snapshot) => snapshot,
@@ -1758,7 +1882,7 @@ fn arm_dsp(window: Weak<MainWindow>, client: DaemonClient, session: Arc<Mutex<Ds
         }
         match client.arm_dsp(selected.module(), 300) {
             Ok(()) => {
-                show_dsp_snapshot(&window, &snapshot, selected);
+                show_dsp_snapshot(&window, &snapshot, selected, eq_band);
                 set_dsp_lease(window.clone(), Some(selected.as_str().into()), Some(300));
                 set_status(
                     window,
@@ -1781,14 +1905,14 @@ fn apply_dsp(
     revert: bool,
 ) {
     thread::spawn(move || {
-        let (selected, base) = match session.lock() {
+        let (selected, eq_band, base) = match session.lock() {
             Ok(state) => {
                 let snapshot = if revert {
                     state.captured.clone()
                 } else {
                     state.snapshot.clone()
                 };
-                (state.selected, snapshot)
+                (state.selected, state.selected_eq_band, snapshot)
             }
             Err(_) => return,
         };
@@ -1809,7 +1933,7 @@ fn apply_dsp(
                 if let Ok(mut state) = session.lock() {
                     state.snapshot = Some(result.snapshot.clone());
                 }
-                show_dsp_snapshot(&window, &result.snapshot, selected);
+                show_dsp_snapshot(&window, &result.snapshot, selected, eq_band);
                 set_status(
                     window,
                     if revert {
@@ -1857,16 +1981,7 @@ fn update_from_values(
     d: f32,
 ) -> MicrophoneDspUpdate {
     match selected {
-        DspSelection::Equalizer => {
-            let profile = match snapshot.equalizer.active_mode {
-                DspMode::Simple => &mut snapshot.equalizer.simple,
-                DspMode::Advanced => &mut snapshot.equalizer.advanced,
-            };
-            for (band, value) in profile.bands.iter_mut().zip([a, b, c]) {
-                band.gain_db = value;
-            }
-            MicrophoneDspUpdate::Equalizer(snapshot.equalizer)
-        }
+        DspSelection::Equalizer => MicrophoneDspUpdate::Equalizer(snapshot.equalizer),
         DspSelection::Compressor => {
             let profile = match snapshot.compressor.active_mode {
                 DspMode::Simple => &mut snapshot.compressor.simple,
@@ -1909,10 +2024,129 @@ fn update_from_values(
     }
 }
 
+fn active_eq_profile(snapshot: &MicrophoneDspSnapshot) -> &EqualizerProfile {
+    match snapshot.equalizer.active_mode {
+        DspMode::Simple => &snapshot.equalizer.simple,
+        DspMode::Advanced => &snapshot.equalizer.advanced,
+    }
+}
+
+fn active_eq_profile_mut(snapshot: &mut MicrophoneDspSnapshot) -> &mut EqualizerProfile {
+    match snapshot.equalizer.active_mode {
+        DspMode::Simple => &mut snapshot.equalizer.simple,
+        DspMode::Advanced => &mut snapshot.equalizer.advanced,
+    }
+}
+
+const fn eq_band_type_name(band_type: EqualizerBandType) -> &'static str {
+    match band_type {
+        EqualizerBandType::NotSet => "not_set",
+        EqualizerBandType::LowPass => "low_pass",
+        EqualizerBandType::HighPass => "high_pass",
+        EqualizerBandType::Notch => "notch",
+        EqualizerBandType::Bell => "bell",
+        EqualizerBandType::LowShelf => "low_shelf",
+        EqualizerBandType::HighShelf => "high_shelf",
+    }
+}
+
+fn parse_eq_band_type(value: &str) -> Option<EqualizerBandType> {
+    match value {
+        "low_pass" => Some(EqualizerBandType::LowPass),
+        "high_pass" => Some(EqualizerBandType::HighPass),
+        "notch" => Some(EqualizerBandType::Notch),
+        "bell" => Some(EqualizerBandType::Bell),
+        "low_shelf" => Some(EqualizerBandType::LowShelf),
+        "high_shelf" => Some(EqualizerBandType::HighShelf),
+        _ => None,
+    }
+}
+
+fn set_eq_band_type_value(
+    snapshot: &mut MicrophoneDspSnapshot,
+    index: usize,
+    value: &str,
+) -> Option<()> {
+    let band_type = parse_eq_band_type(value)?;
+    let band = active_eq_profile_mut(snapshot).bands.get_mut(index)?;
+    band.band_type = band_type;
+    band.enabled = true;
+    Some(())
+}
+
+fn adjust_eq_band_value(
+    snapshot: &mut MicrophoneDspSnapshot,
+    index: usize,
+    field: &str,
+    direction: i32,
+) -> Option<()> {
+    let direction = direction.signum() as f32;
+    if direction == 0.0 {
+        return None;
+    }
+    let band = active_eq_profile_mut(snapshot).bands.get_mut(index)?;
+    match field {
+        "frequency" => {
+            let step = if band.frequency_hz < 100.0 {
+                1.0
+            } else if band.frequency_hz < 1_000.0 {
+                10.0
+            } else if band.frequency_hz < 10_000.0 {
+                100.0
+            } else {
+                1_000.0
+            };
+            band.frequency_hz = (band.frequency_hz + direction * step).clamp(20.0, 20_000.0);
+        }
+        "gain" => band.gain_db = (band.gain_db + direction * 0.5).clamp(-12.0, 12.0),
+        "q" => band.q = (band.q + direction * 0.1).clamp(0.1, 10.0),
+        _ => return None,
+    }
+    Some(())
+}
+
+fn set_eq_band_value(
+    snapshot: &mut MicrophoneDspSnapshot,
+    index: usize,
+    field: &str,
+    value: f32,
+) -> Option<()> {
+    let band = active_eq_profile_mut(snapshot).bands.get_mut(index)?;
+    match field {
+        "frequency" => band.frequency_hz = value.clamp(20.0, 20_000.0),
+        "gain" => band.gain_db = value.clamp(-12.0, 12.0),
+        "q" => band.q = value.clamp(0.1, 10.0),
+        _ => return None,
+    }
+    Some(())
+}
+
+fn add_eq_band(snapshot: &mut MicrophoneDspSnapshot) -> Option<usize> {
+    let profile = active_eq_profile_mut(snapshot);
+    let (index, band) = profile
+        .bands
+        .iter_mut()
+        .enumerate()
+        .find(|(_, band)| !band.enabled || band.band_type == EqualizerBandType::NotSet)?;
+    band.enabled = true;
+    if band.band_type == EqualizerBandType::NotSet {
+        band.band_type = EqualizerBandType::Bell;
+    }
+    Some(index)
+}
+
+fn remove_eq_band(snapshot: &mut MicrophoneDspSnapshot, index: usize) -> Option<()> {
+    let band = active_eq_profile_mut(snapshot).bands.get_mut(index)?;
+    band.enabled = false;
+    band.band_type = EqualizerBandType::NotSet;
+    Some(())
+}
+
 fn show_dsp_snapshot(
     window: &Weak<MainWindow>,
     snapshot: &MicrophoneDspSnapshot,
     selected: DspSelection,
+    selected_eq_band: usize,
 ) {
     let (title, labels, values, ranges) = dsp_display(snapshot, selected);
     let advanced = match selected {
@@ -1923,6 +2157,37 @@ fn show_dsp_snapshot(
     };
     let noise_snapshot = snapshot.noise_suppression.style == NoiseSuppressionStyle::Snapshot;
     let enabled = selected_dsp_enabled(snapshot, selected);
+    let eq_profile = active_eq_profile(snapshot);
+    let selected_eq_band = selected_eq_band.min(eq_profile.bands.len().saturating_sub(1));
+    let selected_band = eq_profile.bands.get(selected_eq_band);
+    let eq_band_type = selected_band
+        .map(|band| eq_band_type_name(band.band_type))
+        .unwrap_or("not_set");
+    let eq_frequency_hz = selected_band.map_or(1_000.0, |band| band.frequency_hz);
+    let eq_gain_db = selected_band.map_or(0.0, |band| band.gain_db);
+    let eq_q = selected_band.map_or(1.0, |band| band.q);
+    let eq_band_enabled = selected_band.is_some_and(|band| band.enabled);
+    let eq_advanced = snapshot.equalizer.active_mode == DspMode::Advanced;
+    let eq_can_add_band = eq_profile
+        .bands
+        .iter()
+        .any(|band| !band.enabled || band.band_type == EqualizerBandType::NotSet);
+    let eq_bands = eq_profile
+        .bands
+        .iter()
+        .enumerate()
+        .map(|(index, band)| EqBandModel {
+            band_index: index as i32,
+            x_percent: ((band.frequency_hz.max(20.0).log10() - 20.0_f32.log10())
+                / (20_000.0_f32.log10() - 20.0_f32.log10())
+                * 100.0)
+                .clamp(0.0, 100.0),
+            y_percent: ((12.0 - band.gain_db) / 24.0 * 100.0).clamp(0.0, 100.0),
+            colour: eq_band_colour(index),
+            selected: index == selected_eq_band,
+            enabled: band.enabled,
+        })
+        .collect::<Vec<_>>();
     let window = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(window) = window.upgrade() else {
@@ -1941,6 +2206,15 @@ fn show_dsp_snapshot(
         window.set_dsp_advanced(advanced);
         window.set_dsp_enabled(enabled);
         window.set_noise_snapshot(noise_snapshot);
+        window.set_eq_selected_band(selected_eq_band as i32);
+        window.set_eq_advanced(eq_advanced);
+        window.set_eq_band_type(eq_band_type.into());
+        window.set_eq_frequency_hz(eq_frequency_hz);
+        window.set_eq_gain_db(eq_gain_db);
+        window.set_eq_q(eq_q);
+        window.set_eq_band_enabled(eq_band_enabled);
+        window.set_eq_can_add_band(eq_can_add_band);
+        window.set_eq_bands(ModelRc::from(Rc::new(VecModel::from(eq_bands))));
         window.set_dsp_min_a(ranges.0.0);
         window.set_dsp_max_a(ranges.0.1);
         window.set_dsp_min_b(ranges.1.0);
@@ -1950,6 +2224,13 @@ fn show_dsp_snapshot(
         window.set_dsp_min_d(ranges.3.0);
         window.set_dsp_max_d(ranges.3.1);
     });
+}
+
+fn eq_band_colour(index: usize) -> Color {
+    const COLOURS: [&str; 8] = [
+        "#ef4f58", "#42c9c6", "#e4b638", "#ef4c8c", "#9d70d6", "#58a7e8", "#e48145", "#7cc65b",
+    ];
+    parse_colour(COLOURS[index % COLOURS.len()])
 }
 
 fn selected_dsp_enabled(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> bool {
@@ -2259,16 +2540,20 @@ fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
 #[cfg(test)]
 mod desktop_tests {
     use super::{
-        DspSelection, hotkey_key_name, mock_meter_level, mute_state_with_target,
-        normalize_captured_hotkey, normalize_mute_action, selected_dsp_enabled,
-        set_selected_dsp_enabled, source_name_available,
+        DspSelection, active_eq_profile, add_eq_band, adjust_eq_band_value, hotkey_key_name,
+        mock_meter_level, mute_state_with_target, normalize_captured_hotkey, normalize_mute_action,
+        remove_eq_band, selected_dsp_enabled, set_eq_band_type_value, set_eq_band_value,
+        set_selected_dsp_enabled, source_name_available, update_from_values,
     };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
-    use studiobridge_core::{DspMode, MicrophoneDspSnapshot, MuteState};
+    use studiobridge_core::{
+        DspMode, EqualizerBandState, EqualizerBandType, MicrophoneDspSnapshot, MicrophoneDspUpdate,
+        MuteState,
+    };
 
     fn dsp_snapshot() -> MicrophoneDspSnapshot {
-        serde_json::from_value(serde_json::json!({
+        let mut snapshot: MicrophoneDspSnapshot = serde_json::from_value(serde_json::json!({
             "equalizer": {
                 "active_mode": "simple",
                 "simple": { "mode": "simple", "bands": [] },
@@ -2296,7 +2581,20 @@ mod desktop_tests {
                 { "band": "treble", "enabled": true, "amount_db": 2.0 }
             ] }
         }))
-        .expect("DSP fixture should deserialize")
+        .expect("DSP fixture should deserialize");
+        let bands = (1..=8)
+            .map(|band| EqualizerBandState {
+                band,
+                band_type: EqualizerBandType::Bell,
+                gain_db: 0.0,
+                frequency_hz: 40.0 * 2.0_f32.powi((band - 1).into()),
+                q: 1.0,
+                enabled: true,
+            })
+            .collect::<Vec<_>>();
+        snapshot.equalizer.simple.bands = bands.clone();
+        snapshot.equalizer.advanced.bands = bands;
+        snapshot
     }
 
     #[test]
@@ -2404,5 +2702,59 @@ mod desktop_tests {
                 .iter()
                 .all(|band| !band.enabled)
         );
+    }
+
+    #[test]
+    fn equalizer_band_controls_stage_the_active_profile_without_flattening_it() {
+        let mut snapshot = dsp_snapshot();
+        snapshot.equalizer.active_mode = DspMode::Advanced;
+
+        set_eq_band_type_value(&mut snapshot, 3, "high_pass").unwrap();
+        adjust_eq_band_value(&mut snapshot, 3, "frequency", 1).unwrap();
+        adjust_eq_band_value(&mut snapshot, 3, "gain", -1).unwrap();
+        adjust_eq_band_value(&mut snapshot, 3, "q", 1).unwrap();
+
+        let band = &active_eq_profile(&snapshot).bands[3];
+        assert_eq!(band.band_type, EqualizerBandType::HighPass);
+        assert_eq!(band.frequency_hz, 330.0);
+        assert_eq!(band.gain_db, -0.5);
+        assert!((band.q - 1.1).abs() < f32::EPSILON);
+        assert_eq!(snapshot.equalizer.simple.bands[3].frequency_hz, 320.0);
+
+        set_eq_band_value(&mut snapshot, 3, "frequency", 25_000.0).unwrap();
+        set_eq_band_value(&mut snapshot, 3, "gain", -20.0).unwrap();
+        set_eq_band_value(&mut snapshot, 3, "q", 0.0).unwrap();
+        let band = &active_eq_profile(&snapshot).bands[3];
+        assert_eq!(band.frequency_hz, 20_000.0);
+        assert_eq!(band.gain_db, -12.0);
+        assert_eq!(band.q, 0.1);
+
+        let update = update_from_values(
+            DspSelection::Equalizer,
+            snapshot.clone(),
+            12.0,
+            -12.0,
+            9.0,
+            0.0,
+        );
+        let MicrophoneDspUpdate::Equalizer(equalizer) = update else {
+            panic!("expected an equalizer update")
+        };
+        assert_eq!(equalizer, snapshot.equalizer);
+    }
+
+    #[test]
+    fn equalizer_add_and_remove_reuse_a_disabled_validated_slot() {
+        let mut snapshot = dsp_snapshot();
+        remove_eq_band(&mut snapshot, 5).unwrap();
+        let removed = &active_eq_profile(&snapshot).bands[5];
+        assert!(!removed.enabled);
+        assert_eq!(removed.band_type, EqualizerBandType::NotSet);
+
+        assert_eq!(add_eq_band(&mut snapshot), Some(5));
+        let restored = &active_eq_profile(&snapshot).bands[5];
+        assert!(restored.enabled);
+        assert_eq!(restored.band_type, EqualizerBandType::Bell);
+        assert_eq!(add_eq_band(&mut snapshot), None);
     }
 }

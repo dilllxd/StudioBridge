@@ -106,6 +106,9 @@ Relay in this matrix to match the familiar BEACN routing vocabulary.
   864-by-256 frequency graph inset 28 pixels from its leading edge, followed by
   a 150-pixel EQ/enhancement control row.
 - Voice EQ and enhancement controls are visually attached to that graph.
+- Voice EQ uses graph points as the band selector. Its compact card places Add
+  Band, remove, preset, Advanced EQ, and Guide controls on the left; six filter
+  shapes occupy a two-by-three grid beside FREQ, GAIN, and Q step controls.
 - Mic Setup, Noise Suppression, Expander, Compressor, and Headphones are a
   horizontal 30-pixel tab strip; selecting one swaps only the lower editor
   panel. Their measured widths are 81, 161, 80, 101, and 108 pixels.
@@ -129,6 +132,12 @@ StudioBridge adaptation: keep a persistent read-only spectrum/EQ overview and
 live meter, move the six validated DSP modules to a horizontal tab strip, and
 show the guarded editor below. Preserve explicit module arming, captured-state
 revert, read-back verification, and the permanent phantom-power exclusion.
+All eight validated EQ slots are drawn at their read-back frequency/gain and
+act as accessible selectors. Filter type, frequency, gain, Q, Simple/Advanced,
+and add/remove changes update the staged active profile only while Equalizer is
+armed; the lower guarded editor mirrors the selected band with continuous
+sliders. The preset row remains an honest Custom/read-back display until exact
+preset payloads are captured, rather than applying guessed audio settings.
 Simple/Advanced and Adaptive/Snapshot selections reflect the current read-back
 state. The Noise Suppression, Expander, Compressor, and Headphones On switches
 likewise reflect their module's stored enabled state. Mode and enable changes

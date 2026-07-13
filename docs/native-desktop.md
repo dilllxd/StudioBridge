@@ -97,6 +97,10 @@ than copying its source or visual assets:
 - native application chips that drag onto source strips, with accepted-drop
   highlighting, an unassign target, and accessible selector fallback;
 - always-accessible voice EQ and enhancement controls;
+- a functional eight-band Voice EQ editor with graph-point selection, all six
+  validated filter types, guarded Simple/Advanced profiles, add/remove,
+  FREQ/GAIN/Q stepping, continuous selected-band sliders, and keyboard-labelled
+  controls;
 - secondary microphone processors grouped by module;
 - a measured 897/150 microphone editor/output-column split, 864-by-256 graph,
   exact 30-pixel processor tab strip, live Mic source meter, read-back gain and
