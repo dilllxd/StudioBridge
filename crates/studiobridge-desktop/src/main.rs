@@ -49,7 +49,8 @@ const METER_URL: &str = "ws://127.0.0.1:14565/api/websocket/meter";
 #[serde(default)]
 struct AppPreferences {
     start_at_login: bool,
-    close_to_tray: bool,
+    #[serde(alias = "close_to_tray")]
+    open_to_system_tray: bool,
     save_confirmation: bool,
     beta_opt_in: bool,
     mixing_suite_enabled: bool,
@@ -63,7 +64,7 @@ impl Default for AppPreferences {
     fn default() -> Self {
         Self {
             start_at_login: false,
-            close_to_tray: true,
+            open_to_system_tray: true,
             save_confirmation: true,
             beta_opt_in: false,
             mixing_suite_enabled: true,
@@ -106,6 +107,10 @@ fn load_preferences() -> AppPreferences {
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_default()
+}
+
+fn should_start_in_background(requested: bool, preferences: &AppPreferences) -> bool {
+    requested && preferences.open_to_system_tray
 }
 
 fn save_preferences(preferences: &AppPreferences) -> Result<(), String> {
@@ -632,7 +637,11 @@ impl DspSelection {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
-    let start_in_background = std::env::args().any(|argument| argument == "--background");
+    let preferences = load_preferences();
+    let start_in_background = should_start_in_background(
+        std::env::args().any(|argument| argument == "--background"),
+        &preferences,
+    );
     if notify_existing_instance(start_in_background) {
         return Ok(());
     }
@@ -643,9 +652,8 @@ fn main() -> Result<(), slint::PlatformError> {
     };
     let client = DaemonClient::localhost().expect("failed to create daemon client");
     let dsp_session = Arc::new(Mutex::new(DspSession::default()));
-    let preferences = load_preferences();
     window.set_start_at_login(preferences.start_at_login);
-    window.set_close_to_tray(preferences.close_to_tray);
+    window.set_open_to_system_tray(preferences.open_to_system_tray);
     window.set_save_confirmation(preferences.save_confirmation);
     window.set_beta_opt_in(preferences.beta_opt_in);
     window.set_mixing_suite_enabled(preferences.mixing_suite_enabled);
@@ -691,7 +699,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let preferences_window = window.as_weak();
     window.on_save_preferences(
         move |start_at_login,
-              close_to_tray,
+              open_to_system_tray,
               save_confirmation,
               beta_opt_in,
               mixing_suite_enabled,
@@ -700,7 +708,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let existing = load_preferences();
             let preferences = AppPreferences {
                 start_at_login,
-                close_to_tray,
+                open_to_system_tray,
                 save_confirmation,
                 beta_opt_in,
                 mixing_suite_enabled,
@@ -2743,12 +2751,12 @@ fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
 #[cfg(test)]
 mod desktop_tests {
     use super::{
-        DspSelection, active_eq_profile, add_eq_band, adjust_eq_band_value, hotkey_key_name,
-        mock_meter_level, mute_state_with_target, normalize_captured_hotkey, normalize_mute_action,
-        remove_eq_band, selected_dsp_enabled, set_enhancement_preset, set_enhancement_value,
-        set_eq_band_type_value, set_eq_band_value, set_headphone_eq_band_value,
-        set_headphone_subwoofer_value, set_selected_dsp_enabled, source_name_available,
-        update_from_values,
+        AppPreferences, DspSelection, active_eq_profile, add_eq_band, adjust_eq_band_value,
+        hotkey_key_name, mock_meter_level, mute_state_with_target, normalize_captured_hotkey,
+        normalize_mute_action, remove_eq_band, selected_dsp_enabled, set_enhancement_preset,
+        set_enhancement_value, set_eq_band_type_value, set_eq_band_value,
+        set_headphone_eq_band_value, set_headphone_subwoofer_value, set_selected_dsp_enabled,
+        should_start_in_background, source_name_available, update_from_values,
     };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
@@ -2812,6 +2820,24 @@ mod desktop_tests {
             assert!(samples.iter().all(|level| (0.0..=100.0).contains(level)));
             assert!(samples.windows(2).any(|pair| pair[0] != pair[1]));
         }
+    }
+
+    #[test]
+    fn system_tray_preference_controls_background_launch_and_migrates() {
+        let enabled = AppPreferences::default();
+        assert!(should_start_in_background(true, &enabled));
+        assert!(!should_start_in_background(false, &enabled));
+
+        let disabled: AppPreferences = serde_json::from_value(serde_json::json!({
+            "close_to_tray": false
+        }))
+        .unwrap();
+        assert!(!disabled.open_to_system_tray);
+        assert!(!should_start_in_background(true, &disabled));
+
+        let serialized = serde_json::to_value(disabled).unwrap();
+        assert_eq!(serialized["open_to_system_tray"], false);
+        assert!(serialized.get("close_to_tray").is_none());
     }
 
     #[test]

@@ -1513,7 +1513,7 @@ export component MainWindow inherits Window {
     in-out property <float> lighting-suspended-brightness: 50;
     in-out property <int> lighting-colour-index: 0;
     in-out property <bool> start-at-login: false;
-    in-out property <bool> close-to-tray: true;
+    in-out property <bool> open-to-system-tray: true;
     in-out property <bool> save-confirmation: true;
     in-out property <bool> beta-opt-in: false;
     in-out property <bool> mixing-suite-enabled: true;
@@ -2512,18 +2512,18 @@ export component MainWindow inherits Window {
                     padding-right: 34px;
                     spacing: 4px;
                     Text { text: "DEVICE POWER SETTINGS"; color: Theme.text; font-size: 12px; font-weight: 800; }
-                    SettingRow { label: "Boot StudioBridge on System Startup"; checked: root.start-at-login; toggled(value) => { root.start-at-login = value; root.save-preferences(value, root.close-to-tray, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
-                    SettingRow { label: "Open StudioBridge to System Tray"; checked: root.close-to-tray; toggled(value) => { root.close-to-tray = value; root.save-preferences(root.start-at-login, value, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
+                    SettingRow { label: "Boot StudioBridge on System Startup"; checked: root.start-at-login; toggled(value) => { root.start-at-login = value; root.save-preferences(value, root.open-to-system-tray, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
+                    SettingRow { label: "Open StudioBridge to System Tray"; checked: root.open-to-system-tray; toggled(value) => { root.open-to-system-tray = value; root.save-preferences(root.start-at-login, value, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
                     Text { text: "STUDIOBRIDGE APP SETTINGS"; color: Theme.text; font-size: 12px; font-weight: 800; }
-                    SettingRow { label: "Show Save Confirmation Window"; checked: root.save-confirmation; toggled(value) => { root.save-confirmation = value; root.save-preferences(root.start-at-login, root.close-to-tray, value, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
+                    SettingRow { label: "Show Save Confirmation Window"; checked: root.save-confirmation; toggled(value) => { root.save-confirmation = value; root.save-preferences(root.start-at-login, root.open-to-system-tray, value, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
                     Text { text: "STUDIOBRIDGE BETA OPT-IN"; color: Theme.text; font-size: 12px; font-weight: 800; }
-                    SettingRow { label: "Opt-In to StudioBridge Public Beta Releases"; checked: root.beta-opt-in; toggled(value) => { root.beta-opt-in = value; root.save-preferences(root.start-at-login, root.close-to-tray, root.save-confirmation, value, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
+                    SettingRow { label: "Opt-In to StudioBridge Public Beta Releases"; checked: root.beta-opt-in; toggled(value) => { root.beta-opt-in = value; root.save-preferences(root.start-at-login, root.open-to-system-tray, root.save-confirmation, value, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
                     Text { text: "STUDIOBRIDGE MIXING SUITE"; color: Theme.text; font-size: 12px; font-weight: 800; }
-                    SettingRow { label: "StudioBridge Mixing Suite Enabled"; checked: root.mixing-suite-enabled; toggled(value) => { root.mixing-suite-enabled = value; root.save-preferences(root.start-at-login, root.close-to-tray, root.save-confirmation, root.beta-opt-in, value, root.automatic-default-reset, root.meter-crossfade); } }
+                    SettingRow { label: "StudioBridge Mixing Suite Enabled"; checked: root.mixing-suite-enabled; toggled(value) => { root.mixing-suite-enabled = value; root.save-preferences(root.start-at-login, root.open-to-system-tray, root.save-confirmation, root.beta-opt-in, value, root.automatic-default-reset, root.meter-crossfade); } }
                     Text { text: "LINUX AUDIO SETTINGS"; color: Theme.text; font-size: 12px; font-weight: 800; }
-                    SettingRow { label: "Automatic Linux Default Device Reset"; checked: root.automatic-default-reset; toggled(value) => { root.automatic-default-reset = value; root.save-preferences(root.start-at-login, root.close-to-tray, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, value, root.meter-crossfade); } }
+                    SettingRow { label: "Automatic Linux Default Device Reset"; checked: root.automatic-default-reset; toggled(value) => { root.automatic-default-reset = value; root.save-preferences(root.start-at-login, root.open-to-system-tray, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, value, root.meter-crossfade); } }
                     Text { text: "MIXER SETTINGS"; color: Theme.text; font-size: 12px; font-weight: 800; }
-                    SettingRow { label: "Enable Crossfade on Profile Switching"; checked: root.meter-crossfade; toggled(value) => { root.meter-crossfade = value; root.save-preferences(root.start-at-login, root.close-to-tray, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, value); } }
+                    SettingRow { label: "Enable Crossfade on Profile Switching"; checked: root.meter-crossfade; toggled(value) => { root.meter-crossfade = value; root.save-preferences(root.start-at-login, root.open-to-system-tray, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, value); } }
                     Text { text: "HOTKEY ASSIGNMENTS"; color: Theme.text; font-size: 12px; font-weight: 800; }
                     for hotkey in root.hotkeys: VerticalLayout {
                         spacing: 1px;

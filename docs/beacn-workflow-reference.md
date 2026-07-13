@@ -212,7 +212,10 @@ placeholder.
 
 StudioBridge adaptation: preserve the same settings hierarchy and checkbox
 geometry while using System Startup, System Tray, and Linux Audio wording where
-the Windows-specific labels do not apply.
+the Windows-specific labels do not apply. The installed BEACN binary identifies
+the tray preference internally as `openAppToSystemTray`; StudioBridge mirrors
+that startup behavior, so an autostart request stays hidden only while the
+preference is enabled.
 
 ## Originality boundary
 

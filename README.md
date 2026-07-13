@@ -16,8 +16,9 @@ StudioBridge combines three existing Linux capabilities behind one interface:
 - Remote assignment of Windows gaming applications to the four Studio Link channels.
 
 The primary interface is now being migrated to a native Rust/Slint Linux
-application with a system tray and XDG autostart. The existing web interface is
-kept as a migration fallback. See
+application with a system tray and XDG autostart. Its Open to System Tray
+preference controls whether an autostart launch remains hidden. The existing
+web interface is kept as a migration fallback. See
 [docs/native-desktop.md](docs/native-desktop.md) for architecture and current
 status.
 

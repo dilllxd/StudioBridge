@@ -93,7 +93,9 @@ than copying its source or visual assets:
   a measured 350-by-175 blocking dialog with disabled-until-valid confirmation
   and BEACN-matched Escape-key capture;
 - BEACN-measured application settings rows with 18-by-18 square checkboxes,
-  keyboard toggling, checkbox accessibility state, and Linux-specific labels;
+  keyboard toggling, checkbox accessibility state, Linux-specific labels, and
+  an Open to System Tray preference that controls whether an autostart launch
+  stays hidden while accepting the legacy `close_to_tray` settings key;
 - native application chips that drag onto source strips, with accepted-drop
   highlighting, an unassign target, and accessible selector fallback;
 - always-accessible voice EQ and enhancement controls;
