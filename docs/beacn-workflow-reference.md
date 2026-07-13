@@ -157,6 +157,10 @@ global hardware-write gate remains off.
 - Device Settings presents the device name, serial number, firmware version,
   USB2 driverless-mode state, and a Legal and Regulatory action in one compact
   information card.
+- The page uses a 42-pixel header. Its 755-by-285 information card is inset 13
+  pixels from the leading edge and 10 pixels below the header; the device icon,
+  identity, information rows, legal action, and driverless-mode row all remain
+  inside that single card.
 - Legal and Regulatory opens a measured 784-by-289 Useful Information modal
   with a title-bar close control, centered FCC/ICES notice, and a large OK
   action. Escape also dismisses the modal.

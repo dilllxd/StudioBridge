@@ -2169,28 +2169,29 @@ export component MainWindow inherits Window {
 
             if root.active-page == 3: VerticalLayout {
                 spacing: 0px;
-                Rectangle { height: 42px; background: #1b1b1e; Text { x: 10px; text: "DEVICE SETTINGS"; color: Theme.text; font-size: 13px; font-weight: 800; vertical-alignment: center; } }
+                Rectangle { height: 42px; background: #1b1b1e; Text { x: 5px; text: "DEVICE SETTINGS"; color: Theme.text; font-size: 13px; font-weight: 800; vertical-alignment: center; } }
                 Rectangle {
-                    width: 755px;
-                    height: 285px;
-                    background: #1f1f22;
-                    border-width: 1px; border-color: Theme.border;
-                    Image { x: 68px; y: 28px; width: 70px; height: 70px; source: @image-url("../assets/studiobridge.svg"); }
-                    Text { x: 158px; y: 42px; text: "Device Name:"; color: Theme.text; font-size: 13px; font-weight: 800; }
-                    Text { x: 158px; y: 64px; text: root.device-name; color: Theme.quiet; font-size: 12px; font-weight: 700; }
-                    Text { x: 110px; y: 124px; text: "Device Information"; color: Theme.text; font-size: 13px; font-weight: 800; }
-                    Text { x: 110px; y: 150px; text: "Serial Number:"; color: Theme.quiet; font-size: 11px; font-weight: 700; }
-                    Text { x: 285px; y: 150px; text: root.device-serial; color: Theme.text; font-size: 11px; font-weight: 700; }
-                    Text { x: 110px; y: 169px; text: "Firmware Version:"; color: Theme.quiet; font-size: 11px; font-weight: 700; }
-                    Text { x: 285px; y: 169px; text: root.device-firmware; color: Theme.text; font-size: 11px; font-weight: 700; }
-                    Button {
-                        x: 520px; y: 145px; width: 140px; height: 28px;
-                        text: "Legal and Regulatory";
-                        clicked => { root.legal-dialog-open = true; }
+                    height: 305px; background: transparent;
+                    Rectangle {
+                        x: 13px; y: 10px; width: 755px; height: 285px;
+                        background: #1f1f22; border-width: 1px; border-color: Theme.border;
+                        Image { x: 68px; y: 28px; width: 70px; height: 70px; source: @image-url("../assets/studiobridge.svg"); }
+                        Text { x: 158px; y: 42px; text: "Device Name:"; color: Theme.text; font-size: 13px; font-weight: 800; }
+                        Text { x: 158px; y: 64px; text: root.device-name; color: Theme.quiet; font-size: 12px; font-weight: 700; }
+                        Text { x: 110px; y: 124px; text: "Device Information"; color: Theme.text; font-size: 13px; font-weight: 800; }
+                        Text { x: 110px; y: 150px; text: "Serial Number:"; color: Theme.quiet; font-size: 11px; font-weight: 700; }
+                        Text { x: 285px; y: 150px; text: root.device-serial; color: Theme.text; font-size: 11px; font-weight: 700; }
+                        Text { x: 110px; y: 169px; text: "Firmware Version:"; color: Theme.quiet; font-size: 11px; font-weight: 700; }
+                        Text { x: 285px; y: 169px; text: root.device-firmware; color: Theme.text; font-size: 11px; font-weight: 700; }
+                        Button {
+                            x: 526px; y: 145px; width: 140px; height: 28px;
+                            text: "Legal and Regulatory";
+                            clicked => { root.legal-dialog-open = true; }
+                        }
+                        Text { x: 110px; y: 242px; text: "USB2 Driverless Mode"; color: Theme.quiet; font-size: 11px; font-weight: 700; }
+                        ToggleSwitch { x: 614px; y: 239px; checked: false; interactive: false; }
+                        Text { x: 450px; y: 244px; text: "read-only"; color: Theme.amber; font-size: 9px; }
                     }
-                    Text { x: 110px; y: 242px; text: "USB2 Driverless Mode"; color: Theme.quiet; font-size: 11px; font-weight: 700; }
-                    ToggleSwitch { x: 610px; y: 239px; checked: false; interactive: false; }
-                    Text { x: 450px; y: 244px; text: "read-only"; color: Theme.amber; font-size: 9px; }
                 }
                 Rectangle { vertical-stretch: 1; }
             }
