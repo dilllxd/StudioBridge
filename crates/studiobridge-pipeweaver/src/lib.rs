@@ -11,7 +11,8 @@ use pipeweaver_shared::{
 use std::collections::HashMap;
 use studiobridge_core::{
     BackendStatus, BridgeError, BridgeResult, MixBus, MixerApplication, MixerBackend, MixerChannel,
-    MixerDeviceChoice, MixerRoute, MixerSnapshot, MixerSourceKind, MixerTarget, MuteState,
+    MixerDeviceChoice, MixerPhysicalDeviceChoice, MixerPhysicalDeviceDescriptor, MixerRoute,
+    MixerSnapshot, MixerSourceKind, MixerTarget, MuteState,
 };
 use tokio::sync::Mutex;
 use ulid::Ulid;
@@ -101,6 +102,89 @@ impl MixerBackend for PipeweaverBackend {
             target_mute_state(muted),
         ))
         .await
+    }
+
+    async fn set_target_device(
+        &self,
+        target_id: &str,
+        device_node_id: Option<u32>,
+    ) -> BridgeResult<()> {
+        let status = self
+            .client
+            .lock()
+            .await
+            .get_status()
+            .await
+            .map_err(|error| BridgeError::BackendUnavailable(error.to_string()))?;
+        let snapshot = map_status(&status);
+        let target = snapshot
+            .targets
+            .iter()
+            .find(|target| target.id == target_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
+        let selected = device_node_id
+            .map(|node_id| {
+                snapshot
+                    .physical_outputs
+                    .iter()
+                    .find(|device| device.node_id == node_id)
+                    .ok_or_else(|| {
+                        BridgeError::InvalidValue(format!(
+                            "unknown or unusable physical output node: {node_id}"
+                        ))
+                    })
+            })
+            .transpose()?;
+
+        let matching_index = selected.and_then(|device| {
+            target
+                .attached_devices
+                .iter()
+                .position(|attached| physical_device_matches(attached, &device.descriptor))
+        });
+        if selected.is_some() && target.attached_devices.len() == 1 && matching_index == Some(0) {
+            return Ok(());
+        }
+        if selected.is_none() && target.attached_devices.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(device) = selected {
+            if let Some(keep_index) = matching_index {
+                for index in (0..target.attached_devices.len()).rev() {
+                    if index != keep_index {
+                        self.send(APICommand::RemovePhysicalNodeByName(
+                            target_id.to_owned(),
+                            index,
+                        ))
+                        .await?;
+                    }
+                }
+            } else {
+                // Attach first so a failed attach leaves the current output path intact.
+                self.send(APICommand::AttachPhysicalNodeByName(
+                    target_id.to_owned(),
+                    device.node_id,
+                ))
+                .await?;
+                for index in (0..target.attached_devices.len()).rev() {
+                    self.send(APICommand::RemovePhysicalNodeByName(
+                        target_id.to_owned(),
+                        index,
+                    ))
+                    .await?;
+                }
+            }
+        } else {
+            for index in (0..target.attached_devices.len()).rev() {
+                self.send(APICommand::RemovePhysicalNodeByName(
+                    target_id.to_owned(),
+                    index,
+                ))
+                .await?;
+            }
+        }
+        Ok(())
     }
 
     async fn set_default_input(&self, device_id: &str) -> BridgeResult<()> {
@@ -264,6 +348,7 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
             mix: from_pipeweaver_mix(device.mix),
             volume: device.volume,
             muted: device.mute_state == PwMuteState::Muted,
+            attached_devices: map_attached_devices(&device.attached_devices),
         })
         .chain(
             status
@@ -280,6 +365,7 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
                     mix: from_pipeweaver_mix(device.mix),
                     volume: device.volume,
                     muted: device.mute_state == PwMuteState::Muted,
+                    attached_devices: map_attached_devices(&device.attached_devices),
                 }),
         )
         .collect::<Vec<_>>();
@@ -329,6 +415,7 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
         })
         .collect();
     let (default_inputs, default_outputs) = default_device_choices(status);
+    let physical_outputs = physical_output_choices(status);
 
     MixerSnapshot {
         status: BackendStatus::Connected,
@@ -342,6 +429,56 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
         default_output: status.audio.defaults_id[DeviceType::Target].map(|id| id.to_string()),
         default_inputs,
         default_outputs,
+        physical_outputs,
+    }
+}
+
+fn map_attached_devices(
+    devices: &[pipeweaver_profile::PhysicalDeviceDescriptor],
+) -> Vec<MixerPhysicalDeviceDescriptor> {
+    devices
+        .iter()
+        .map(|device| MixerPhysicalDeviceDescriptor {
+            name: device.name.clone(),
+            description: device.description.clone(),
+        })
+        .collect()
+}
+
+fn physical_output_choices(status: &DaemonStatus) -> Vec<MixerPhysicalDeviceChoice> {
+    let mut outputs = status.audio.devices[DeviceType::Target]
+        .iter()
+        .filter(|device| device.is_usable)
+        .map(|device| MixerPhysicalDeviceChoice {
+            node_id: device.node_id,
+            name: device
+                .description
+                .clone()
+                .or_else(|| device.name.clone())
+                .unwrap_or_else(|| format!("Output node {}", device.node_id)),
+            descriptor: MixerPhysicalDeviceDescriptor {
+                name: device.name.clone(),
+                description: device.description.clone(),
+            },
+        })
+        .collect::<Vec<_>>();
+    outputs.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.node_id.cmp(&right.node_id))
+    });
+    outputs.dedup_by_key(|device| device.node_id);
+    outputs
+}
+
+fn physical_device_matches(
+    left: &MixerPhysicalDeviceDescriptor,
+    right: &MixerPhysicalDeviceDescriptor,
+) -> bool {
+    match (&left.name, &right.name) {
+        (Some(left), Some(right)) => left == right,
+        _ => left.description.is_some() && left.description == right.description,
     }
 }
 
@@ -594,9 +731,21 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::Mutex as AsyncMutex;
 
-    #[derive(Clone, Default)]
+    #[derive(Clone)]
     struct FakePipeweaver {
         requests: Arc<AsyncMutex<Vec<DaemonRequest>>>,
+        status: Arc<AsyncMutex<DaemonStatus>>,
+    }
+
+    impl Default for FakePipeweaver {
+        fn default() -> Self {
+            let mut status = DaemonStatus::default();
+            status.audio.profile = pipeweaver_profile::Profile::base_settings();
+            Self {
+                requests: Arc::default(),
+                status: Arc::new(AsyncMutex::new(status)),
+            }
+        }
     }
 
     async fn fake_command(
@@ -605,9 +754,7 @@ mod tests {
     ) -> Json<DaemonResponse> {
         state.requests.lock().await.push(request.clone());
         if matches!(request, DaemonRequest::GetStatus) {
-            let mut status = DaemonStatus::default();
-            status.audio.profile = pipeweaver_profile::Profile::base_settings();
-            Json(DaemonResponse::Status(status))
+            Json(DaemonResponse::Status(state.status.lock().await.clone()))
         } else {
             Json(DaemonResponse::Pipewire(PWCommandResponse::Ok))
         }
@@ -756,6 +903,69 @@ mod tests {
         assert!(matches!(requests.get(13), Some(DaemonRequest::Pipewire(
             APICommand::RemoveNodeByName(name)
         )) if name == "Aux 1"));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn target_device_replacement_attaches_before_removing_stale_outputs() {
+        let (backend, fake, server) = fake_backend().await;
+        let old = pipeweaver_profile::PhysicalDeviceDescriptor {
+            name: Some("alsa_output.old".into()),
+            description: Some("Old Output".into()),
+        };
+        {
+            let mut status = fake.status.lock().await;
+            status.audio.profile.devices.targets.physical_devices[0].attached_devices = vec![old];
+            status.audio.devices[DeviceType::Target].push(
+                pipeweaver_ipc::commands::PhysicalDevice {
+                    node_id: 42,
+                    name: Some("alsa_output.new".into()),
+                    description: Some("New Output".into()),
+                    is_usable: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        backend
+            .set_target_device("Headphones", Some(42))
+            .await
+            .unwrap();
+
+        let requests = fake.requests.lock().await;
+        assert!(matches!(requests.first(), Some(DaemonRequest::GetStatus)));
+        assert!(matches!(requests.get(1), Some(DaemonRequest::Pipewire(
+            APICommand::AttachPhysicalNodeByName(name, 42)
+        )) if name == "Headphones"));
+        assert!(matches!(requests.get(2), Some(DaemonRequest::Pipewire(
+            APICommand::RemovePhysicalNodeByName(name, 0)
+        )) if name == "Headphones"));
+        assert_eq!(requests.len(), 3);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn target_device_selection_rejects_unusable_nodes_without_writes() {
+        let (backend, fake, server) = fake_backend().await;
+        fake.status.lock().await.audio.devices[DeviceType::Target].push(
+            pipeweaver_ipc::commands::PhysicalDevice {
+                node_id: 42,
+                name: Some("alsa_output.unusable".into()),
+                description: Some("Unusable Output".into()),
+                is_usable: false,
+                ..Default::default()
+            },
+        );
+
+        let error = backend
+            .set_target_device("Headphones", Some(42))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("unknown or unusable"));
+        let requests = fake.requests.lock().await;
+        assert!(matches!(requests.as_slice(), [DaemonRequest::GetStatus]));
 
         server.abort();
     }

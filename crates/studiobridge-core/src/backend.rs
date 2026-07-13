@@ -1,9 +1,9 @@
 use crate::dsp::*;
 use crate::{
     BackendStatus, BridgeError, BridgeResult, HeadphoneState, LinkChannel, LinkedApplication,
-    MicrophoneState, MixBus, MixerApplication, MixerChannel, MixerDeviceChoice, MixerRoute,
-    MixerSnapshot, MixerSourceKind, MixerTarget, MuteState, SetMicrophoneRequest, StudioIdentity,
-    StudioSnapshot,
+    MicrophoneState, MixBus, MixerApplication, MixerChannel, MixerDeviceChoice,
+    MixerPhysicalDeviceChoice, MixerPhysicalDeviceDescriptor, MixerRoute, MixerSnapshot,
+    MixerSourceKind, MixerTarget, MuteState, SetMicrophoneRequest, StudioIdentity, StudioSnapshot,
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -31,6 +31,11 @@ pub trait MixerBackend: Send + Sync {
     async fn set_volume(&self, channel_id: &str, mix: MixBus, volume: u8) -> BridgeResult<()>;
     async fn set_target_volume(&self, target_id: &str, volume: u8) -> BridgeResult<()>;
     async fn set_target_mute(&self, target_id: &str, muted: bool) -> BridgeResult<()>;
+    async fn set_target_device(
+        &self,
+        target_id: &str,
+        device_node_id: Option<u32>,
+    ) -> BridgeResult<()>;
     async fn set_default_input(&self, device_id: &str) -> BridgeResult<()>;
     async fn set_default_output(&self, device_id: &str) -> BridgeResult<()>;
     async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()>;
@@ -317,6 +322,10 @@ impl Default for MockMixerBackend {
                         mix: MixBus::Personal,
                         volume: 62,
                         muted: false,
+                        attached_devices: vec![MixerPhysicalDeviceDescriptor {
+                            name: Some("alsa_output.beacn_studio_headphones".into()),
+                            description: Some("BEACN Studio Headphones".into()),
+                        }],
                     },
                     MixerTarget {
                         id: "voice-chat-mic".into(),
@@ -325,6 +334,10 @@ impl Default for MockMixerBackend {
                         mix: MixBus::Audience,
                         volume: 100,
                         muted: false,
+                        attached_devices: vec![MixerPhysicalDeviceDescriptor {
+                            name: Some("alsa_output.beacn_studio_link_out".into()),
+                            description: Some("BEACN Studio Link Out".into()),
+                        }],
                     },
                     MixerTarget {
                         id: "vod-track".into(),
@@ -333,6 +346,7 @@ impl Default for MockMixerBackend {
                         mix: MixBus::Audience,
                         volume: 100,
                         muted: false,
+                        attached_devices: Vec::new(),
                     },
                     MixerTarget {
                         id: "audience-mix".into(),
@@ -341,6 +355,7 @@ impl Default for MockMixerBackend {
                         mix: MixBus::Audience,
                         volume: 100,
                         muted: false,
+                        attached_devices: Vec::new(),
                     },
                 ],
                 routes: vec![
@@ -391,6 +406,32 @@ impl Default for MockMixerBackend {
                     MixerDeviceChoice {
                         id: "system".into(),
                         name: "System".into(),
+                    },
+                ],
+                physical_outputs: vec![
+                    MixerPhysicalDeviceChoice {
+                        node_id: 101,
+                        name: "BEACN Studio Headphones".into(),
+                        descriptor: MixerPhysicalDeviceDescriptor {
+                            name: Some("alsa_output.beacn_studio_headphones".into()),
+                            description: Some("BEACN Studio Headphones".into()),
+                        },
+                    },
+                    MixerPhysicalDeviceChoice {
+                        node_id: 102,
+                        name: "BEACN Studio Link Out".into(),
+                        descriptor: MixerPhysicalDeviceDescriptor {
+                            name: Some("alsa_output.beacn_studio_link_out".into()),
+                            description: Some("BEACN Studio Link Out".into()),
+                        },
+                    },
+                    MixerPhysicalDeviceChoice {
+                        node_id: 103,
+                        name: "Capture Card Audio".into(),
+                        descriptor: MixerPhysicalDeviceDescriptor {
+                            name: Some("alsa_output.capture_card".into()),
+                            description: Some("Capture Card Audio".into()),
+                        },
                     },
                 ],
             })),
@@ -447,6 +488,35 @@ impl MixerBackend for MockMixerBackend {
             .find(|target| target.id == target_id)
             .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
         target.muted = muted;
+        Ok(())
+    }
+
+    async fn set_target_device(
+        &self,
+        target_id: &str,
+        device_node_id: Option<u32>,
+    ) -> BridgeResult<()> {
+        let mut state = self.state.write().await;
+        let descriptor = device_node_id
+            .map(|node_id| {
+                state
+                    .physical_outputs
+                    .iter()
+                    .find(|device| device.node_id == node_id)
+                    .map(|device| device.descriptor.clone())
+                    .ok_or_else(|| {
+                        BridgeError::InvalidValue(format!(
+                            "unknown physical output node: {node_id}"
+                        ))
+                    })
+            })
+            .transpose()?;
+        let target = state
+            .targets
+            .iter_mut()
+            .find(|target| target.id == target_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
+        target.attached_devices = descriptor.into_iter().collect();
         Ok(())
     }
 

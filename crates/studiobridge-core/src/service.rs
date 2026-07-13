@@ -110,6 +110,18 @@ impl StudioBridgeService {
         backend_call("PipeWeaver", self.mixer.set_target_mute(target_id, muted)).await
     }
 
+    pub async fn set_target_device(
+        &self,
+        target_id: &str,
+        device_node_id: Option<u32>,
+    ) -> BridgeResult<()> {
+        backend_call(
+            "PipeWeaver",
+            self.mixer.set_target_device(target_id, device_node_id),
+        )
+        .await
+    }
+
     pub async fn set_default_input(&self, device_id: &str) -> BridgeResult<()> {
         backend_call("PipeWeaver", self.mixer.set_default_input(device_id)).await
     }
@@ -201,6 +213,17 @@ impl StudioBridgeService {
             if current.targets.iter().any(|item| item.id == target.id) {
                 self.set_target_volume(&target.id, target.volume).await?;
                 self.set_target_mute(&target.id, target.muted).await?;
+                if target.attached_devices.is_empty() {
+                    self.set_target_device(&target.id, None).await?;
+                } else if let Some(output) = current.physical_outputs.iter().find(|output| {
+                    target
+                        .attached_devices
+                        .iter()
+                        .any(|attached| physical_device_matches(attached, &output.descriptor))
+                }) {
+                    self.set_target_device(&target.id, Some(output.node_id))
+                        .await?;
+                }
             }
         }
 
@@ -297,6 +320,17 @@ fn disconnected_mixer(error: crate::BridgeError) -> MixerSnapshot {
         default_output: None,
         default_inputs: Vec::new(),
         default_outputs: Vec::new(),
+        physical_outputs: Vec::new(),
+    }
+}
+
+fn physical_device_matches(
+    left: &crate::MixerPhysicalDeviceDescriptor,
+    right: &crate::MixerPhysicalDeviceDescriptor,
+) -> bool {
+    match (&left.name, &right.name) {
+        (Some(left), Some(right)) => left == right,
+        _ => left.description.is_some() && left.description == right.description,
     }
 }
 
@@ -443,6 +477,10 @@ mod tests {
         service.set_source_order("game", 0).await.unwrap();
         service.create_source("Aux 1").await.unwrap();
         service.set_target_mute("headphones", true).await.unwrap();
+        service
+            .set_target_device("headphones", Some(103))
+            .await
+            .unwrap();
 
         service.apply_mixer_profile(&saved).await.unwrap();
         let restored = service.snapshot().await.unwrap().mixer;
@@ -473,6 +511,20 @@ mod tests {
                 .find(|target| target.id == "headphones")
                 .unwrap()
                 .muted
+        );
+        assert_eq!(
+            restored
+                .targets
+                .iter()
+                .find(|target| target.id == "headphones")
+                .unwrap()
+                .attached_devices,
+            saved
+                .targets
+                .iter()
+                .find(|target| target.id == "headphones")
+                .unwrap()
+                .attached_devices
         );
         assert_eq!(
             restored

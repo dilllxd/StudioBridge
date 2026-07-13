@@ -8,11 +8,20 @@ volume and mute state. Muting a bus uses PipeWeaver's target-mute command rather
 than replacing or forgetting its saved master volume, and mixer profiles
 restore both values.
 
-The Assignments panel reads PipeWeaver's current `defaults_id` state and lists
-every compatible managed or usable physical device. Changing the recording or
-playback selector sends PipeWeaver's typed `SetDefaultInput` or
-`SetDefaultOutput` command. The Personal Mix device hotkey cycles the same
-playback candidate list; it does not touch BEACN USB controls.
+The Assignments panel keeps two device concepts separate. Recording and
+playback defaults read PipeWeaver's current `defaults_id` state and send the
+typed `SetDefaultInput` or `SetDefaultOutput` command. Output Bus Device
+Assignments lists usable physical PipeWire target nodes and attaches one to an
+individual mixer target with PipeWeaver's typed attach/remove commands. The
+Personal Mix device hotkey cycles the default-playback candidate list; it does
+not touch BEACN USB controls.
+
+Selecting a replacement output validates the node first, attaches it before
+removing stale attachments, and therefore leaves the existing path intact if
+the new attach fails. `Unassigned` deliberately removes the target's current
+physical attachments. Mixer profiles persist and restore these per-target
+assignments when the saved physical descriptor is available; a missing device
+is never guessed.
 
 ## VOD Track
 

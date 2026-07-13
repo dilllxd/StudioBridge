@@ -47,6 +47,7 @@ export struct TargetModel {
     volume: float,
     meter: float,
     muted: bool,
+    output-device-index: int,
 }
 
 global Theme {
@@ -831,18 +832,13 @@ component TargetStrip inherits Rectangle {
         HorizontalLayout {
             height: 34px;
             spacing: 7px;
-            if root.target.target-id == "headphones": BeacnSelector {
+            BeacnSelector {
                 width: 170px;
                 height: 27px;
                 model: root.output-device-names;
                 current-index: root.output-device-index;
                 popup-width: 248px;
                 selected(index) => { root.output-device-selected(index); }
-            }
-            if root.target.target-id == "audience-mix": Rectangle {
-                width: 170px; height: 27px;
-                background: #1b1b1e; border-width: 1px; border-color: Theme.border;
-                Text { x: 7px; width: parent.width - 14px; text: root.target.name; color: Theme.teal; font-size: 10px; font-weight: 700; vertical-alignment: center; overflow: elide; }
             }
             LevelMeter { width: 8px; height: 24px; value: root.target.muted ? 0 : root.target.meter; colour: root.target.mix == "Personal" ? Theme.teal : Theme.amber; }
             HorizontalFader {
@@ -883,6 +879,14 @@ component TargetStrip inherits Rectangle {
                 control-label: root.target.name + " output volume";
                 changed(value) => { root.volume-changed(value); }
             }
+        }
+        BeacnSelector {
+            width: 136px;
+            height: 27px;
+            model: root.output-device-names;
+            current-index: root.output-device-index;
+            popup-width: 248px;
+            selected(index) => { root.output-device-selected(index); }
         }
         LevelMeter { width: 12px; value: root.target.muted ? 0 : root.target.meter; colour: root.target.mix == "Personal" ? Theme.teal : Theme.amber; }
         Text { text: round(root.target.volume) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; }
@@ -1750,6 +1754,8 @@ export component MainWindow inherits Window {
     in property <[string]> default-input-ids;
     in property <[string]> default-output-names;
     in property <[string]> default-output-ids;
+    in property <[string]> physical-output-names;
+    in property <[string]> physical-output-ids;
     in property <string> source-name-key: "";
     in property <int> default-input-index: -1;
     in property <int> default-output-index: -1;
@@ -1849,6 +1855,7 @@ export component MainWindow inherits Window {
     callback set-volume(string, string, float);
     callback set-target-volume(string, float);
     callback set-target-mute(string, bool);
+    callback set-target-device(string, string);
     callback set-default-input(string);
     callback set-default-output(string);
     callback set-source-mute(string, string, bool);
@@ -2048,13 +2055,13 @@ export component MainWindow inherits Window {
                                 spacing: 5px;
                                 for target in root.targets: TargetStrip {
                                     target: target;
-                                    output-device-names: root.default-output-names;
-                                    output-device-index: root.default-output-index;
+                                    output-device-names: root.physical-output-names;
+                                    output-device-index: target.output-device-index;
                                     volume-changed(value) => { root.set-target-volume(target.target-id, value); }
                                     mute-clicked => { root.set-target-mute(target.target-id, !target.muted); }
                                     output-device-selected(index) => {
-                                        if index >= 0 && index < root.default-output-ids.length {
-                                            root.set-default-output(root.default-output-ids[index]);
+                                        if index >= 0 && index < root.physical-output-ids.length {
+                                            root.set-target-device(target.target-id, root.physical-output-ids[index]);
                                         }
                                     }
                                 }
@@ -2079,7 +2086,7 @@ export component MainWindow inherits Window {
                     spacing: 3px;
                     vertical-stretch: 1;
                     Rectangle {
-                        width: 250px;
+                        width: 300px;
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
                             padding: 9px; spacing: 7px;
@@ -2098,9 +2105,40 @@ export component MainWindow inherits Window {
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
                             padding: 9px; spacing: 6px;
-                            Text { text: "OUTGOING STUDIO LINK ASSIGNMENTS"; color: Theme.text; font-size: 11px; font-weight: 800; }
-                            Text { text: "Multiple Windows apps may share a Link channel"; color: Theme.quiet; font-size: 9px; }
-                            ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 6px; for app in root.link-applications: AssignmentRow { title: app.name; HorizontalLayout { padding-left: 10px; padding-right: 8px; Text { text: app.name; color: Theme.text; font-size: 12px; font-weight: 700; horizontal-stretch: 1; } BeacnSelector { width: 140px; model: root.link-channel-names; current-index: app.channel-index; popup-width: 180px; selected(index) => { root.assign-link-application(app.name, index); } } } } } }
+                            Text { text: "OUTPUT BUS DEVICE ASSIGNMENTS"; color: Theme.text; font-size: 11px; font-weight: 800; }
+                            Text { text: "Attach each mix to a physical PipeWire output"; color: Theme.quiet; font-size: 9px; }
+                            ScrollView {
+                                vertical-stretch: 1;
+                                VerticalLayout {
+                                    spacing: 6px;
+                                    for target in root.targets: AssignmentRow {
+                                        title: target.name;
+                                        VerticalLayout {
+                                            padding-left: 8px; padding-right: 8px; padding-top: 4px; padding-bottom: 4px; spacing: 3px;
+                                            Text { height: 14px; text: target.name; color: Theme.text; font-size: 10px; font-weight: 700; overflow: elide; }
+                                            BeacnSelector {
+                                                horizontal-stretch: 1;
+                                                height: 27px;
+                                                model: root.physical-output-names;
+                                                current-index: target.output-device-index;
+                                                popup-width: 274px;
+                                                selected(index) => { if index >= 0 && index < root.physical-output-ids.length { root.set-target-device(target.target-id, root.physical-output-ids[index]); } }
+                                            }
+                                        }
+                                    }
+                                    Rectangle { height: 1px; background: Theme.border; }
+                                    Text { height: 20px; text: "WINDOWS LINK APPLICATIONS"; color: Theme.text; font-size: 10px; font-weight: 800; vertical-alignment: bottom; }
+                                    Text { text: "Multiple gaming-PC apps may share a Link channel"; color: Theme.quiet; font-size: 8px; }
+                                    for app in root.link-applications: AssignmentRow {
+                                        title: app.name;
+                                        HorizontalLayout {
+                                            padding-left: 10px; padding-right: 8px;
+                                            Text { text: app.name; color: Theme.text; font-size: 11px; font-weight: 700; horizontal-stretch: 1; overflow: elide; }
+                                            BeacnSelector { width: 140px; model: root.link-channel-names; current-index: app.channel-index; popup-width: 180px; selected(index) => { root.assign-link-application(app.name, index); } }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     Rectangle {

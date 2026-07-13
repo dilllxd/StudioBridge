@@ -35,7 +35,7 @@ use std::{
 use studiobridge_core::{
     AppSnapshot, DspMode, DspWriteModule, EqualizerBandType, EqualizerProfile, HeadphoneOutputMode,
     LinkChannel, MicrophoneDspSnapshot, MicrophoneDspUpdate, MixBus, MixerChannel,
-    MixerDeviceChoice, MuteState, NoiseSuppressionStyle,
+    MixerDeviceChoice, MixerPhysicalDeviceDescriptor, MuteState, NoiseSuppressionStyle,
 };
 
 mod client;
@@ -758,6 +758,8 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_default_input_ids(string_model(Vec::new()));
     window.set_default_output_names(string_model(Vec::new()));
     window.set_default_output_ids(string_model(Vec::new()));
+    window.set_physical_output_names(string_model(vec!["Unassigned".into()]));
+    window.set_physical_output_ids(string_model(vec![String::new()]));
     window.set_link_channel_names(string_model(vec![
         "System".into(),
         "Link 1".into(),
@@ -957,6 +959,39 @@ fn main() -> Result<(), slint::PlatformError> {
                     window.clone(),
                     format!("Output mute update failed: {error}"),
                 );
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let target_device_window = window.as_weak();
+    let target_device_client = client.clone();
+    window.on_set_target_device(move |target_id, device_node_id| {
+        let window = target_device_window.clone();
+        let client = target_device_client.clone();
+        let target_id = target_id.to_string();
+        let device_node_id = device_node_id.to_string();
+        thread::spawn(move || {
+            let node_id = if device_node_id.is_empty() {
+                None
+            } else {
+                match device_node_id.parse::<u32>() {
+                    Ok(node_id) => Some(node_id),
+                    Err(error) => {
+                        set_status(
+                            window,
+                            format!("Output device selection is invalid: {error}"),
+                        );
+                        return;
+                    }
+                }
+            };
+            match client.set_target_device(&target_id, node_id) {
+                Ok(()) => set_status(window.clone(), format!("{target_id} output device updated")),
+                Err(error) => set_status(
+                    window.clone(),
+                    format!("Output device update failed: {error}"),
+                ),
             }
             refresh_all(window, client);
         });
@@ -2002,21 +2037,31 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
         .iter()
         .map(|channel| source(channel, &preferences))
         .collect::<Vec<_>>();
-    let targets = ordered_targets
-        .iter()
-        .map(|target| TargetModel {
-            target_id: target.id.clone().into(),
-            meter_id: target.meter_id.clone().into(),
-            name: target.name.clone().into(),
-            mix: match target.mix {
-                MixBus::Personal => "Personal".into(),
-                MixBus::Audience => "Audience".into(),
-            },
-            volume: target.volume as f32,
-            meter: 0.0,
-            muted: target.muted,
-        })
-        .collect::<Vec<_>>();
+    let targets =
+        ordered_targets
+            .iter()
+            .map(|target| TargetModel {
+                target_id: target.id.clone().into(),
+                meter_id: target.meter_id.clone().into(),
+                name: target.name.clone().into(),
+                mix: match target.mix {
+                    MixBus::Personal => "Personal".into(),
+                    MixBus::Audience => "Audience".into(),
+                },
+                volume: target.volume as f32,
+                meter: 0.0,
+                muted: target.muted,
+                output_device_index: target
+                    .attached_devices
+                    .iter()
+                    .find_map(|attached| {
+                        snapshot.mixer.physical_outputs.iter().position(|output| {
+                            physical_device_matches(attached, &output.descriptor)
+                        })
+                    })
+                    .map_or(0, |index| index as i32 + 1),
+            })
+            .collect::<Vec<_>>();
     let default_input_index = snapshot
         .mixer
         .default_input
@@ -2073,6 +2118,24 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
             .map(|device| device.id.clone())
             .collect(),
     ));
+    let mut physical_output_names = vec!["Unassigned".to_string()];
+    physical_output_names.extend(
+        snapshot
+            .mixer
+            .physical_outputs
+            .iter()
+            .map(|device| device.name.clone()),
+    );
+    let mut physical_output_ids = vec![String::new()];
+    physical_output_ids.extend(
+        snapshot
+            .mixer
+            .physical_outputs
+            .iter()
+            .map(|device| device.node_id.to_string()),
+    );
+    window.set_physical_output_names(string_model(physical_output_names));
+    window.set_physical_output_ids(string_model(physical_output_ids));
     window.set_default_input_index(default_input_index);
     window.set_default_output_index(default_output_index);
     window.set_sources(ModelRc::from(Rc::new(VecModel::from(sources))));
@@ -2081,6 +2144,16 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
     window.set_link_applications(ModelRc::from(Rc::new(VecModel::from(link_applications))));
     window.set_targets(ModelRc::from(Rc::new(VecModel::from(targets))));
     window.set_mixer_channel_names(string_model(channel_names));
+}
+
+fn physical_device_matches(
+    left: &MixerPhysicalDeviceDescriptor,
+    right: &MixerPhysicalDeviceDescriptor,
+) -> bool {
+    match (&left.name, &right.name) {
+        (Some(left), Some(right)) => left == right,
+        _ => left.description.is_some() && left.description == right.description,
+    }
 }
 
 fn hotkey_entry(

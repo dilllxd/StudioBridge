@@ -70,6 +70,11 @@ POST /api/studio/microphone-dsp
 POST /api/studio/microphone
 POST /api/studio/link-assignment
 POST /api/mixer/volume
+POST /api/mixer/target-volume
+POST /api/mixer/target-mute
+POST /api/mixer/target-device
+POST /api/mixer/default-input
+POST /api/mixer/default-output
 POST /api/mixer/volume-link
 POST /api/mixer/mute
 POST /api/mixer/route

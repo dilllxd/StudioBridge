@@ -113,6 +113,8 @@ pub struct MixerTarget {
     pub mix: MixBus,
     pub volume: u8,
     pub muted: bool,
+    #[serde(default)]
+    pub attached_devices: Vec<MixerPhysicalDeviceDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -136,6 +138,19 @@ pub struct MixerDeviceChoice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MixerPhysicalDeviceDescriptor {
+    pub name: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MixerPhysicalDeviceChoice {
+    pub node_id: u32,
+    pub name: String,
+    pub descriptor: MixerPhysicalDeviceDescriptor,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MixerSnapshot {
     pub status: BackendStatus,
     pub error: Option<String>,
@@ -152,6 +167,8 @@ pub struct MixerSnapshot {
     pub default_inputs: Vec<MixerDeviceChoice>,
     #[serde(default)]
     pub default_outputs: Vec<MixerDeviceChoice>,
+    #[serde(default)]
+    pub physical_outputs: Vec<MixerPhysicalDeviceChoice>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -197,6 +214,12 @@ pub struct SetTargetVolumeRequest {
 pub struct SetTargetMuteRequest {
     pub target_id: String,
     pub muted: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetTargetDeviceRequest {
+    pub target_id: String,
+    pub device_node_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

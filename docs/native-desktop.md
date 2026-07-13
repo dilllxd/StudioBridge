@@ -74,12 +74,17 @@ than copying its source or visual assets:
   dismissal, and keyboard activation for Mute to All, Mute to Audience, and
   Mute to Self while retaining the internal Personal target;
 - a prominent Main Out section;
-- BEACN-aligned Personal and Audience master-device cards backed by the real
-  default-output selector and independent PipeWeaver target masters;
+- BEACN-aligned Personal and Audience master-device cards backed by independent
+  PipeWeaver target masters and per-target physical-output attachment, separate
+  from the Linux default-playback selector;
 - a shared BEACN-style device and assignment selector with the measured
   170-by-27 master field, 24-pixel alternative rows, content-width popup,
   native outside/Escape dismissal, and mouse plus arrow-key activation;
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
+- an Output Bus Device Assignments workspace that attaches Personal, Audience,
+  Voice Chat Mic, VOD Track, and future mix buses to explicit usable PipeWire
+  outputs, including BEACN Studio Link playback endpoints, with Unassigned as a
+  deliberate detach state;
 - functional keyboard-accessible target-master volume sliders and mute controls
   for Personal, Audience, Voice Chat Mic, VOD Track, and future PipeWeaver
   outputs, backed by PipeWeaver's exact target commands and restored by mixer

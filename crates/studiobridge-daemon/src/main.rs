@@ -15,9 +15,9 @@ use studiobridge_core::{
     MixerBackend, MixerProfileRequest, MixerProfileSummary, MixerProfilesResponse, MixerSnapshot,
     MockMixerBackend, MockStudioBackend, RemoveMixerSourceRequest, ReorderMixerSourceRequest,
     SetDefaultDeviceRequest, SetLinkAssignmentRequest, SetMicrophoneRequest,
-    SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest, SetTargetMuteRequest,
-    SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest, StudioBackend,
-    StudioBridgeService,
+    SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest, SetTargetDeviceRequest,
+    SetTargetMuteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
+    StudioBackend, StudioBridgeService,
 };
 use studiobridge_pipeweaver::PipeweaverBackend;
 use tokio::sync::RwLock;
@@ -454,6 +454,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/mixer/volume", post(set_volume))
         .route("/api/mixer/target-volume", post(set_target_volume))
         .route("/api/mixer/target-mute", post(set_target_mute))
+        .route("/api/mixer/target-device", post(set_target_device))
         .route("/api/mixer/default-input", post(set_default_input))
         .route("/api/mixer/default-output", post(set_default_output))
         .route("/api/mixer/volume-link", post(set_volume_linked))
@@ -651,6 +652,17 @@ async fn set_target_mute(
     state
         .service
         .set_target_mute(&request.target_id, request.muted)
+        .await?;
+    Ok(ok())
+}
+
+async fn set_target_device(
+    State(state): State<AppState>,
+    Json(request): Json<SetTargetDeviceRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state
+        .service
+        .set_target_device(&request.target_id, request.device_node_id)
         .await?;
     Ok(ok())
 }
