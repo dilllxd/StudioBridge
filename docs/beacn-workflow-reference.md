@@ -50,7 +50,9 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
   Routing Table tab with a raised active fill, teal label, and two-pixel teal
   underline.
 - Profiles occupy a secondary right rail and do not compete with live mixer
-  controls.
+  controls. A profile icon in the 28-pixel application header toggles the
+  entire rail; the installed settings persist that state as
+  `profilesDrawerOpen`.
 - The BEACN Studio and Mixer Profiles headings use independent disclosure
   chevrons. The installed settings persist profile-list expansion under
   `profileListExpanded`.
@@ -68,7 +70,8 @@ Cancel/Escape, and backdrop dismissal.
 StudioBridge persists both disclosure states locally and exposes them to mouse
 and keyboard users. The BEACN Studio section remains a read-only representation:
 its device-profile plus action stays unavailable because on-device profile
-creation would require an excluded storage-write path.
+creation would require an excluded storage-write path. A native top-right
+profile icon likewise toggles and persists the complete 285-pixel rail.
 
 ## Assignments
 

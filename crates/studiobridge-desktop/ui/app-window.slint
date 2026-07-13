@@ -1222,6 +1222,36 @@ component ModuleTab inherits Rectangle {
     }
 }
 
+component ProfileDrawerButton inherits Rectangle {
+    in property <bool> active;
+    callback clicked;
+    width: 34px;
+    height: 26px;
+    background: profile-drawer-touch.has-hover || profile-drawer-focus.has-focus ? #2c2c30 : transparent;
+    border-radius: 2px;
+    Rectangle {
+        x: 13px; y: 4px; width: 8px; height: 8px;
+        border-radius: 4px;
+        background: transparent;
+        border-width: 1px;
+        border-color: root.active ? Theme.teal : Theme.quiet;
+    }
+    Rectangle {
+        x: 9px; y: 14px; width: 16px; height: 8px;
+        border-radius: 4px;
+        background: transparent;
+        border-width: 1px;
+        border-color: root.active ? Theme.teal : Theme.quiet;
+    }
+    profile-drawer-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: button;
+        accessible-label: root.active ? "Hide Profiles" : "Show Profiles";
+        key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.clicked(); return accept; } return reject; }
+        profile-drawer-touch := TouchArea { clicked => { profile-drawer-focus.focus(); root.clicked(); } }
+    }
+}
+
 component SaveProfileGlyph inherits Rectangle {
     in property <color> colour: Theme.quiet;
     background: transparent;
@@ -1545,6 +1575,7 @@ export component MainWindow inherits Window {
     in-out property <bool> meter-crossfade: true;
     in-out property <bool> studio-profiles-expanded: true;
     in-out property <bool> mixer-profiles-expanded: true;
+    in-out property <bool> profiles-drawer-open: true;
     in-out property <bool> legal-dialog-open: false;
     in-out property <bool> profile-save-confirm-open: false;
     in-out property <string> pending-profile-save: "";
@@ -1603,6 +1634,7 @@ export component MainWindow inherits Window {
     callback revert-dsp;
     callback save-preferences(bool, bool, bool, bool, bool, bool, bool);
     callback save-profile-expansion(bool, bool);
+    callback save-profile-drawer(bool);
 
     VerticalLayout {
         spacing: 0px;
@@ -1616,6 +1648,7 @@ export component MainWindow inherits Window {
                 padding-right: 12px;
                 Text { text: "◇  STUDIOBRIDGE"; color: Theme.text; font-size: 10px; font-weight: 800; horizontal-stretch: 1; vertical-alignment: center; }
                 Text { text: root.daemon-connected ? "CONNECTED" : "OFFLINE"; color: root.daemon-connected ? Theme.teal : Theme.red; font-size: 9px; font-weight: 800; vertical-alignment: center; }
+                ProfileDrawerButton { active: root.profiles-drawer-open; clicked => { root.profiles-drawer-open = !root.profiles-drawer-open; root.save-profile-drawer(root.profiles-drawer-open); } }
             }
         }
 
@@ -2576,7 +2609,7 @@ export component MainWindow inherits Window {
             }
         }
 
-            ProfileRail {
+            if root.profiles-drawer-open: ProfileRail {
                 connected: root.daemon-connected;
                 hardware-safe: root.hardware-safe;
                 link-active: root.link-active;

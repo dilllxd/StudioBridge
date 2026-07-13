@@ -85,8 +85,9 @@ than copying its source or visual assets:
 - a BEACN-style profile rail with instant numbered creation plus hover Save,
   Duplicate, and Delete actions in measured 22-pixel rows and three 16-pixel
   action areas, with drawn native glyphs, keyboard activation, and accessible
-  labels; independently collapsible BEACN Studio and Mixer Profile groups retain
-  their local disclosure state while on-device profile creation remains
+  labels; the top-right profile icon toggles and persists the complete rail,
+  while independently collapsible BEACN Studio and Mixer Profile groups retain
+  their local disclosure state and on-device profile creation remains
   unavailable; the persisted Save Confirmation setting controls an attended
   overwrite dialog that supports mouse and keyboard confirmation or
   cancellation;

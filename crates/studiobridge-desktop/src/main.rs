@@ -58,6 +58,7 @@ struct AppPreferences {
     meter_crossfade: bool,
     studio_profiles_expanded: bool,
     mixer_profiles_expanded: bool,
+    profiles_drawer_open: bool,
     hotkeys: HashMap<String, String>,
     mute_actions: HashMap<String, String>,
 }
@@ -74,6 +75,7 @@ impl Default for AppPreferences {
             meter_crossfade: true,
             studio_profiles_expanded: true,
             mixer_profiles_expanded: true,
+            profiles_drawer_open: true,
             hotkeys: HashMap::new(),
             mute_actions: HashMap::new(),
         }
@@ -665,6 +667,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_meter_crossfade(preferences.meter_crossfade);
     window.set_studio_profiles_expanded(preferences.studio_profiles_expanded);
     window.set_mixer_profiles_expanded(preferences.mixer_profiles_expanded);
+    window.set_profiles_drawer_open(preferences.profiles_drawer_open);
     let hotkey_runtime = Rc::new(RefCell::new(HotkeyRuntime::new(
         &preferences,
         client.clone(),
@@ -722,6 +725,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 meter_crossfade,
                 studio_profiles_expanded: existing.studio_profiles_expanded,
                 mixer_profiles_expanded: existing.mixer_profiles_expanded,
+                profiles_drawer_open: existing.profiles_drawer_open,
                 hotkeys: existing.hotkeys,
                 mute_actions: existing.mute_actions,
             };
@@ -748,6 +752,26 @@ fn main() -> Result<(), slint::PlatformError> {
             Err(error) => set_status(
                 profile_expansion_window.clone(),
                 format!("Profile view save failed: {error}"),
+            ),
+        }
+    });
+
+    let profile_drawer_window = window.as_weak();
+    window.on_save_profile_drawer(move |open| {
+        let mut preferences = load_preferences();
+        preferences.profiles_drawer_open = open;
+        match save_preferences(&preferences) {
+            Ok(()) => set_status(
+                profile_drawer_window.clone(),
+                if open {
+                    "Profiles opened".into()
+                } else {
+                    "Profiles hidden".into()
+                },
+            ),
+            Err(error) => set_status(
+                profile_drawer_window.clone(),
+                format!("Profile drawer save failed: {error}"),
             ),
         }
     });
@@ -2860,20 +2884,24 @@ mod desktop_tests {
         assert!(!disabled.open_to_system_tray);
         assert!(disabled.studio_profiles_expanded);
         assert!(disabled.mixer_profiles_expanded);
+        assert!(disabled.profiles_drawer_open);
         assert!(!should_start_in_background(true, &disabled));
 
         let mut collapsed = disabled;
         collapsed.studio_profiles_expanded = false;
         collapsed.mixer_profiles_expanded = false;
+        collapsed.profiles_drawer_open = false;
         let serialized = serde_json::to_value(collapsed).unwrap();
         assert_eq!(serialized["open_to_system_tray"], false);
         assert_eq!(serialized["studio_profiles_expanded"], false);
         assert_eq!(serialized["mixer_profiles_expanded"], false);
+        assert_eq!(serialized["profiles_drawer_open"], false);
         assert!(serialized.get("close_to_tray").is_none());
 
         let restored: AppPreferences = serde_json::from_value(serialized).unwrap();
         assert!(!restored.studio_profiles_expanded);
         assert!(!restored.mixer_profiles_expanded);
+        assert!(!restored.profiles_drawer_open);
     }
 
     #[test]
