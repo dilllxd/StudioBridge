@@ -1314,11 +1314,14 @@ component ProfileRail inherits Rectangle {
     in property <bool> hardware-safe;
     in property <bool> link-active;
     in property <[ProfileModel]> mixer-profiles;
+    in property <bool> studio-profiles-expanded: true;
+    in property <bool> mixer-profiles-expanded: true;
     callback create-profile;
     callback save-profile(string);
     callback duplicate-profile(string);
     callback select-profile(string);
     callback delete-profile(string);
+    callback expansion-changed(bool, bool);
     width: 285px;
     background: #242427;
     border-width: 1px;
@@ -1335,14 +1338,25 @@ component ProfileRail inherits Rectangle {
         Rectangle { height: 1px; background: Theme.border; }
 
         Rectangle {
-            height: 102px;
+            height: root.studio-profiles-expanded ? 102px : 24px;
             background: transparent;
             VerticalLayout {
                 spacing: 3px;
-                Text { text: "v  BEACN Studio 1                                      +"; color: Theme.text; font-size: 12px; font-weight: 800; }
-                Text { text: "     Default Profile (1)"; color: Theme.quiet; font-size: 11px; }
-                Text { text: "     Default Profile"; color: Theme.quiet; font-size: 11px; }
                 Rectangle {
+                    height: 24px;
+                    Text { x: 2px; width: parent.width - 34px; text: (root.studio-profiles-expanded ? "⌄  " : "›  ") + "BEACN Studio 1"; color: Theme.text; font-size: 12px; font-weight: 800; vertical-alignment: center; }
+                    Text { x: parent.width - 18px; text: "+"; color: #66666b; font-size: 18px; vertical-alignment: center; }
+                    studio-profiles-focus := FocusScope {
+                        width: parent.width - 32px; height: parent.height;
+                        accessible-role: button;
+                        accessible-label: (root.studio-profiles-expanded ? "Collapse" : "Expand") + " BEACN Studio profiles";
+                        key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.expansion-changed(!root.studio-profiles-expanded, root.mixer-profiles-expanded); return accept; } return reject; }
+                        TouchArea { clicked => { studio-profiles-focus.focus(); root.expansion-changed(!root.studio-profiles-expanded, root.mixer-profiles-expanded); } }
+                    }
+                }
+                if root.studio-profiles-expanded: Text { text: "     Default Profile (1)"; color: Theme.quiet; font-size: 11px; }
+                if root.studio-profiles-expanded: Text { text: "     Default Profile"; color: Theme.quiet; font-size: 11px; }
+                if root.studio-profiles-expanded: Rectangle {
                     height: 24px;
                     background: #3a393e;
                     Text { text: "     On Device"; color: Theme.text; font-size: 11px; font-weight: 700; vertical-alignment: center; }
@@ -1357,8 +1371,15 @@ component ProfileRail inherits Rectangle {
                 spacing: 3px;
                 Rectangle {
                     height: 24px;
-                    Text { text: "v  Mixer Profiles"; color: Theme.text; font-size: 12px; font-weight: 800; vertical-alignment: center; }
+                    Text { x: 2px; width: parent.width - 34px; text: (root.mixer-profiles-expanded ? "⌄  " : "›  ") + "Mixer Profiles"; color: Theme.text; font-size: 12px; font-weight: 800; vertical-alignment: center; }
                     Text { x: parent.width - 18px; text: "+"; color: Theme.text; font-size: 18px; vertical-alignment: center; }
+                    mixer-profiles-focus := FocusScope {
+                        width: parent.width - 32px; height: parent.height;
+                        accessible-role: button;
+                        accessible-label: (root.mixer-profiles-expanded ? "Collapse" : "Expand") + " mixer profiles";
+                        key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.expansion-changed(root.studio-profiles-expanded, !root.mixer-profiles-expanded); return accept; } return reject; }
+                        TouchArea { clicked => { mixer-profiles-focus.focus(); root.expansion-changed(root.studio-profiles-expanded, !root.mixer-profiles-expanded); } }
+                    }
                     create-profile-focus := FocusScope {
                         x: parent.width - 32px; width: 32px; height: parent.height;
                         accessible-role: button;
@@ -1367,14 +1388,17 @@ component ProfileRail inherits Rectangle {
                         TouchArea { clicked => { create-profile-focus.focus(); root.create-profile(); } }
                     }
                 }
-                for profile in root.mixer-profiles: MixerProfileRow {
-                    profile: profile;
-                    selected => { root.select-profile(profile.name); }
-                    saved => { root.save-profile(profile.name); }
-                    duplicated => { root.duplicate-profile(profile.name); }
-                    deleted => { root.delete-profile(profile.name); }
+                if root.mixer-profiles-expanded: VerticalLayout {
+                    spacing: 3px;
+                    for profile in root.mixer-profiles: MixerProfileRow {
+                        profile: profile;
+                        selected => { root.select-profile(profile.name); }
+                        saved => { root.save-profile(profile.name); }
+                        duplicated => { root.duplicate-profile(profile.name); }
+                        deleted => { root.delete-profile(profile.name); }
+                    }
+                    if root.mixer-profiles.length == 0: Text { text: "     New Profile"; color: Theme.quiet; font-size: 11px; }
                 }
-                if root.mixer-profiles.length == 0: Text { text: "     New Profile"; color: Theme.quiet; font-size: 11px; }
                 Rectangle { vertical-stretch: 1; }
             }
         }
@@ -1519,6 +1543,8 @@ export component MainWindow inherits Window {
     in-out property <bool> mixing-suite-enabled: true;
     in-out property <bool> automatic-default-reset: true;
     in-out property <bool> meter-crossfade: true;
+    in-out property <bool> studio-profiles-expanded: true;
+    in-out property <bool> mixer-profiles-expanded: true;
     in-out property <bool> legal-dialog-open: false;
     in-out property <bool> profile-save-confirm-open: false;
     in-out property <string> pending-profile-save: "";
@@ -1576,6 +1602,7 @@ export component MainWindow inherits Window {
     callback apply-dsp(float, float, float, float);
     callback revert-dsp;
     callback save-preferences(bool, bool, bool, bool, bool, bool, bool);
+    callback save-profile-expansion(bool, bool);
 
     VerticalLayout {
         spacing: 0px;
@@ -2554,6 +2581,13 @@ export component MainWindow inherits Window {
                 hardware-safe: root.hardware-safe;
                 link-active: root.link-active;
                 mixer-profiles: root.mixer-profiles;
+                studio-profiles-expanded: root.studio-profiles-expanded;
+                mixer-profiles-expanded: root.mixer-profiles-expanded;
+                expansion-changed(studio-expanded, mixer-expanded) => {
+                    root.studio-profiles-expanded = studio-expanded;
+                    root.mixer-profiles-expanded = mixer-expanded;
+                    root.save-profile-expansion(studio-expanded, mixer-expanded);
+                }
                 create-profile => { root.create-mixer-profile(); }
                 save-profile(name) => {
                     if root.save-confirmation {

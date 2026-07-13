@@ -51,6 +51,9 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
   underline.
 - Profiles occupy a secondary right rail and do not compete with live mixer
   controls.
+- The BEACN Studio and Mixer Profiles headings use independent disclosure
+  chevrons. The installed settings persist profile-list expansion under
+  `profileListExpanded`.
 - Mixer profiles use compact 22-pixel rows. Hovering a row reveals Save,
   Duplicate, and Delete actions in that order in three trailing 16-pixel areas;
   the selected profile keeps the raised row background while its actions are
@@ -62,6 +65,10 @@ reference session. StudioBridge therefore implements the least-surprising
 meaning of that control: when enabled, Save asks before overwriting the selected
 profile; when disabled, Save is immediate. The dialog supports Save/Enter,
 Cancel/Escape, and backdrop dismissal.
+StudioBridge persists both disclosure states locally and exposes them to mouse
+and keyboard users. The BEACN Studio section remains a read-only representation:
+its device-profile plus action stays unavailable because on-device profile
+creation would require an excluded storage-write path.
 
 ## Assignments
 

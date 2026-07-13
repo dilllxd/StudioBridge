@@ -56,6 +56,8 @@ struct AppPreferences {
     mixing_suite_enabled: bool,
     automatic_default_reset: bool,
     meter_crossfade: bool,
+    studio_profiles_expanded: bool,
+    mixer_profiles_expanded: bool,
     hotkeys: HashMap<String, String>,
     mute_actions: HashMap<String, String>,
 }
@@ -70,6 +72,8 @@ impl Default for AppPreferences {
             mixing_suite_enabled: true,
             automatic_default_reset: true,
             meter_crossfade: true,
+            studio_profiles_expanded: true,
+            mixer_profiles_expanded: true,
             hotkeys: HashMap::new(),
             mute_actions: HashMap::new(),
         }
@@ -659,6 +663,8 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_mixing_suite_enabled(preferences.mixing_suite_enabled);
     window.set_automatic_default_reset(preferences.automatic_default_reset);
     window.set_meter_crossfade(preferences.meter_crossfade);
+    window.set_studio_profiles_expanded(preferences.studio_profiles_expanded);
+    window.set_mixer_profiles_expanded(preferences.mixer_profiles_expanded);
     let hotkey_runtime = Rc::new(RefCell::new(HotkeyRuntime::new(
         &preferences,
         client.clone(),
@@ -714,6 +720,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 mixing_suite_enabled,
                 automatic_default_reset,
                 meter_crossfade,
+                studio_profiles_expanded: existing.studio_profiles_expanded,
+                mixer_profiles_expanded: existing.mixer_profiles_expanded,
                 hotkeys: existing.hotkeys,
                 mute_actions: existing.mute_actions,
             };
@@ -726,6 +734,23 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         },
     );
+
+    let profile_expansion_window = window.as_weak();
+    window.on_save_profile_expansion(move |studio_expanded, mixer_expanded| {
+        let mut preferences = load_preferences();
+        preferences.studio_profiles_expanded = studio_expanded;
+        preferences.mixer_profiles_expanded = mixer_expanded;
+        match save_preferences(&preferences) {
+            Ok(()) => set_status(
+                profile_expansion_window.clone(),
+                "Profile view saved".into(),
+            ),
+            Err(error) => set_status(
+                profile_expansion_window.clone(),
+                format!("Profile view save failed: {error}"),
+            ),
+        }
+    });
 
     let hotkey_window = window.as_weak();
     let hotkey_client = client.clone();
@@ -2833,11 +2858,22 @@ mod desktop_tests {
         }))
         .unwrap();
         assert!(!disabled.open_to_system_tray);
+        assert!(disabled.studio_profiles_expanded);
+        assert!(disabled.mixer_profiles_expanded);
         assert!(!should_start_in_background(true, &disabled));
 
-        let serialized = serde_json::to_value(disabled).unwrap();
+        let mut collapsed = disabled;
+        collapsed.studio_profiles_expanded = false;
+        collapsed.mixer_profiles_expanded = false;
+        let serialized = serde_json::to_value(collapsed).unwrap();
         assert_eq!(serialized["open_to_system_tray"], false);
+        assert_eq!(serialized["studio_profiles_expanded"], false);
+        assert_eq!(serialized["mixer_profiles_expanded"], false);
         assert!(serialized.get("close_to_tray").is_none());
+
+        let restored: AppPreferences = serde_json::from_value(serialized).unwrap();
+        assert!(!restored.studio_profiles_expanded);
+        assert!(!restored.mixer_profiles_expanded);
     }
 
     #[test]
