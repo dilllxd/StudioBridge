@@ -75,6 +75,9 @@ export function validateMicrophoneDsp(health, dsp) {
     check(typeof band.enabled === "boolean", `${band.band} headphone EQ enabled state is invalid`);
     check(numberIn(band.amount_db, -12, 12), `${band.band} headphone EQ amount is out of range`);
   }
+  const subwoofer = dsp.headphone_equalizer?.subwoofer ?? {};
+  check(typeof subwoofer.enabled === "boolean", "subwoofer enabled state is invalid");
+  check(Number.isInteger(subwoofer.amount) && subwoofer.amount >= 0 && subwoofer.amount <= 10, "subwoofer amount is out of range");
 
   return {
     failures,
@@ -84,6 +87,7 @@ export function validateMicrophoneDsp(health, dsp) {
       expanderProfiles: [dsp.expander?.simple, dsp.expander?.advanced].filter(Boolean).length,
       enhancementModules: [enhancement.bass, enhancement.de_esser, enhancement.exciter].filter(Boolean).length,
       headphoneEqBands: headphoneBands.length,
+      subwooferAmount: subwoofer.amount,
     },
   };
 }
@@ -95,6 +99,7 @@ function printResult(result) {
   console.log(`  Dynamics: ${result.summary.compressorProfiles} compressor + ${result.summary.expanderProfiles} expander profiles`);
   console.log(`  Enhancement modules: ${result.summary.enhancementModules}`);
   console.log(`  Headphone EQ bands: ${result.summary.headphoneEqBands}`);
+  console.log(`  Subwoofer amount: ${result.summary.subwooferAmount}`);
   for (const failure of result.failures) console.error(`  FAIL: ${failure}`);
   if (result.failures.length) return 1;
   console.log("  PASS: complete DSP state is readable and internally valid");

@@ -33,8 +33,8 @@ use std::{
     path::PathBuf,
 };
 use studiobridge_core::{
-    AppSnapshot, DspMode, DspWriteModule, EqualizerBandType, EqualizerProfile, LinkChannel,
-    MicrophoneDspSnapshot, MicrophoneDspUpdate, MixBus, MixerChannel, MuteState,
+    AppSnapshot, DspMode, DspWriteModule, EqualizerBandType, EqualizerProfile, HeadphoneOutputMode,
+    LinkChannel, MicrophoneDspSnapshot, MicrophoneDspUpdate, MixBus, MixerChannel, MuteState,
     NoiseSuppressionStyle,
 };
 
@@ -1309,6 +1309,46 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    let headphone_band_window = window.as_weak();
+    let headphone_band_session = dsp_session.clone();
+    window.on_set_headphone_eq_band(move |index, value| {
+        let staged = headphone_band_session.lock().ok().and_then(|mut session| {
+            session.selected = DspSelection::HeadphoneEqualizer;
+            let eq_band = session.selected_eq_band;
+            let snapshot = session.snapshot.as_mut()?;
+            set_headphone_eq_band_value(snapshot, index, value)?;
+            Some((snapshot.clone(), eq_band))
+        });
+        if let Some((snapshot, eq_band)) = staged {
+            show_dsp_snapshot(
+                &headphone_band_window,
+                &snapshot,
+                DspSelection::HeadphoneEqualizer,
+                eq_band,
+            );
+        }
+    });
+
+    let subwoofer_window = window.as_weak();
+    let subwoofer_session = dsp_session.clone();
+    window.on_set_headphone_subwoofer(move |value| {
+        let staged = subwoofer_session.lock().ok().and_then(|mut session| {
+            session.selected = DspSelection::HeadphoneEqualizer;
+            let eq_band = session.selected_eq_band;
+            let snapshot = session.snapshot.as_mut()?;
+            set_headphone_subwoofer_value(snapshot, value)?;
+            Some((snapshot.clone(), eq_band))
+        });
+        if let Some((snapshot, eq_band)) = staged {
+            show_dsp_snapshot(
+                &subwoofer_window,
+                &snapshot,
+                DspSelection::HeadphoneEqualizer,
+                eq_band,
+            );
+        }
+    });
+
     let enabled_window = window.as_weak();
     let enabled_session = dsp_session.clone();
     window.on_set_dsp_enabled(move |enabled| {
@@ -1597,6 +1637,7 @@ fn refresh_all(window: Weak<MainWindow>, client: DaemonClient) {
                 Err(error) => {
                     window.set_daemon_connected(false);
                     window.set_hardware_safe(true);
+                    window.set_arm_confirm_pending(false);
                     window.set_status_text(format!("Daemon unavailable: {error}").into());
                 }
             }
@@ -1668,6 +1709,18 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
     );
     window.set_microphone_gain_db(snapshot.studio.microphone.gain_db as f32);
     window.set_phantom_power(snapshot.studio.microphone.phantom_power);
+    window.set_headphone_volume_percent(snapshot.studio.headphones.volume as f32);
+    window.set_headphone_monitor_percent(snapshot.studio.headphones.mic_monitor as f32);
+    window.set_headphone_channels_linked(snapshot.studio.headphones.channels_linked);
+    window.set_headphone_output_mode(
+        match snapshot.studio.headphones.output_mode {
+            HeadphoneOutputMode::InEarMonitors => "in_ear_monitors",
+            HeadphoneOutputMode::LineLevel => "line_level",
+            HeadphoneOutputMode::NormalPower => "normal_power",
+            HeadphoneOutputMode::HighImpedance => "high_impedance",
+        }
+        .into(),
+    );
     window.set_source_name_key(
         snapshot
             .mixer
@@ -2067,9 +2120,6 @@ fn update_from_values(
             MicrophoneDspUpdate::EnhancementSuite(snapshot.enhancement_suite)
         }
         DspSelection::HeadphoneEqualizer => {
-            for (band, value) in snapshot.headphone_equalizer.bands.iter_mut().zip([a, b, c]) {
-                band.amount_db = value;
-            }
             MicrophoneDspUpdate::HeadphoneEqualizer(snapshot.headphone_equalizer)
         }
     }
@@ -2230,6 +2280,29 @@ fn set_enhancement_value(
     Some(())
 }
 
+fn set_headphone_eq_band_value(
+    snapshot: &mut MicrophoneDspSnapshot,
+    index: i32,
+    value: f32,
+) -> Option<()> {
+    if !value.is_finite() {
+        return None;
+    }
+    let index = usize::try_from(index).ok()?;
+    snapshot.headphone_equalizer.bands.get_mut(index)?.amount_db = value.clamp(-12.0, 12.0);
+    Some(())
+}
+
+fn set_headphone_subwoofer_value(snapshot: &mut MicrophoneDspSnapshot, value: f32) -> Option<()> {
+    if !value.is_finite() {
+        return None;
+    }
+    let amount = value.round().clamp(0.0, 10.0) as u8;
+    snapshot.headphone_equalizer.subwoofer.amount = amount;
+    snapshot.headphone_equalizer.subwoofer.enabled = amount > 0;
+    Some(())
+}
+
 fn show_dsp_snapshot(
     window: &Weak<MainWindow>,
     snapshot: &MicrophoneDspSnapshot,
@@ -2295,6 +2368,8 @@ fn show_dsp_snapshot_inner(
     let enhancement_bass_enabled = enhancement.bass.enabled;
     let enhancement_de_esser_enabled = enhancement.de_esser.enabled;
     let enhancement_exciter_enabled = enhancement.exciter.enabled;
+    let headphone_subwoofer_enabled = snapshot.headphone_equalizer.subwoofer.enabled;
+    let headphone_subwoofer_amount = snapshot.headphone_equalizer.subwoofer.amount as f32;
     let window = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(window) = window.upgrade() else {
@@ -2332,6 +2407,8 @@ fn show_dsp_snapshot_inner(
         window.set_enhancement_bass_enabled(enhancement_bass_enabled);
         window.set_enhancement_de_esser_enabled(enhancement_de_esser_enabled);
         window.set_enhancement_exciter_enabled(enhancement_exciter_enabled);
+        window.set_headphone_subwoofer_enabled(headphone_subwoofer_enabled);
+        window.set_headphone_subwoofer_amount(headphone_subwoofer_amount);
         window.set_dsp_min_a(ranges.0.0);
         window.set_dsp_max_a(ranges.0.1);
         window.set_dsp_min_b(ranges.1.0);
@@ -2534,6 +2611,7 @@ fn start_health_monitor(
                         window.set_hardware_safe(true);
                         window.set_link_active(false);
                         window.set_dsp_gate_count(0);
+                        window.set_arm_confirm_pending(false);
                         window.set_status_text(format!("Daemon unavailable: {error}").into());
                     });
                     set_dsp_lease(window.clone(), None, None);
@@ -2665,14 +2743,15 @@ mod desktop_tests {
         DspSelection, active_eq_profile, add_eq_band, adjust_eq_band_value, hotkey_key_name,
         mock_meter_level, mute_state_with_target, normalize_captured_hotkey, normalize_mute_action,
         remove_eq_band, selected_dsp_enabled, set_enhancement_preset, set_enhancement_value,
-        set_eq_band_type_value, set_eq_band_value, set_selected_dsp_enabled, source_name_available,
+        set_eq_band_type_value, set_eq_band_value, set_headphone_eq_band_value,
+        set_headphone_subwoofer_value, set_selected_dsp_enabled, source_name_available,
         update_from_values,
     };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
     use studiobridge_core::{
-        DspMode, EqualizerBandState, EqualizerBandType, MicrophoneDspSnapshot, MicrophoneDspUpdate,
-        MuteState,
+        DspMode, EqualizerBandState, EqualizerBandType, HeadphoneEqualizerState,
+        HeadphoneOutputMode, HeadphoneState, MicrophoneDspSnapshot, MicrophoneDspUpdate, MuteState,
     };
 
     fn dsp_snapshot() -> MicrophoneDspSnapshot {
@@ -2702,7 +2781,7 @@ mod desktop_tests {
                 { "band": "bass", "enabled": true, "amount_db": 1.5 },
                 { "band": "mids", "enabled": true, "amount_db": 0.0 },
                 { "band": "treble", "enabled": true, "amount_db": 2.0 }
-            ] }
+            ], "subwoofer": { "enabled": false, "amount": 0 } }
         }))
         .expect("DSP fixture should deserialize");
         let bands = (1..=8)
@@ -2729,6 +2808,29 @@ mod desktop_tests {
             assert!(samples.iter().all(|level| (0.0..=100.0).contains(level)));
             assert!(samples.windows(2).any(|pair| pair[0] != pair[1]));
         }
+    }
+
+    #[test]
+    fn new_headphone_readback_fields_have_safe_upgrade_defaults() {
+        let headphones: HeadphoneState = serde_json::from_value(serde_json::json!({
+            "volume": 50,
+            "mic_monitor": 25,
+            "muted": false
+        }))
+        .unwrap();
+        assert!(!headphones.channels_linked);
+        assert_eq!(headphones.output_mode, HeadphoneOutputMode::LineLevel);
+
+        let equalizer: HeadphoneEqualizerState = serde_json::from_value(serde_json::json!({
+            "bands": [
+                { "band": "bass", "enabled": true, "amount_db": 0.0 },
+                { "band": "mids", "enabled": true, "amount_db": 0.0 },
+                { "band": "treble", "enabled": true, "amount_db": 0.0 }
+            ]
+        }))
+        .unwrap();
+        assert!(!equalizer.subwoofer.enabled);
+        assert_eq!(equalizer.subwoofer.amount, 0);
     }
 
     #[test]
@@ -2930,5 +3032,50 @@ mod desktop_tests {
         assert_eq!(snapshot.enhancement_suite.bass.amount, 10.0);
         assert_eq!(snapshot.enhancement_suite.de_esser.amount_percent, 0.0);
         assert_eq!(snapshot.enhancement_suite.exciter.frequency_hz, 5_000.0);
+    }
+
+    #[test]
+    fn headphone_controls_stage_exact_snapshot_values_without_apply_overwrite() {
+        let mut snapshot = dsp_snapshot();
+
+        set_headphone_eq_band_value(&mut snapshot, 0, 3.25).unwrap();
+        set_headphone_eq_band_value(&mut snapshot, 1, -20.0).unwrap();
+        set_headphone_subwoofer_value(&mut snapshot, 7.4).unwrap();
+        assert_eq!(snapshot.headphone_equalizer.bands[0].amount_db, 3.25);
+        assert_eq!(snapshot.headphone_equalizer.bands[1].amount_db, -12.0);
+        assert_eq!(snapshot.headphone_equalizer.subwoofer.amount, 7);
+        assert!(snapshot.headphone_equalizer.subwoofer.enabled);
+
+        let update = update_from_values(
+            DspSelection::HeadphoneEqualizer,
+            snapshot.clone(),
+            -12.0,
+            12.0,
+            -12.0,
+            0.0,
+        );
+        let MicrophoneDspUpdate::HeadphoneEqualizer(staged) = update else {
+            panic!("expected a headphone equalizer update")
+        };
+        assert_eq!(staged, snapshot.headphone_equalizer);
+
+        set_headphone_subwoofer_value(&mut snapshot, 0.0).unwrap();
+        assert_eq!(snapshot.headphone_equalizer.subwoofer.amount, 0);
+        assert!(!snapshot.headphone_equalizer.subwoofer.enabled);
+    }
+
+    #[test]
+    fn headphone_controls_reject_invalid_inputs_and_clamp_protocol_ranges() {
+        let mut snapshot = dsp_snapshot();
+
+        assert!(set_headphone_eq_band_value(&mut snapshot, -1, 0.0).is_none());
+        assert!(set_headphone_eq_band_value(&mut snapshot, 3, 0.0).is_none());
+        assert!(set_headphone_eq_band_value(&mut snapshot, 0, f32::NAN).is_none());
+        assert!(set_headphone_subwoofer_value(&mut snapshot, f32::NAN).is_none());
+
+        set_headphone_eq_band_value(&mut snapshot, 2, 99.0).unwrap();
+        set_headphone_subwoofer_value(&mut snapshot, 99.0).unwrap();
+        assert_eq!(snapshot.headphone_equalizer.bands[2].amount_db, 12.0);
+        assert_eq!(snapshot.headphone_equalizer.subwoofer.amount, 10);
     }
 }

@@ -270,6 +270,8 @@ fn disconnected_studio(error: crate::BridgeError) -> StudioSnapshot {
             volume: 0,
             mic_monitor: 0,
             muted: false,
+            channels_linked: false,
+            output_mode: crate::HeadphoneOutputMode::LineLevel,
         },
         linked_applications: Vec::new(),
     }
@@ -466,6 +468,7 @@ mod tests {
         assert_eq!(dsp.equalizer.simple.bands.len(), 8);
         assert_eq!(dsp.equalizer.advanced.bands.len(), 8);
         assert_eq!(dsp.headphone_equalizer.bands.len(), 3);
+        assert!(dsp.headphone_equalizer.subwoofer.amount <= 10);
     }
 
     #[tokio::test]
@@ -493,6 +496,18 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("between -12 and 12"));
+
+        let mut headphone_eq = service
+            .microphone_dsp_snapshot()
+            .await
+            .unwrap()
+            .headphone_equalizer;
+        headphone_eq.subwoofer.amount = 11;
+        let error = service
+            .set_microphone_dsp(MicrophoneDspUpdate::HeadphoneEqualizer(headphone_eq))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("subwoofer amount"));
     }
 
     #[tokio::test]

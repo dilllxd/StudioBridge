@@ -2,7 +2,7 @@ mod dsp;
 
 use async_trait::async_trait;
 use beacn_lib::audio::messages::Message;
-use beacn_lib::audio::messages::headphones::Headphones;
+use beacn_lib::audio::messages::headphones::{HeadphoneTypes, Headphones};
 use beacn_lib::audio::messages::mic_setup::{MicSetup, StudioMicGain};
 use beacn_lib::audio::{
     BeacnAudioDevice, LinkChannel as BeacnLinkChannel, LinkedApp, open_audio_device,
@@ -13,8 +13,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use studiobridge_core::{
-    BackendStatus, BridgeError, BridgeResult, DspWriteModule, HeadphoneState, LinkChannel,
-    LinkedApplication, MicrophoneDspSnapshot, MicrophoneDspUpdate, MicrophoneState,
+    BackendStatus, BridgeError, BridgeResult, DspWriteModule, HeadphoneOutputMode, HeadphoneState,
+    LinkChannel, LinkedApplication, MicrophoneDspSnapshot, MicrophoneDspUpdate, MicrophoneState,
     SetMicrophoneRequest, StudioBackend, StudioIdentity, StudioSnapshot,
 };
 use tokio::sync::oneshot;
@@ -398,6 +398,22 @@ fn read_snapshot(device: &dyn BeacnAudioDevice) -> BridgeResult<StudioSnapshot> 
         Message::Headphones(Headphones::StudioMicMonitor(value)) => value.0,
         response => return Err(unexpected("microphone monitor level", response)),
     };
+    let channels_linked = match execute(
+        device,
+        Message::Headphones(Headphones::GetStudioChannelsLinked),
+    )? {
+        Message::Headphones(Headphones::StudioChannelsLinked(value)) => value,
+        response => return Err(unexpected("headphone channel link state", response)),
+    };
+    let output_mode = match execute(device, Message::Headphones(Headphones::GetHeadphoneType))? {
+        Message::Headphones(Headphones::HeadphoneType(value)) => match value {
+            HeadphoneTypes::InEarMonitors => HeadphoneOutputMode::InEarMonitors,
+            HeadphoneTypes::LineLevel => HeadphoneOutputMode::LineLevel,
+            HeadphoneTypes::NormalPower => HeadphoneOutputMode::NormalPower,
+            HeadphoneTypes::HighImpedance => HeadphoneOutputMode::HighImpedance,
+        },
+        response => return Err(unexpected("headphone output mode", response)),
+    };
     let linked = device
         .get_linked_app_list()
         .map_err(beacn_error)?
@@ -428,6 +444,8 @@ fn read_snapshot(device: &dyn BeacnAudioDevice) -> BridgeResult<StudioSnapshot> 
             volume: db_to_percent(headphone_db, -70.0, 0.0),
             mic_monitor: db_to_percent(monitor_db, -100.0, 6.0),
             muted: headphone_db <= -70.0,
+            channels_linked,
+            output_mode,
         },
         linked_applications: linked,
     })

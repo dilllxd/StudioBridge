@@ -115,6 +115,10 @@ than copying its source or visual assets:
   interval, clears transient Link and DSP lease indicators, blocks every stale
   mixer/profile control behind a native retry panel, and automatically refreshes
   the complete snapshot after the service recovers.
+- a Headphones workspace whose level faders, channel-link indicator, and amp
+  selection are device readback; amp and level controls stay intentionally
+  read-only, while the three playback-EQ dials and bounded subwoofer amount are
+  staged and verified only under the exclusive Headphone Equalizer lease.
 
 StudioBridge uses its own name, icon, colors, layout code, terminology where
 needed for Linux, and all-original assets.
@@ -131,6 +135,11 @@ also retains the pre-edit snapshot for a one-click verified revert. Quit and
 explicit completion disarm immediately, while crashes are bounded by lease
 expiry. General hardware writes stay off. Phantom power is shown but never
 automatically armed or changed.
+
+For Windows UI development, the daemon also permits the identical attended
+lease flow when—and only when—both backends are `mock`. That path mutates only
+the in-memory mock snapshot. A mixed mock/real pair is rejected, and real USB
+editing still requires the complete BEACN/PipeWeaver pair and all normal gates.
 
 Meter websocket events are coalesced at 60 Hz and each bar interpolates between
 samples on the renderer, avoiding the stepping and full-page flashes of the

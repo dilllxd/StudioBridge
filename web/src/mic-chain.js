@@ -167,9 +167,11 @@ function enhancementMarkup(dsp, writable) {
 }
 
 function headphoneMarkup(dsp, writable) {
+  const { bands, subwoofer } = dsp.headphone_equalizer;
   return `
     <section class="dsp-module-grid three-column">
-      ${dsp.headphone_equalizer.bands.map((band, index) => `<article class="dsp-card"><header><div><h2>${title(band.band)}</h2><p>Headphone playback EQ</p></div>${enabledBadge(band.enabled, { writable, path: `headphone_equalizer.bands.${index}.enabled` })}</header>${readonlyControl("Amount", band.amount_db, " dB", -12, 12, 0.1, { writable, path: `headphone_equalizer.bands.${index}.amount_db` })}</article>`).join("")}
+      ${bands.map((band, index) => `<article class="dsp-card"><header><div><h2>${title(band.band)}</h2><p>Headphone playback EQ</p></div>${enabledBadge(band.enabled, { writable, path: `headphone_equalizer.bands.${index}.enabled` })}</header>${readonlyControl("Amount", band.amount_db, " dB", -12, 12, 0.1, { writable, path: `headphone_equalizer.bands.${index}.amount_db` })}</article>`).join("")}
+      <article class="dsp-card"><header><div><h2>Subwoofer</h2><p>Low-frequency reinforcement</p></div>${enabledBadge(subwoofer.enabled, { writable, path: "headphone_equalizer.subwoofer.enabled" })}</header>${readonlyControl("Amount", subwoofer.amount, "", 0, 10, 1, { writable, path: "headphone_equalizer.subwoofer.amount" })}</article>
     </section>`;
 }
 

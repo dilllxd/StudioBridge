@@ -26,11 +26,25 @@ pub struct MicrophoneState {
     pub muted: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadphoneOutputMode {
+    InEarMonitors,
+    #[default]
+    LineLevel,
+    NormalPower,
+    HighImpedance,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeadphoneState {
     pub volume: u8,
     pub mic_monitor: u8,
     pub muted: bool,
+    #[serde(default)]
+    pub channels_linked: bool,
+    #[serde(default)]
+    pub output_mode: HeadphoneOutputMode,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

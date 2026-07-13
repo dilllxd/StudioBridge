@@ -16,6 +16,7 @@ use beacn_lib::audio::messages::expander::{
     Expander, ExpanderMode, ExpanderRatio, ExpanderThreshold,
 };
 use beacn_lib::audio::messages::headphone_equaliser::{HPEQType, HPEQValue, HeadphoneEQ};
+use beacn_lib::audio::messages::subwoofer::Subwoofer;
 use beacn_lib::audio::messages::suppressor::{
     Suppressor, SuppressorSensitivity, SuppressorStyle, SupressorAdaptTime,
 };
@@ -25,7 +26,7 @@ use studiobridge_core::{
     DeEsserState, DspMode, EnhancementSuiteState, EqualizerBandState, EqualizerBandType,
     EqualizerProfile, EqualizerState, ExciterState, ExpanderProfile, ExpanderState,
     HeadphoneEqBand, HeadphoneEqBandState, HeadphoneEqualizerState, MicrophoneDspSnapshot,
-    MicrophoneDspUpdate, NoiseSuppressionState, NoiseSuppressionStyle,
+    MicrophoneDspUpdate, NoiseSuppressionState, NoiseSuppressionStyle, SubwooferState,
 };
 
 pub(crate) fn read_microphone_dsp(
@@ -395,7 +396,22 @@ fn read_headphone_equalizer(
         })
     })
     .collect::<BridgeResult<Vec<_>>>()?;
-    Ok(HeadphoneEqualizerState { bands })
+    Ok(HeadphoneEqualizerState {
+        bands,
+        subwoofer: read_subwoofer_state(device)?,
+    })
+}
+
+fn read_subwoofer_state(device: &dyn BeacnAudioDevice) -> BridgeResult<SubwooferState> {
+    let enabled = match execute(device, Message::Subwoofer(Subwoofer::GetEnabled))? {
+        Message::Subwoofer(Subwoofer::Enabled(value)) => value,
+        response => return Err(unexpected("subwoofer enabled state", response)),
+    };
+    let amount = match execute(device, Message::Subwoofer(Subwoofer::GetAmount))? {
+        Message::Subwoofer(Subwoofer::Amount(value)) => value.0 as u8,
+        response => return Err(unexpected("subwoofer amount", response)),
+    };
+    Ok(SubwooferState { enabled, amount })
 }
 
 pub(crate) fn write_microphone_dsp(
@@ -573,6 +589,18 @@ fn write_headphone_equalizer(
         execute(
             device,
             Message::HeadphoneEQ(HeadphoneEQ::Enabled(kind, band.enabled)),
+        )?;
+    }
+    let current_subwoofer = read_subwoofer_state(device)?;
+    if current_subwoofer.amount != state.subwoofer.amount {
+        for message in Subwoofer::get_amount_messages(state.subwoofer.amount) {
+            execute(device, message)?;
+        }
+    }
+    if current_subwoofer.enabled != state.subwoofer.enabled {
+        execute(
+            device,
+            Message::Subwoofer(Subwoofer::Enabled(state.subwoofer.enabled)),
         )?;
     }
     Ok(())

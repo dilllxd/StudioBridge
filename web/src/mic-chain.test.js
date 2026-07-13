@@ -36,6 +36,7 @@ const dsp = {
   },
   headphone_equalizer: {
     bands: ["bass", "mids", "treble"].map((band) => ({ band, enabled: true, amount_db: 1 })),
+    subwoofer: { enabled: false, amount: 0 },
   },
 };
 
@@ -104,4 +105,6 @@ test("renders all three enhancement modules and headphone bands", () => {
   assert.match(headphones, />Bass</);
   assert.match(headphones, />Mids</);
   assert.match(headphones, />Treble</);
+  assert.match(headphones, />Subwoofer</);
+  assert.match(headphones, /headphone_equalizer\.subwoofer\.amount/);
 });

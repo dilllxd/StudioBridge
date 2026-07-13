@@ -149,9 +149,17 @@ pub struct HeadphoneEqBandState {
     pub amount_db: f32,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SubwooferState {
+    pub enabled: bool,
+    pub amount: u8,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HeadphoneEqualizerState {
     pub bands: Vec<HeadphoneEqBandState>,
+    #[serde(default)]
+    pub subwoofer: SubwooferState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -393,6 +401,9 @@ fn validate_headphone_equalizer(state: &HeadphoneEqualizerState) -> BridgeResult
         }
         in_range("headphone EQ amount", band.amount_db, -12.0, 12.0)?;
     }
+    if state.subwoofer.amount > 10 {
+        return Err(invalid("subwoofer amount must be between 0 and 10"));
+    }
     Ok(())
 }
 
@@ -484,7 +495,8 @@ fn enhancement_state_close(left: &EnhancementSuiteState, right: &EnhancementSuit
 }
 
 fn headphone_eq_close(left: &HeadphoneEqualizerState, right: &HeadphoneEqualizerState) -> bool {
-    left.bands.len() == right.bands.len()
+    left.subwoofer == right.subwoofer
+        && left.bands.len() == right.bands.len()
         && left.bands.iter().zip(&right.bands).all(|(left, right)| {
             left.band == right.band
                 && left.enabled == right.enabled

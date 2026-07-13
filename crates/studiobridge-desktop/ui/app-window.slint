@@ -1047,6 +1047,7 @@ component ProcessorDial inherits Rectangle {
     in-out property <float> value;
     in property <float> minimum: -12;
     in property <float> maximum: 12;
+    in property <float> step: 0.1;
     in property <bool> interactive;
     callback changed(float);
     width: 96px;
@@ -1059,15 +1060,67 @@ component ProcessorDial inherits Rectangle {
     }
     Text { x: 0px; y: 0px; width: parent.width; height: 16px; text: root.label; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; }
     Text { x: 0px; y: 88px; width: parent.width; height: 18px; text: round(root.value * 10) / 10 + "dB"; color: root.interactive ? Theme.teal : Theme.quiet; font-size: 9px; horizontal-alignment: center; }
-    TouchArea {
-        enabled: root.interactive;
-        moved => {
-            if (self.pressed) {
-                let candidate = root.maximum - self.mouse-y / self.height * (root.maximum - root.minimum);
-                root.value = candidate < root.minimum ? root.minimum : candidate > root.maximum ? root.maximum : candidate;
-                root.changed(root.value);
+    dial-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        accessible-role: button;
+        accessible-label: root.label + " " + round(root.value * 10) / 10 + " decibels";
+        accessible-enabled: root.interactive;
+        key-pressed(event) => {
+            if root.interactive && (event.text == Key.UpArrow || event.text == Key.RightArrow) {
+                root.changed(root.value + root.step > root.maximum ? root.maximum : root.value + root.step);
+                return accept;
+            }
+            if root.interactive && (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
+                root.changed(root.value - root.step < root.minimum ? root.minimum : root.value - root.step);
+                return accept;
+            }
+            return reject;
+        }
+        TouchArea {
+            enabled: root.interactive;
+            moved => {
+                if (self.pressed) {
+                    let candidate = root.maximum - self.mouse-y / self.height * (root.maximum - root.minimum);
+                    root.changed(candidate < root.minimum ? root.minimum : candidate > root.maximum ? root.maximum : candidate);
+                }
+            }
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    dial-focus.focus();
+                }
             }
         }
+    }
+}
+
+component ReadOnlyAmpOption inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    height: 22px;
+    background: transparent;
+    HorizontalLayout {
+        spacing: 8px;
+        Rectangle {
+            width: 14px;
+            height: 14px;
+            border-radius: 7px;
+            border-width: 1px;
+            border-color: root.selected ? Theme.teal : Theme.quiet;
+            if root.selected: Rectangle {
+                x: 3px; y: 3px; width: 6px; height: 6px;
+                border-radius: 3px;
+                background: Theme.teal;
+            }
+        }
+        Text { text: root.label; color: root.selected ? Theme.text : #a0a0a5; font-size: 9px; vertical-alignment: center; wrap: word-wrap; }
+    }
+    FocusScope {
+        width: parent.width;
+        height: parent.height;
+        accessible-role: button;
+        accessible-label: root.label + (root.selected ? ", selected, read only" : ", not selected, read only");
+        accessible-enabled: false;
     }
 }
 
@@ -1444,6 +1497,12 @@ export component MainWindow inherits Window {
     in property <string> device-firmware: "Unavailable";
     in property <float> microphone-gain-db: 0;
     in property <bool> phantom-power: false;
+    in property <float> headphone-volume-percent: 0;
+    in property <float> headphone-monitor-percent: 0;
+    in property <bool> headphone-channels-linked: false;
+    in property <string> headphone-output-mode: "line_level";
+    in property <bool> headphone-subwoofer-enabled: false;
+    in-out property <float> headphone-subwoofer-amount: 0;
     in-out property <float> lighting-speed: 0;
     in-out property <float> lighting-brightness: 100;
     in-out property <int> lighting-style: 2;
@@ -1505,6 +1564,8 @@ export component MainWindow inherits Window {
     callback remove-eq-band;
     callback set-enhancement-preset(int);
     callback set-enhancement-value(string, float);
+    callback set-headphone-eq-band(int, float);
+    callback set-headphone-subwoofer(float);
     callback set-dsp-enabled(bool);
     callback select-noise-style(bool);
     callback load-dsp;
@@ -2008,10 +2069,10 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                         spacing: 0px;
                         ModuleTab { tab-width: 81px; label: "MIC SETUP"; module: "mic_setup"; selected: root.dsp-selected-module; clicked(module) => { root.dsp-selected-module = module; } }
-                        ModuleTab { tab-width: 161px; label: "NOISE SUPPRESSION"; module: "noise_suppression"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
-                        ModuleTab { tab-width: 80px; label: "EXPANDER"; module: "expander"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
-                        ModuleTab { tab-width: 101px; label: "COMPRESSOR"; module: "compressor"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
-                        ModuleTab { tab-width: 108px; label: "HEADPHONES"; module: "headphone_equalizer"; selected: root.dsp-selected-module; clicked(module) => { root.select-dsp-module(module); } }
+                        ModuleTab { tab-width: 161px; label: "NOISE SUPPRESSION"; module: "noise_suppression"; selected: root.dsp-selected-module; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
+                        ModuleTab { tab-width: 80px; label: "EXPANDER"; module: "expander"; selected: root.dsp-selected-module; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
+                        ModuleTab { tab-width: 101px; label: "COMPRESSOR"; module: "compressor"; selected: root.dsp-selected-module; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
+                        ModuleTab { tab-width: 108px; label: "HEADPHONES"; module: "headphone_equalizer"; selected: root.dsp-selected-module; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
                 }
@@ -2062,7 +2123,7 @@ export component MainWindow inherits Window {
                     border-width: 1px; border-color: Theme.border; background: Theme.panel;
                     VerticalLayout {
                         padding: 0px; spacing: 0px;
-                        HorizontalLayout {
+                        if root.dsp-selected-module != "headphone_equalizer": HorizontalLayout {
                             height: 18px; padding-left: 10px; padding-right: 8px;
                             Text { text: root.dsp-editor-title; color: Theme.quiet; font-size: 9px; font-weight: 800; horizontal-stretch: 1; vertical-alignment: center; }
                             StatusPill { width: 112px; height: 16px; horizontal-stretch: 0; label: root.dsp-active-module == root.dsp-selected-module ? "EDITING " + root.dsp-lease-seconds + "s" : "READ ONLY"; good: root.dsp-active-module == root.dsp-selected-module; }
@@ -2225,15 +2286,15 @@ export component MainWindow inherits Window {
                                 VerticalLayout {
                                     x: 20px; y: 30px; width: 82px; height: parent.height - 38px; spacing: 3px;
                                     Text { height: 18px; text: "MIC MONITOR"; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: 0; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; } Rectangle { horizontal-stretch: 1; } }
-                                    Text { height: 18px; text: "-100.0dB"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: root.headphone-monitor-percent; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; } Rectangle { horizontal-stretch: 1; } }
+                                    Text { height: 18px; text: round((-100 + root.headphone-monitor-percent / 100 * 106) * 10) / 10 + "dB"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
-                                Text { x: 121px; y: parent.height / 2 - 12px; width: 26px; height: 24px; text: "⛓"; color: Theme.quiet; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                                Text { x: 121px; y: parent.height / 2 - 12px; width: 26px; height: 24px; text: "∞"; color: root.headphone-channels-linked ? Theme.teal : Theme.quiet; font-size: 19px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                                 VerticalLayout {
                                     x: 164px; y: 30px; width: 82px; height: parent.height - 38px; spacing: 3px;
                                     Text { height: 18px; text: "HEADPHONES"; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: 50; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; } Rectangle { horizontal-stretch: 1; } }
-                                    Text { height: 18px; text: "0.0dB"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: root.headphone-volume-percent; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; } Rectangle { horizontal-stretch: 1; } }
+                                    Text { height: 18px; text: round((-70 + root.headphone-volume-percent / 100 * 70) * 10) / 10 + "dB"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
                             }
                             Rectangle {
@@ -2243,23 +2304,24 @@ export component MainWindow inherits Window {
                                 HorizontalLayout { x: 12px; y: 25px; width: 92px; height: 20px; ToggleSwitch { checked: root.dsp-enabled; interactive: root.dsp-active-module == root.dsp-selected-module; control-label: "Headphone equalizer enabled"; toggled(value) => { root.set-dsp-enabled(value); } } Text { text: root.dsp-enabled ? "On" : "Off"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
                                 HorizontalLayout {
                                     x: 48px; y: 49px; width: parent.width - 70px; height: 110px; spacing: 12px;
-                                    ProcessorDial { label: "BASS"; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-a = value; } }
-                                    ProcessorDial { label: "MIDS"; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-b = value; } }
-                                    ProcessorDial { label: "TREBLE"; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-c = value; } }
+                                    ProcessorDial { label: "BASS"; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.set-headphone-eq-band(0, value); } }
+                                    ProcessorDial { label: "MIDS"; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.set-headphone-eq-band(1, value); } }
+                                    ProcessorDial { label: "TREBLE"; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.set-headphone-eq-band(2, value); } }
                                 }
                                 Text { x: 14px; y: parent.height - 50px; width: 76px; height: 16px; text: "SUBWOOFER"; color: Theme.quiet; font-size: 8px; font-weight: 700; vertical-alignment: center; }
-                                Slider { x: 96px; y: parent.height - 49px; width: parent.width - 118px; height: 18px; enabled: false; value: 45; }
+                                Text { x: 78px; y: parent.height - 50px; width: 20px; height: 16px; text: round(root.headphone-subwoofer-amount); color: root.headphone-subwoofer-enabled ? Theme.teal : Theme.quiet; font-size: 8px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
+                                Slider { x: 106px; y: parent.height - 49px; width: parent.width - 128px; height: 18px; enabled: root.dsp-active-module == root.dsp-selected-module; value <=> root.headphone-subwoofer-amount; minimum: 0; maximum: 10; changed(value) => { root.set-headphone-subwoofer(value); } }
                             }
                             Rectangle {
                                 horizontal-stretch: 1; background: #202023;
                                 Rectangle { width: 1px; height: parent.height; background: Theme.border; }
                                 VerticalLayout {
                                     padding-left: 18px; padding-right: 8px; padding-top: 8px; spacing: 10px;
-                                    Text { height: 16px; text: "AMP POWER"; color: Theme.quiet; font-size: 8px; font-weight: 800; vertical-alignment: center; }
-                                    HorizontalLayout { height: 22px; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; border-width: 1px; border-color: Theme.quiet; } Text { text: "In Ear Monitors"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
-                                    HorizontalLayout { height: 22px; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; border-width: 1px; border-color: Theme.teal; Rectangle { x: 3px; y: 3px; width: 6px; height: 6px; border-radius: 3px; background: Theme.teal; } } Text { text: "Line Level"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
-                                    HorizontalLayout { height: 22px; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; border-width: 1px; border-color: Theme.quiet; } Text { text: "Normal Power"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
-                                    HorizontalLayout { height: 22px; spacing: 8px; Rectangle { width: 14px; height: 14px; border-radius: 7px; border-width: 1px; border-color: Theme.quiet; } Text { text: "High Impedance Mode"; color: Theme.text; font-size: 9px; vertical-alignment: center; wrap: word-wrap; } }
+                                    HorizontalLayout { height: 16px; Text { text: "AMP POWER"; color: Theme.quiet; font-size: 8px; font-weight: 800; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Text { text: "READ ONLY"; color: Theme.amber; font-size: 7px; font-weight: 800; vertical-alignment: center; } }
+                                    ReadOnlyAmpOption { label: "In Ear Monitors"; selected: root.headphone-output-mode == "in_ear_monitors"; }
+                                    ReadOnlyAmpOption { label: "Line Level"; selected: root.headphone-output-mode == "line_level"; }
+                                    ReadOnlyAmpOption { label: "Normal Power"; selected: root.headphone-output-mode == "normal_power"; }
+                                    ReadOnlyAmpOption { label: "High Impedance Mode"; selected: root.headphone-output-mode == "high_impedance"; }
                                     Rectangle { vertical-stretch: 1; }
                                 }
                             }

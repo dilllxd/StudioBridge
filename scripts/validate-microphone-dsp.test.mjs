@@ -28,7 +28,10 @@ function fixture() {
         de_esser: { enabled: true, amount_percent: 35 },
         exciter: { enabled: false, amount_percent: 0, frequency_hz: 3000 },
       },
-      headphone_equalizer: { bands: ["bass", "mids", "treble"].map((band) => ({ band, enabled: true, amount_db: 0 })) },
+      headphone_equalizer: {
+        bands: ["bass", "mids", "treble"].map((band) => ({ band, enabled: true, amount_db: 0 })),
+        subwoofer: { enabled: false, amount: 0 },
+      },
     },
   };
 }
@@ -45,4 +48,11 @@ test("rejects incomplete EQ and enabled general writes", () => {
   const result = validateMicrophoneDsp(value.health, value.dsp);
   assert(result.failures.some((failure) => failure.includes("general hardware writes")));
   assert(result.failures.some((failure) => failure.includes("eight bands")));
+});
+
+test("rejects an invalid subwoofer snapshot", () => {
+  const value = fixture();
+  value.dsp.headphone_equalizer.subwoofer.amount = 11;
+  const result = validateMicrophoneDsp(value.health, value.dsp);
+  assert(result.failures.some((failure) => failure.includes("subwoofer amount")));
 });

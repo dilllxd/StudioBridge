@@ -28,7 +28,8 @@ BEACN firmware or code copied from the official application.
 
 The alpha contains mock and real backends behind the same local daemon. The real
 Studio adapter discovers USB1, reads serial/firmware, microphone gain, phantom
-power, headphone level, mic-monitor level, and Windows Link assignments. General
+power, headphone level, mic-monitor level, headphone channel-link state, amp
+output mode, and Windows Link assignments. General
 hardware writes remain disabled unless `--allow-hardware-writes` is supplied.
 After the read-only baseline passes, `--enable-link-host` independently enables
 only the fixed USB1 host heartbeat and Link application assignments. The complete
@@ -36,6 +37,9 @@ onboard microphone chain is readable through a separate bounded snapshot: both
 Simple/Advanced profiles for eight-band EQ, compressor, and expander, plus noise
 suppression, bass enhancement, de-esser, exciter, and headphone EQ. DSP writes
 use independent per-module gates and never require unrestricted hardware writes.
+The Headphone Equalizer snapshot includes the three playback bands plus the
+exact bounded subwoofer enabled/amount state. Amp mode and both headphone level
+controls remain read-only.
 The real PipeWeaver adapter reads and controls channels, Personal/Audience
 volumes, mute targets, applications, output targets, and routes.
 
@@ -48,6 +52,11 @@ without changing a connected Studio:
 ```powershell
 cargo run -p studiobridge-daemon
 ```
+
+To exercise one guarded editor in the isolated mock/mock simulation, start the
+daemon with exactly one `--enable-dsp-write MODULE` argument and use the same
+two-step, five-minute in-app confirmation. Mixed real/mock backend pairs remain
+ineligible for a lease, and `hardware_writes_enabled` stays false.
 
 The API listens on `http://127.0.0.1:17840` by default:
 

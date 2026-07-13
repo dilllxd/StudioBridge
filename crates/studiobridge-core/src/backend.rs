@@ -72,6 +72,8 @@ impl Default for MockStudioBackend {
                     volume: 62,
                     mic_monitor: 35,
                     muted: false,
+                    channels_linked: true,
+                    output_mode: crate::HeadphoneOutputMode::LineLevel,
                 },
                 linked_applications: vec![
                     LinkedApplication {
@@ -259,6 +261,10 @@ fn mock_microphone_dsp() -> MicrophoneDspSnapshot {
                     amount_db: 2.0,
                 },
             ],
+            subwoofer: crate::SubwooferState {
+                enabled: false,
+                amount: 0,
+            },
         },
     }
 }

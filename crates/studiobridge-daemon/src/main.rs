@@ -346,6 +346,13 @@ const DSP_WRITE_ACKNOWLEDGEMENT: &str = "I_UNDERSTAND_THIS_CHANGES_AUDIO";
 const MIN_DSP_LEASE_SECONDS: u64 = 30;
 const MAX_DSP_LEASE_SECONDS: u64 = 300;
 
+fn dsp_editing_backends_supported(studio_mode: &str, mixer_mode: &str) -> bool {
+    matches!(
+        (studio_mode, mixer_mode),
+        ("beacn", "pipeweaver") | ("mock", "mock")
+    )
+}
+
 #[derive(Debug, Serialize)]
 struct HealthResponse {
     ok: bool,
@@ -520,9 +527,28 @@ async fn microphone_dsp(
 
 async fn set_microphone_dsp(
     State(state): State<AppState>,
-    Json(update): Json<MicrophoneDspUpdate>,
+    Json(value): Json<serde_json::Value>,
 ) -> Result<Json<studiobridge_core::MicrophoneDspWriteResult>, ApiError> {
+    let update = parse_microphone_dsp_update(value)?;
     Ok(Json(state.service.set_microphone_dsp(update).await?))
+}
+
+fn parse_microphone_dsp_update(value: serde_json::Value) -> Result<MicrophoneDspUpdate, ApiError> {
+    if value.get("module").and_then(serde_json::Value::as_str) == Some("headphone_equalizer")
+        && value
+            .get("state")
+            .and_then(|state| state.get("subwoofer"))
+            .is_none()
+    {
+        return Err(ApiError(BridgeError::InvalidValue(
+            "headphone equalizer writes require explicit subwoofer state".into(),
+        )));
+    }
+    serde_json::from_value(value).map_err(|error| {
+        ApiError(BridgeError::InvalidValue(format!(
+            "invalid microphone DSP update: {error}"
+        )))
+    })
 }
 
 async fn arm_dsp_write(
@@ -544,9 +570,9 @@ async fn arm_dsp_write(
             "in-app DSP leases require general hardware writes to remain disabled".into(),
         )));
     }
-    if state.runtime.studio_mode != "beacn" || state.runtime.mixer_mode != "pipeweaver" {
+    if !dsp_editing_backends_supported(state.runtime.studio_mode, state.runtime.mixer_mode) {
         return Err(ApiError(BridgeError::BackendUnavailable(
-            "DSP editing requires the real BEACN and PipeWeaver backends".into(),
+            "DSP editing requires either the real BEACN/PipeWeaver pair or the isolated mock/mock simulation".into(),
         )));
     }
 
@@ -792,6 +818,24 @@ mod tests {
         assert_eq!(json["dsp_write_modules"][0], "headphone_equalizer");
         assert_eq!(json["dsp_write_active_module"], "headphone_equalizer");
         assert_eq!(json["dsp_write_lease_seconds"], 120);
+    }
+
+    #[test]
+    fn dsp_editing_accepts_only_complete_real_or_mock_backend_pairs() {
+        assert!(dsp_editing_backends_supported("beacn", "pipeweaver"));
+        assert!(dsp_editing_backends_supported("mock", "mock"));
+        assert!(!dsp_editing_backends_supported("beacn", "mock"));
+        assert!(!dsp_editing_backends_supported("mock", "pipeweaver"));
+    }
+
+    #[test]
+    fn headphone_equalizer_writes_require_explicit_subwoofer_state() {
+        let error = parse_microphone_dsp_update(serde_json::json!({
+            "module": "headphone_equalizer",
+            "state": { "bands": [] }
+        }))
+        .unwrap_err();
+        assert!(error.0.to_string().contains("explicit subwoofer state"));
     }
 
     #[test]

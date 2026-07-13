@@ -206,7 +206,9 @@ curl -fsS http://127.0.0.1:17840/api/health
 The validator is GET-only and requires 16 EQ band states across both profiles,
 two compressor profiles, two expander profiles, noise suppression, bass
 enhancement, de-esser, exciter, and all three headphone EQ bands. Health must
-still report `hardware_writes_enabled:false` and `dsp_write_modules:[]`.
+still report `hardware_writes_enabled:false` and `dsp_write_modules:[]`. The
+same snapshot validates the subwoofer enabled flag and its bounded integer
+amount from 0 through 10.
 
 To edit a module, arm exactly that module after the two read-only validators
 pass. Valid names are `equalizer`, `compressor`, `expander`,
@@ -223,11 +225,18 @@ complete module before any USB command, reads the entire chain back from the
 device, and refuses success unless the selected module matches. Revert writes
 the captured module state and performs the same read-back check. General gain,
 phantom power, firmware, reset, lighting, limiter guesses, and raw storage are
-not reachable through this path.
+not reachable through this path. The Headphone Equalizer module includes the
+three exact playback-EQ bands and BEACN's exact subwoofer amount message bundle;
+it is available only under this same attended, exclusive lease. Headphone and
+monitor levels, channel linking, and amp mode remain read-only and cannot be
+changed through the DSP lease. The adapter compares captured subwoofer state
+before writing, so band-only changes and the reversible bass probe do not emit
+unchanged subwoofer commands.
 
 The Headphone EQ protocol has a bounded automated physical probe. It requires
 an explicit acknowledgement, moves only the bass playback EQ by 0.1 dB, verifies
-an independent read-back, and restores the captured three-band state in a
+an independent read-back, and restores the complete captured Headphone
+Equalizer state, including subwoofer state, in a
 `finally` path:
 
 ```bash
