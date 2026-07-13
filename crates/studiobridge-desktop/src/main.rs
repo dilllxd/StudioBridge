@@ -1263,6 +1263,52 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    let enhancement_preset_window = window.as_weak();
+    let enhancement_preset_session = dsp_session.clone();
+    window.on_set_enhancement_preset(move |preset| {
+        let staged = enhancement_preset_session
+            .lock()
+            .ok()
+            .and_then(|mut session| {
+                session.selected = DspSelection::EnhancementSuite;
+                let eq_band = session.selected_eq_band;
+                let snapshot = session.snapshot.as_mut()?;
+                set_enhancement_preset(snapshot, preset)?;
+                Some((snapshot.clone(), eq_band))
+            });
+        if let Some((snapshot, eq_band)) = staged {
+            show_dsp_snapshot(
+                &enhancement_preset_window,
+                &snapshot,
+                DspSelection::EnhancementSuite,
+                eq_band,
+            );
+        }
+    });
+
+    let enhancement_value_window = window.as_weak();
+    let enhancement_value_session = dsp_session.clone();
+    window.on_set_enhancement_value(move |field, value| {
+        let staged = enhancement_value_session
+            .lock()
+            .ok()
+            .and_then(|mut session| {
+                session.selected = DspSelection::EnhancementSuite;
+                let eq_band = session.selected_eq_band;
+                let snapshot = session.snapshot.as_mut()?;
+                set_enhancement_value(snapshot, field.as_str(), value)?;
+                Some((snapshot.clone(), eq_band))
+            });
+        if let Some((snapshot, eq_band)) = staged {
+            show_dsp_snapshot(
+                &enhancement_value_window,
+                &snapshot,
+                DspSelection::EnhancementSuite,
+                eq_band,
+            );
+        }
+    });
+
     let enabled_window = window.as_weak();
     let enabled_session = dsp_session.clone();
     window.on_set_dsp_enabled(move |enabled| {
@@ -1306,6 +1352,7 @@ fn main() -> Result<(), slint::PlatformError> {
             load_window.clone(),
             load_client.clone(),
             load_session.clone(),
+            false,
             false,
         )
     });
@@ -1378,8 +1425,14 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     refresh_all(window.as_weak(), client.clone());
-    load_dsp(window.as_weak(), client.clone(), dsp_session, false);
-    start_health_monitor(window.as_weak(), client.clone());
+    load_dsp(
+        window.as_weak(),
+        client.clone(),
+        dsp_session.clone(),
+        false,
+        false,
+    );
+    start_health_monitor(window.as_weak(), client.clone(), dsp_session);
     start_meter_stream(window.as_weak(), client);
     if !start_in_background {
         window.show()?;
@@ -1844,6 +1897,7 @@ fn load_dsp(
     client: DaemonClient,
     session: Arc<Mutex<DspSession>>,
     capture: bool,
+    preserve_selection: bool,
 ) {
     thread::spawn(move || match client.microphone_dsp() {
         Ok(snapshot) => {
@@ -1856,7 +1910,7 @@ fn load_dsp(
             } else {
                 return;
             };
-            show_dsp_snapshot(&window, &snapshot, selected, eq_band);
+            show_dsp_snapshot_inner(&window, &snapshot, selected, eq_band, !preserve_selection);
             set_status(window, "Microphone DSP read-back is current".into());
         }
         Err(error) => set_status(window, format!("DSP read-back failed: {error}")),
@@ -2010,9 +2064,6 @@ fn update_from_values(
             MicrophoneDspUpdate::NoiseSuppression(snapshot.noise_suppression)
         }
         DspSelection::EnhancementSuite => {
-            snapshot.enhancement_suite.bass.amount = a;
-            snapshot.enhancement_suite.de_esser.amount_percent = b;
-            snapshot.enhancement_suite.exciter.amount_percent = c;
             MicrophoneDspUpdate::EnhancementSuite(snapshot.enhancement_suite)
         }
         DspSelection::HeadphoneEqualizer => {
@@ -2142,11 +2193,58 @@ fn remove_eq_band(snapshot: &mut MicrophoneDspSnapshot, index: usize) -> Option<
     Some(())
 }
 
+fn set_enhancement_preset(snapshot: &mut MicrophoneDspSnapshot, preset: i32) -> Option<()> {
+    let preset = u8::try_from(preset).ok()?;
+    if !(1..=4).contains(&preset) {
+        return None;
+    }
+    snapshot.enhancement_suite.bass.preset = preset;
+    Some(())
+}
+
+fn set_enhancement_value(
+    snapshot: &mut MicrophoneDspSnapshot,
+    field: &str,
+    value: f32,
+) -> Option<()> {
+    if !value.is_finite() {
+        return None;
+    }
+    let suite = &mut snapshot.enhancement_suite;
+    match field {
+        "bass_amount" => {
+            suite.bass.amount = value.clamp(0.0, 10.0);
+            suite.bass.enabled = suite.bass.amount > 0.0;
+        }
+        "de_esser_amount" => {
+            suite.de_esser.amount_percent = value.clamp(0.0, 100.0);
+            suite.de_esser.enabled = suite.de_esser.amount_percent > 0.0;
+        }
+        "exciter_amount" => {
+            suite.exciter.amount_percent = value.clamp(0.0, 100.0);
+            suite.exciter.enabled = suite.exciter.amount_percent > 0.0;
+        }
+        "exciter_frequency" => suite.exciter.frequency_hz = value.clamp(0.0, 5_000.0),
+        _ => return None,
+    }
+    Some(())
+}
+
 fn show_dsp_snapshot(
     window: &Weak<MainWindow>,
     snapshot: &MicrophoneDspSnapshot,
     selected: DspSelection,
     selected_eq_band: usize,
+) {
+    show_dsp_snapshot_inner(window, snapshot, selected, selected_eq_band, true);
+}
+
+fn show_dsp_snapshot_inner(
+    window: &Weak<MainWindow>,
+    snapshot: &MicrophoneDspSnapshot,
+    selected: DspSelection,
+    selected_eq_band: usize,
+    update_selection: bool,
 ) {
     let (title, labels, values, ranges) = dsp_display(snapshot, selected);
     let advanced = match selected {
@@ -2188,12 +2286,23 @@ fn show_dsp_snapshot(
             enabled: band.enabled,
         })
         .collect::<Vec<_>>();
+    let enhancement = &snapshot.enhancement_suite;
+    let enhancement_bass_preset = i32::from(enhancement.bass.preset);
+    let enhancement_bass_amount = enhancement.bass.amount;
+    let enhancement_de_esser_amount = enhancement.de_esser.amount_percent;
+    let enhancement_exciter_amount = enhancement.exciter.amount_percent;
+    let enhancement_exciter_frequency = enhancement.exciter.frequency_hz;
+    let enhancement_bass_enabled = enhancement.bass.enabled;
+    let enhancement_de_esser_enabled = enhancement.de_esser.enabled;
+    let enhancement_exciter_enabled = enhancement.exciter.enabled;
     let window = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(window) = window.upgrade() else {
             return;
         };
-        window.set_dsp_selected_module(selected.as_str().into());
+        if update_selection {
+            window.set_dsp_selected_module(selected.as_str().into());
+        }
         window.set_dsp_editor_title(title.into());
         window.set_dsp_label_a(labels.0.into());
         window.set_dsp_label_b(labels.1.into());
@@ -2215,6 +2324,14 @@ fn show_dsp_snapshot(
         window.set_eq_band_enabled(eq_band_enabled);
         window.set_eq_can_add_band(eq_can_add_band);
         window.set_eq_bands(ModelRc::from(Rc::new(VecModel::from(eq_bands))));
+        window.set_enhancement_bass_preset(enhancement_bass_preset);
+        window.set_enhancement_bass_amount(enhancement_bass_amount);
+        window.set_enhancement_de_esser_amount(enhancement_de_esser_amount);
+        window.set_enhancement_exciter_amount(enhancement_exciter_amount);
+        window.set_enhancement_exciter_frequency(enhancement_exciter_frequency);
+        window.set_enhancement_bass_enabled(enhancement_bass_enabled);
+        window.set_enhancement_de_esser_enabled(enhancement_de_esser_enabled);
+        window.set_enhancement_exciter_enabled(enhancement_exciter_enabled);
         window.set_dsp_min_a(ranges.0.0);
         window.set_dsp_max_a(ranges.0.1);
         window.set_dsp_min_b(ranges.1.0);
@@ -2343,7 +2460,7 @@ fn dsp_display(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> DspD
                 snapshot.enhancement_suite.exciter.amount_percent,
                 0.0,
             ),
-            ((0.0, 100.0), (0.0, 100.0), (0.0, 100.0), (0.0, 1.0)),
+            ((0.0, 10.0), (0.0, 100.0), (0.0, 100.0), (0.0, 5_000.0)),
         ),
         DspSelection::HeadphoneEqualizer => {
             let value = |index: usize| {
@@ -2376,7 +2493,11 @@ fn set_dsp_lease(window: Weak<MainWindow>, module: Option<String>, seconds: Opti
     });
 }
 
-fn start_health_monitor(window: Weak<MainWindow>, client: DaemonClient) {
+fn start_health_monitor(
+    window: Weak<MainWindow>,
+    client: DaemonClient,
+    session: Arc<Mutex<DspSession>>,
+) {
     thread::spawn(move || {
         let mut was_connected = false;
         loop {
@@ -2399,6 +2520,7 @@ fn start_health_monitor(window: Weak<MainWindow>, client: DaemonClient) {
                     set_dsp_lease(window.clone(), active, seconds);
                     if recovered {
                         refresh_all(window.clone(), client.clone());
+                        load_dsp(window.clone(), client.clone(), session.clone(), false, true);
                     }
                 }
                 Err(error) => {
@@ -2542,8 +2664,9 @@ mod desktop_tests {
     use super::{
         DspSelection, active_eq_profile, add_eq_band, adjust_eq_band_value, hotkey_key_name,
         mock_meter_level, mute_state_with_target, normalize_captured_hotkey, normalize_mute_action,
-        remove_eq_band, selected_dsp_enabled, set_eq_band_type_value, set_eq_band_value,
-        set_selected_dsp_enabled, source_name_available, update_from_values,
+        remove_eq_band, selected_dsp_enabled, set_enhancement_preset, set_enhancement_value,
+        set_eq_band_type_value, set_eq_band_value, set_selected_dsp_enabled, source_name_available,
+        update_from_values,
     };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
@@ -2756,5 +2879,56 @@ mod desktop_tests {
         assert!(restored.enabled);
         assert_eq!(restored.band_type, EqualizerBandType::Bell);
         assert_eq!(add_eq_band(&mut snapshot), None);
+    }
+
+    #[test]
+    fn enhancement_controls_stage_every_visible_beacn_value_and_enabled_state() {
+        let mut snapshot = dsp_snapshot();
+
+        set_enhancement_preset(&mut snapshot, 4).unwrap();
+        set_enhancement_value(&mut snapshot, "bass_amount", 2.5).unwrap();
+        set_enhancement_value(&mut snapshot, "de_esser_amount", 0.0).unwrap();
+        set_enhancement_value(&mut snapshot, "exciter_amount", 42.0).unwrap();
+        set_enhancement_value(&mut snapshot, "exciter_frequency", 3_100.0).unwrap();
+
+        let suite = &snapshot.enhancement_suite;
+        assert_eq!(suite.bass.preset, 4);
+        assert_eq!(suite.bass.amount, 2.5);
+        assert!(suite.bass.enabled);
+        assert_eq!(suite.de_esser.amount_percent, 0.0);
+        assert!(!suite.de_esser.enabled);
+        assert_eq!(suite.exciter.amount_percent, 42.0);
+        assert_eq!(suite.exciter.frequency_hz, 3_100.0);
+        assert!(suite.exciter.enabled);
+
+        let update = update_from_values(
+            DspSelection::EnhancementSuite,
+            snapshot.clone(),
+            10.0,
+            100.0,
+            100.0,
+            0.0,
+        );
+        let MicrophoneDspUpdate::EnhancementSuite(staged) = update else {
+            panic!("expected an enhancement update")
+        };
+        assert_eq!(staged, snapshot.enhancement_suite);
+    }
+
+    #[test]
+    fn enhancement_controls_reject_unknowns_and_clamp_protocol_ranges() {
+        let mut snapshot = dsp_snapshot();
+
+        assert!(set_enhancement_preset(&mut snapshot, 0).is_none());
+        assert!(set_enhancement_preset(&mut snapshot, 5).is_none());
+        assert!(set_enhancement_value(&mut snapshot, "unknown", 1.0).is_none());
+        assert!(set_enhancement_value(&mut snapshot, "bass_amount", f32::NAN).is_none());
+
+        set_enhancement_value(&mut snapshot, "bass_amount", 99.0).unwrap();
+        set_enhancement_value(&mut snapshot, "de_esser_amount", -1.0).unwrap();
+        set_enhancement_value(&mut snapshot, "exciter_frequency", 9_000.0).unwrap();
+        assert_eq!(snapshot.enhancement_suite.bass.amount, 10.0);
+        assert_eq!(snapshot.enhancement_suite.de_esser.amount_percent, 0.0);
+        assert_eq!(snapshot.enhancement_suite.exciter.frequency_hz, 5_000.0);
     }
 }

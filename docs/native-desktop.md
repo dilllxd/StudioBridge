@@ -101,6 +101,9 @@ than copying its source or visual assets:
   validated filter types, guarded Simple/Advanced profiles, add/remove,
   FREQ/GAIN/Q stepping, continuous selected-band sliders, and keyboard-labelled
   controls;
+- functional read-back Enhancement Suite cards with all four Bass Enhance
+  styles, guarded De-Esser/Bass/Exciter dials, Exciter frequency, continuous
+  editor sliders, keyboard stepping, and protocol-valid staged enabled states;
 - secondary microphone processors grouped by module;
 - a measured 897/150 microphone editor/output-column split, 864-by-256 graph,
   exact 30-pixel processor tab strip, live Mic source meter, read-back gain and

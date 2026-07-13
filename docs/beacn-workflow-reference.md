@@ -138,6 +138,14 @@ and add/remove changes update the staged active profile only while Equalizer is
 armed; the lower guarded editor mirrors the selected band with continuous
 sliders. The preset row remains an honest Custom/read-back display until exact
 preset payloads are captured, rather than applying guessed audio settings.
+The adjacent enhancement cards mirror BEACN's four Bass Enhance styles and its
+De-Esser, Bass Amount, Exciter Amount, and Exciter Frequency dials. Their
+read-back values remain available in the guarded editor and accessibility tree;
+mouse drag, arrow-key stepping, and the lower continuous sliders stage the exact
+exposed protocol fields only while Enhancement Suite is armed. A non-zero
+amount stages that processor's existing enabled field on, and zero stages it
+off, matching the dial-only UI
+without inventing a separate switch or hidden preset payload.
 Simple/Advanced and Adaptive/Snapshot selections reflect the current read-back
 state. The Noise Suppression, Expander, Compressor, and Headphones On switches
 likewise reflect their module's stored enabled state. Mode and enable changes

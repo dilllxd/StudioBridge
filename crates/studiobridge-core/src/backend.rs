@@ -216,7 +216,7 @@ fn mock_microphone_dsp() -> MicrophoneDspSnapshot {
         enhancement_suite: EnhancementSuiteState {
             bass: BassEnhancementState {
                 enabled: false,
-                preset: 0,
+                preset: 1,
                 amount: 0.0,
                 drive: 0.0,
                 mix_percent: 0.0,

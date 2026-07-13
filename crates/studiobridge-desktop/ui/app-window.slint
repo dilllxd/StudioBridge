@@ -780,6 +780,109 @@ component Dial inherits Rectangle {
     Text { x: 0px; y: 89px; width: parent.width; text: root.value-label; color: root.active ? Theme.teal : Theme.quiet; font-size: 9px; horizontal-alignment: center; }
 }
 
+component EnhancementPresetButton inherits Rectangle {
+    in property <int> preset;
+    in property <bool> selected;
+    in property <bool> interactive;
+    callback clicked;
+    width: 34px;
+    height: 34px;
+    background: root.selected ? Theme.teal : #18181b;
+    border-width: 1px;
+    border-color: root.selected ? #78e5df : #2c2c31;
+    Text {
+        text: root.preset;
+        color: root.selected ? #ffffff : root.interactive ? Theme.text : #66666b;
+        font-size: 18px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    preset-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        accessible-role: button;
+        accessible-label: "Bass Enhance style " + root.preset + (root.selected ? ", selected" : "");
+        accessible-enabled: root.interactive;
+        key-pressed(event) => {
+            if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+        TouchArea { enabled: root.interactive; clicked => { preset-focus.focus(); root.clicked(); } }
+    }
+}
+
+component EnhancementDial inherits Rectangle {
+    in property <string> label;
+    in property <string> value-label;
+    in property <string> dial-accessible-value: root.value-label;
+    in property <string> control-label;
+    in property <float> value;
+    in property <float> minimum;
+    in property <float> maximum;
+    in property <float> step: 1;
+    in property <bool> enabled-state;
+    in property <bool> interactive;
+    callback changed(float);
+    width: 82px;
+    height: 88px;
+    background: transparent;
+    Rectangle {
+        x: 10px;
+        y: 1px;
+        width: 62px;
+        height: 62px;
+        border-radius: 31px;
+        background: #171719;
+        border-width: 5px;
+        border-color: root.enabled-state ? Theme.teal : #4a494f;
+        Rectangle {
+            x: 27px;
+            y: 3px;
+            width: 4px;
+            height: 16px;
+            background: root.enabled-state ? Theme.teal : Theme.quiet;
+            border-radius: 2px;
+        }
+    }
+    Text { x: 0px; y: 65px; width: parent.width; text: root.label; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; }
+    Text { x: 0px; y: 78px; width: parent.width; text: root.value-label; color: root.enabled-state ? Theme.teal : Theme.quiet; font-size: 8px; horizontal-alignment: center; }
+    dial-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        accessible-role: button;
+        accessible-label: root.control-label + " " + root.dial-accessible-value;
+        accessible-enabled: root.interactive;
+        key-pressed(event) => {
+            if root.interactive && (event.text == Key.UpArrow || event.text == Key.RightArrow) {
+                root.changed(root.value + root.step > root.maximum ? root.maximum : root.value + root.step);
+                return accept;
+            }
+            if root.interactive && (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
+                root.changed(root.value - root.step < root.minimum ? root.minimum : root.value - root.step);
+                return accept;
+            }
+            return reject;
+        }
+        TouchArea {
+            enabled: root.interactive;
+            moved => {
+                if (self.pressed) {
+                    let candidate = root.maximum - self.mouse-y / self.height * (root.maximum - root.minimum);
+                    root.changed(candidate < root.minimum ? root.minimum : candidate > root.maximum ? root.maximum : candidate);
+                }
+            }
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    dial-focus.focus();
+                }
+            }
+        }
+    }
+}
+
 component ProcessorModeButton inherits Rectangle {
     in property <string> label;
     in property <bool> selected;
@@ -1310,6 +1413,14 @@ export component MainWindow inherits Window {
     in property <float> eq-q: 1;
     in property <bool> eq-band-enabled: true;
     in property <bool> eq-can-add-band: false;
+    in property <int> enhancement-bass-preset: 1;
+    in property <float> enhancement-bass-amount: 0;
+    in property <float> enhancement-de-esser-amount: 0;
+    in property <float> enhancement-exciter-amount: 0;
+    in property <float> enhancement-exciter-frequency: 0;
+    in property <bool> enhancement-bass-enabled: false;
+    in property <bool> enhancement-de-esser-enabled: false;
+    in property <bool> enhancement-exciter-enabled: false;
     in property <string> dsp-editor-title: "HEADPHONE EQUALIZER";
     in property <string> dsp-label-a: "Bass dB";
     in property <string> dsp-label-b: "Mids dB";
@@ -1392,6 +1503,8 @@ export component MainWindow inherits Window {
     callback set-eq-band-value(string, float);
     callback add-eq-band;
     callback remove-eq-band;
+    callback set-enhancement-preset(int);
+    callback set-enhancement-value(string, float);
     callback set-dsp-enabled(bool);
     callback select-noise-style(bool);
     callback load-dsp;
@@ -1858,10 +1971,19 @@ export component MainWindow inherits Window {
                         VerticalLayout {
                             padding: 8px;
                             Text { text: "BASS ENHANCE"; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
-                            HorizontalLayout { height: 34px; spacing: 5px; Rectangle { width: 34px; background: Theme.teal; Text { text: "1"; color: Theme.text; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; } } Rectangle { width: 34px; background: #18181b; Text { text: "2"; color: Theme.quiet; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; } } Rectangle { width: 34px; background: #18181b; Text { text: "3"; color: Theme.quiet; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; } } Rectangle { width: 34px; background: #18181b; Text { text: "4"; color: Theme.quiet; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; } } }
-                            HorizontalLayout { Dial { label: "DE-ESSER"; value-label: ""; } Dial { label: "AMOUNT"; value-label: ""; } }
+                            HorizontalLayout {
+                                height: 34px; spacing: 5px;
+                                EnhancementPresetButton { preset: 1; selected: root.enhancement-bass-preset == 1; interactive: root.dsp-active-module == "enhancement_suite"; clicked => { root.set-enhancement-preset(1); } }
+                                EnhancementPresetButton { preset: 2; selected: root.enhancement-bass-preset == 2; interactive: root.dsp-active-module == "enhancement_suite"; clicked => { root.set-enhancement-preset(2); } }
+                                EnhancementPresetButton { preset: 3; selected: root.enhancement-bass-preset == 3; interactive: root.dsp-active-module == "enhancement_suite"; clicked => { root.set-enhancement-preset(3); } }
+                                EnhancementPresetButton { preset: 4; selected: root.enhancement-bass-preset == 4; interactive: root.dsp-active-module == "enhancement_suite"; clicked => { root.set-enhancement-preset(4); } }
+                            }
+                            HorizontalLayout {
+                                EnhancementDial { label: "DE-ESSER"; control-label: "De-Esser amount"; value: root.enhancement-de-esser-amount; value-label: ""; dial-accessible-value: round(root.enhancement-de-esser-amount) + "%"; minimum: 0; maximum: 100; step: 1; enabled-state: root.enhancement-de-esser-enabled; interactive: root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("de_esser_amount", value); } }
+                                EnhancementDial { label: "AMOUNT"; control-label: "Bass Enhance amount"; value: root.enhancement-bass-amount; value-label: ""; dial-accessible-value: round(root.enhancement-bass-amount * 10) / 10 + ""; minimum: 0; maximum: 10; step: 0.5; enabled-state: root.enhancement-bass-enabled; interactive: root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("bass_amount", value); } }
+                            }
                         }
-                        TouchArea { clicked => { root.select-dsp-module("enhancement_suite"); } }
+                        TouchArea { x: 0px; y: 0px; width: parent.width; height: 20px; clicked => { root.select-dsp-module("enhancement_suite"); } }
                     }
                     Rectangle {
                         width: 201px;
@@ -1871,9 +1993,12 @@ export component MainWindow inherits Window {
                         VerticalLayout {
                             padding: 8px;
                             Text { text: "EXCITER"; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
-                            HorizontalLayout { Dial { label: "AMOUNT"; value-label: ""; } Dial { label: "FREQUENCY"; value-label: "4000Hz"; } }
+                            HorizontalLayout {
+                                EnhancementDial { label: "AMOUNT"; control-label: "Exciter amount"; value: root.enhancement-exciter-amount; value-label: ""; dial-accessible-value: round(root.enhancement-exciter-amount) + "%"; minimum: 0; maximum: 100; step: 1; enabled-state: root.enhancement-exciter-enabled; interactive: root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("exciter_amount", value); } }
+                                EnhancementDial { label: "FREQUENCY"; control-label: "Exciter frequency"; value: root.enhancement-exciter-frequency; value-label: round(root.enhancement-exciter-frequency) + "Hz"; minimum: 0; maximum: 5000; step: 100; enabled-state: root.enhancement-exciter-enabled; interactive: root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("exciter_frequency", value); } }
+                            }
                         }
-                        TouchArea { clicked => { root.select-dsp-module("enhancement_suite"); } }
+                        TouchArea { x: 0px; y: 0px; width: parent.width; height: 20px; clicked => { root.select-dsp-module("enhancement_suite"); } }
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
                 }
@@ -1969,18 +2094,20 @@ export component MainWindow inherits Window {
                             spacing: 16px;
                             VerticalLayout {
                                 width: 330px; spacing: 7px;
-                                Text { text: root.dsp-label-a.to-uppercase() + "   " + round(root.dsp-value-a * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } }
-                                Text { text: root.dsp-label-b.to-uppercase() + "   " + round(root.dsp-value-b * 10) / 10 + "%"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } }
-                                Text { text: root.dsp-label-c.to-uppercase() + "   " + round(root.dsp-value-c * 10) / 10 + "%"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; changed(value) => { root.dsp-value-c = value; } }
+                                Text { text: "BASS AMOUNT   " + round(root.enhancement-bass-amount * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-bass-amount; minimum: 0; maximum: 10; changed(value) => { root.set-enhancement-value("bass_amount", value); } }
+                                Text { text: "DE-ESSER   " + round(root.enhancement-de-esser-amount) + "%"; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-de-esser-amount; minimum: 0; maximum: 100; changed(value) => { root.set-enhancement-value("de_esser_amount", value); } }
+                                Text { text: "EXCITER   " + round(root.enhancement-exciter-amount) + "%"; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-exciter-amount; minimum: 0; maximum: 100; changed(value) => { root.set-enhancement-value("exciter_amount", value); } }
+                                Text { text: "EXCITER FREQUENCY   " + round(root.enhancement-exciter-frequency) + " Hz"; color: Theme.text; font-size: 10px; font-weight: 700; }
+                                Slider { enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-exciter-frequency; minimum: 0; maximum: 5000; changed(value) => { root.set-enhancement-value("exciter_frequency", value); } }
                             }
                             HorizontalLayout {
                                 horizontal-stretch: 1; spacing: 12px;
-                                Dial { label: "BASS"; value-label: round(root.dsp-value-a * 10) / 10 + ""; active: root.dsp-active-module == root.dsp-selected-module; }
-                                Dial { label: "DE-ESSER"; value-label: round(root.dsp-value-b * 10) / 10 + "%"; active: root.dsp-active-module == root.dsp-selected-module; }
-                                Dial { label: "EXCITER"; value-label: round(root.dsp-value-c * 10) / 10 + "%"; active: root.dsp-active-module == root.dsp-selected-module; }
+                                Dial { label: "BASS"; value-label: round(root.enhancement-bass-amount * 10) / 10 + ""; active: root.enhancement-bass-enabled; }
+                                Dial { label: "DE-ESSER"; value-label: round(root.enhancement-de-esser-amount) + "%"; active: root.enhancement-de-esser-enabled; }
+                                Dial { label: "EXCITER"; value-label: round(root.enhancement-exciter-amount) + "%"; active: root.enhancement-exciter-enabled; }
                                 Rectangle { horizontal-stretch: 1; }
                             }
                         }
