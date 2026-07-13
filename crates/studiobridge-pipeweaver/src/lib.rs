@@ -187,6 +187,94 @@ impl MixerBackend for PipeweaverBackend {
         Ok(())
     }
 
+    async fn set_source_device(
+        &self,
+        channel_id: &str,
+        device_node_id: Option<u32>,
+    ) -> BridgeResult<()> {
+        let status = self
+            .client
+            .lock()
+            .await
+            .get_status()
+            .await
+            .map_err(|error| BridgeError::BackendUnavailable(error.to_string()))?;
+        let snapshot = map_status(&status);
+        let channel = snapshot
+            .channels
+            .iter()
+            .find(|channel| channel.id == channel_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown channel: {channel_id}")))?;
+        if channel.source_kind != MixerSourceKind::Physical {
+            return Err(BridgeError::InvalidValue(format!(
+                "channel does not accept physical inputs: {channel_id}"
+            )));
+        }
+        let selected = device_node_id
+            .map(|node_id| {
+                snapshot
+                    .physical_inputs
+                    .iter()
+                    .find(|device| device.node_id == node_id)
+                    .ok_or_else(|| {
+                        BridgeError::InvalidValue(format!(
+                            "unknown or unusable physical input node: {node_id}"
+                        ))
+                    })
+            })
+            .transpose()?;
+
+        let matching_index = selected.and_then(|device| {
+            channel
+                .attached_devices
+                .iter()
+                .position(|attached| physical_device_matches(attached, &device.descriptor))
+        });
+        if selected.is_some() && channel.attached_devices.len() == 1 && matching_index == Some(0) {
+            return Ok(());
+        }
+        if selected.is_none() && channel.attached_devices.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(device) = selected {
+            if let Some(keep_index) = matching_index {
+                for index in (0..channel.attached_devices.len()).rev() {
+                    if index != keep_index {
+                        self.send(APICommand::RemovePhysicalNodeByName(
+                            channel_id.to_owned(),
+                            index,
+                        ))
+                        .await?;
+                    }
+                }
+            } else {
+                // Attach first so a failed attach leaves the current input path intact.
+                self.send(APICommand::AttachPhysicalNodeByName(
+                    channel_id.to_owned(),
+                    device.node_id,
+                ))
+                .await?;
+                for index in (0..channel.attached_devices.len()).rev() {
+                    self.send(APICommand::RemovePhysicalNodeByName(
+                        channel_id.to_owned(),
+                        index,
+                    ))
+                    .await?;
+                }
+            }
+        } else {
+            for index in (0..channel.attached_devices.len()).rev() {
+                self.send(APICommand::RemovePhysicalNodeByName(
+                    channel_id.to_owned(),
+                    index,
+                ))
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn set_default_input(&self, device_id: &str) -> BridgeResult<()> {
         self.send(APICommand::SetDefaultInput(parse_device_id(device_id)?))
             .await
@@ -416,6 +504,7 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
         .collect();
     let (default_inputs, default_outputs) = default_device_choices(status);
     let physical_outputs = physical_output_choices(status);
+    let physical_inputs = physical_input_choices(status);
 
     MixerSnapshot {
         status: BackendStatus::Connected,
@@ -430,6 +519,7 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
         default_inputs,
         default_outputs,
         physical_outputs,
+        physical_inputs,
     }
 }
 
@@ -470,6 +560,33 @@ fn physical_output_choices(status: &DaemonStatus) -> Vec<MixerPhysicalDeviceChoi
     });
     outputs.dedup_by_key(|device| device.node_id);
     outputs
+}
+
+fn physical_input_choices(status: &DaemonStatus) -> Vec<MixerPhysicalDeviceChoice> {
+    let mut inputs = status.audio.devices[DeviceType::Source]
+        .iter()
+        .filter(|device| device.is_usable)
+        .map(|device| MixerPhysicalDeviceChoice {
+            node_id: device.node_id,
+            name: device
+                .description
+                .clone()
+                .or_else(|| device.name.clone())
+                .unwrap_or_else(|| format!("Input node {}", device.node_id)),
+            descriptor: MixerPhysicalDeviceDescriptor {
+                name: device.name.clone(),
+                description: device.description.clone(),
+            },
+        })
+        .collect::<Vec<_>>();
+    inputs.sort_by(|left, right| {
+        left.name
+            .to_lowercase()
+            .cmp(&right.name.to_lowercase())
+            .then_with(|| left.node_id.cmp(&right.node_id))
+    });
+    inputs.dedup_by_key(|device| device.node_id);
+    inputs
 }
 
 fn physical_device_matches(
@@ -628,7 +745,7 @@ fn map_physical(
     device: &PhysicalSourceDevice,
     applications: &HashMap<String, Vec<String>>,
 ) -> MixerChannel {
-    make_channel(
+    let mut channel = make_channel(
         &device.description,
         device.volumes.volume[Mix::A],
         device.volumes.volume[Mix::B],
@@ -636,7 +753,9 @@ fn map_physical(
         applications,
         MixerSourceKind::Physical,
         device.volumes.volumes_linked.is_some(),
-    )
+    );
+    channel.attached_devices = map_attached_devices(&device.attached_devices);
+    channel
 }
 
 fn map_virtual(
@@ -690,6 +809,7 @@ fn make_channel(
             .unwrap_or_default(),
         source_kind,
         volumes_linked,
+        attached_devices: Vec::new(),
     }
 }
 
@@ -966,6 +1086,77 @@ mod tests {
         assert!(error.to_string().contains("unknown or unusable"));
         let requests = fake.requests.lock().await;
         assert!(matches!(requests.as_slice(), [DaemonRequest::GetStatus]));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn source_device_replacement_attaches_before_removing_stale_inputs() {
+        let (backend, fake, server) = fake_backend().await;
+        let old = pipeweaver_profile::PhysicalDeviceDescriptor {
+            name: Some("alsa_input.old".into()),
+            description: Some("Old Input".into()),
+        };
+        {
+            let mut status = fake.status.lock().await;
+            status.audio.profile.devices.sources.physical_devices[0].attached_devices = vec![old];
+            status.audio.devices[DeviceType::Source].push(
+                pipeweaver_ipc::commands::PhysicalDevice {
+                    node_id: 84,
+                    name: Some("alsa_input.new".into()),
+                    description: Some("New Input".into()),
+                    is_usable: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        backend
+            .set_source_device("Microphone", Some(84))
+            .await
+            .unwrap();
+
+        let requests = fake.requests.lock().await;
+        assert!(matches!(requests.first(), Some(DaemonRequest::GetStatus)));
+        assert!(matches!(requests.get(1), Some(DaemonRequest::Pipewire(
+            APICommand::AttachPhysicalNodeByName(name, 84)
+        )) if name == "Microphone"));
+        assert!(matches!(requests.get(2), Some(DaemonRequest::Pipewire(
+            APICommand::RemovePhysicalNodeByName(name, 0)
+        )) if name == "Microphone"));
+        assert_eq!(requests.len(), 3);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn source_device_selection_rejects_virtual_channels_and_unusable_nodes() {
+        let (backend, fake, server) = fake_backend().await;
+        fake.status.lock().await.audio.devices[DeviceType::Source].push(
+            pipeweaver_ipc::commands::PhysicalDevice {
+                node_id: 84,
+                name: Some("alsa_input.unusable".into()),
+                description: Some("Unusable Input".into()),
+                is_usable: false,
+                ..Default::default()
+            },
+        );
+
+        let virtual_error = backend
+            .set_source_device("System", Some(84))
+            .await
+            .unwrap_err();
+        assert!(virtual_error.to_string().contains("does not accept"));
+        let unusable_error = backend
+            .set_source_device("Microphone", Some(84))
+            .await
+            .unwrap_err();
+        assert!(unusable_error.to_string().contains("unknown or unusable"));
+        let requests = fake.requests.lock().await;
+        assert!(matches!(
+            requests.as_slice(),
+            [DaemonRequest::GetStatus, DaemonRequest::GetStatus]
+        ));
 
         server.abort();
     }

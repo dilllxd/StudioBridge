@@ -6,8 +6,8 @@ use studiobridge_core::{
     MicrophoneDspUpdate, MicrophoneDspWriteResult, MixBus, MixerProfileRequest,
     MixerProfilesResponse, MuteState, RemoveMixerSourceRequest, ReorderMixerSourceRequest,
     SetDefaultDeviceRequest, SetLinkAssignmentRequest, SetMixerApplicationRequest, SetMuteRequest,
-    SetRouteRequest, SetTargetDeviceRequest, SetTargetMuteRequest, SetTargetVolumeRequest,
-    SetVolumeLinkedRequest, SetVolumeRequest,
+    SetRouteRequest, SetSourceDeviceRequest, SetTargetDeviceRequest, SetTargetMuteRequest,
+    SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -112,6 +112,22 @@ impl DaemonClient {
             .post(format!("{}/api/mixer/target-device", self.base_url))
             .json(&SetTargetDeviceRequest {
                 target_id: target_id.into(),
+                device_node_id,
+            })
+            .send()?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    pub fn set_source_device(
+        &self,
+        channel_id: &str,
+        device_node_id: Option<u32>,
+    ) -> Result<(), reqwest::Error> {
+        self.client
+            .post(format!("{}/api/mixer/source-device", self.base_url))
+            .json(&SetSourceDeviceRequest {
+                channel_id: channel_id.into(),
                 device_node_id,
             })
             .send()?

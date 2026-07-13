@@ -117,6 +117,9 @@ than copying its source or visual assets:
   stays hidden while accepting the legacy `close_to_tray` settings key;
 - native application chips that drag onto source strips, with accepted-drop
   highlighting, an unassign target, and accessible selector fallback;
+- BEACN-style compact physical-capture rows inside physical source strips,
+  backed by validated per-source PipeWeaver attachment, explicit detach,
+  profile restoration, and keyboard-accessible selected state;
 - always-accessible voice EQ and enhancement controls;
 - a functional eight-band Voice EQ editor with graph-point selection, all six
   validated filter types, guarded Simple/Advanced profiles, add/remove,

@@ -36,6 +36,11 @@ pub trait MixerBackend: Send + Sync {
         target_id: &str,
         device_node_id: Option<u32>,
     ) -> BridgeResult<()>;
+    async fn set_source_device(
+        &self,
+        channel_id: &str,
+        device_node_id: Option<u32>,
+    ) -> BridgeResult<()>;
     async fn set_default_input(&self, device_id: &str) -> BridgeResult<()>;
     async fn set_default_output(&self, device_id: &str) -> BridgeResult<()>;
     async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()>;
@@ -292,12 +297,19 @@ impl Default for MockMixerBackend {
             audience_volume: 68,
             mute_state: MuteState::Unmuted,
             applications: apps.iter().map(|value| (*value).into()).collect(),
-            source_kind: if id == "microphone" || id == "game" || id == "link-in" {
+            source_kind: if id == "microphone" {
                 MixerSourceKind::Physical
             } else {
                 MixerSourceKind::Virtual
             },
             volumes_linked: true,
+            attached_devices: match id {
+                "microphone" => vec![MixerPhysicalDeviceDescriptor {
+                    name: Some("alsa_input.beacn_studio_mic".into()),
+                    description: Some("Microphone (BEACN Studio)".into()),
+                }],
+                _ => Vec::new(),
+            },
         };
 
         Self {
@@ -434,6 +446,40 @@ impl Default for MockMixerBackend {
                         },
                     },
                 ],
+                physical_inputs: vec![
+                    MixerPhysicalDeviceChoice {
+                        node_id: 201,
+                        name: "Microphone (BEACN Studio)".into(),
+                        descriptor: MixerPhysicalDeviceDescriptor {
+                            name: Some("alsa_input.beacn_studio_mic".into()),
+                            description: Some("Microphone (BEACN Studio)".into()),
+                        },
+                    },
+                    MixerPhysicalDeviceChoice {
+                        node_id: 202,
+                        name: "Capture Card (Elgato 4K X)".into(),
+                        descriptor: MixerPhysicalDeviceDescriptor {
+                            name: Some("alsa_input.elgato_4k_x".into()),
+                            description: Some("Capture Card (Elgato 4K X)".into()),
+                        },
+                    },
+                    MixerPhysicalDeviceChoice {
+                        node_id: 203,
+                        name: "BEACN Studio Link In".into(),
+                        descriptor: MixerPhysicalDeviceDescriptor {
+                            name: Some("alsa_input.beacn_studio_link_in".into()),
+                            description: Some("BEACN Studio Link In".into()),
+                        },
+                    },
+                    MixerPhysicalDeviceChoice {
+                        node_id: 204,
+                        name: "Microphone (USB Camera)".into(),
+                        descriptor: MixerPhysicalDeviceDescriptor {
+                            name: Some("alsa_input.usb_camera".into()),
+                            description: Some("Microphone (USB Camera)".into()),
+                        },
+                    },
+                ],
             })),
         }
     }
@@ -517,6 +563,38 @@ impl MixerBackend for MockMixerBackend {
             .find(|target| target.id == target_id)
             .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
         target.attached_devices = descriptor.into_iter().collect();
+        Ok(())
+    }
+
+    async fn set_source_device(
+        &self,
+        channel_id: &str,
+        device_node_id: Option<u32>,
+    ) -> BridgeResult<()> {
+        let mut state = self.state.write().await;
+        let descriptor = device_node_id
+            .map(|node_id| {
+                state
+                    .physical_inputs
+                    .iter()
+                    .find(|device| device.node_id == node_id)
+                    .map(|device| device.descriptor.clone())
+                    .ok_or_else(|| {
+                        BridgeError::InvalidValue(format!("unknown physical input node: {node_id}"))
+                    })
+            })
+            .transpose()?;
+        let channel = state
+            .channels
+            .iter_mut()
+            .find(|channel| channel.id == channel_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown channel: {channel_id}")))?;
+        if channel.source_kind != MixerSourceKind::Physical {
+            return Err(BridgeError::InvalidValue(format!(
+                "channel does not accept physical inputs: {channel_id}"
+            )));
+        }
+        channel.attached_devices = descriptor.into_iter().collect();
         Ok(())
     }
 
@@ -630,6 +708,7 @@ impl MixerBackend for MockMixerBackend {
             applications: Vec::new(),
             source_kind: MixerSourceKind::Virtual,
             volumes_linked: true,
+            attached_devices: Vec::new(),
         });
         Ok(())
     }

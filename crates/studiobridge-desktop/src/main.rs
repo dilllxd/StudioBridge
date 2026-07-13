@@ -35,7 +35,8 @@ use std::{
 use studiobridge_core::{
     AppSnapshot, DspMode, DspWriteModule, EqualizerBandType, EqualizerProfile, HeadphoneOutputMode,
     LinkChannel, MicrophoneDspSnapshot, MicrophoneDspUpdate, MixBus, MixerChannel,
-    MixerDeviceChoice, MixerPhysicalDeviceDescriptor, MuteState, NoiseSuppressionStyle,
+    MixerDeviceChoice, MixerPhysicalDeviceChoice, MixerPhysicalDeviceDescriptor, MixerSourceKind,
+    MuteState, NoiseSuppressionStyle,
 };
 
 mod client;
@@ -760,6 +761,8 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_default_output_ids(string_model(Vec::new()));
     window.set_physical_output_names(string_model(vec!["Unassigned".into()]));
     window.set_physical_output_ids(string_model(vec![String::new()]));
+    window.set_physical_input_names(string_model(Vec::new()));
+    window.set_physical_input_ids(string_model(Vec::new()));
     window.set_link_channel_names(string_model(vec![
         "System".into(),
         "Link 1".into(),
@@ -991,6 +994,39 @@ fn main() -> Result<(), slint::PlatformError> {
                 Err(error) => set_status(
                     window.clone(),
                     format!("Output device update failed: {error}"),
+                ),
+            }
+            refresh_all(window, client);
+        });
+    });
+
+    let source_device_window = window.as_weak();
+    let source_device_client = client.clone();
+    window.on_set_source_device(move |channel_id, device_node_id| {
+        let window = source_device_window.clone();
+        let client = source_device_client.clone();
+        let channel_id = channel_id.to_string();
+        let device_node_id = device_node_id.to_string();
+        thread::spawn(move || {
+            let node_id = if device_node_id.is_empty() {
+                None
+            } else {
+                match device_node_id.parse::<u32>() {
+                    Ok(node_id) => Some(node_id),
+                    Err(error) => {
+                        set_status(
+                            window,
+                            format!("Input device selection is invalid: {error}"),
+                        );
+                        return;
+                    }
+                }
+            };
+            match client.set_source_device(&channel_id, node_id) {
+                Ok(()) => set_status(window.clone(), format!("{channel_id} input device updated")),
+                Err(error) => set_status(
+                    window.clone(),
+                    format!("Input device update failed: {error}"),
                 ),
             }
             refresh_all(window, client);
@@ -1779,7 +1815,11 @@ fn claim_single_instance(
     Some(InstanceGuard)
 }
 
-fn source(channel: &MixerChannel, preferences: &AppPreferences) -> SourceModel {
+fn source(
+    channel: &MixerChannel,
+    preferences: &AppPreferences,
+    physical_inputs: &[MixerPhysicalDeviceChoice],
+) -> SourceModel {
     let mute_action = preferences
         .mute_actions
         .get(&channel.id)
@@ -1803,6 +1843,16 @@ fn source(channel: &MixerChannel, preferences: &AppPreferences) -> SourceModel {
         ),
         mute_action: mute_action.into(),
         colour: parse_colour(&channel.colour),
+        physical: channel.source_kind == MixerSourceKind::Physical,
+        input_device_index: channel
+            .attached_devices
+            .iter()
+            .find_map(|attached| {
+                physical_inputs
+                    .iter()
+                    .position(|input| physical_device_matches(attached, &input.descriptor))
+            })
+            .map_or(-1, |index| index as i32),
     }
 }
 
@@ -2035,7 +2085,7 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
         .mixer
         .channels
         .iter()
-        .map(|channel| source(channel, &preferences))
+        .map(|channel| source(channel, &preferences, &snapshot.mixer.physical_inputs))
         .collect::<Vec<_>>();
     let targets =
         ordered_targets
@@ -2136,6 +2186,22 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
     );
     window.set_physical_output_names(string_model(physical_output_names));
     window.set_physical_output_ids(string_model(physical_output_ids));
+    window.set_physical_input_names(string_model(
+        snapshot
+            .mixer
+            .physical_inputs
+            .iter()
+            .map(|device| device.name.clone())
+            .collect(),
+    ));
+    window.set_physical_input_ids(string_model(
+        snapshot
+            .mixer
+            .physical_inputs
+            .iter()
+            .map(|device| device.node_id.to_string())
+            .collect(),
+    ));
     window.set_default_input_index(default_input_index);
     window.set_default_output_index(default_output_index);
     window.set_sources(ModelRc::from(Rc::new(VecModel::from(sources))));

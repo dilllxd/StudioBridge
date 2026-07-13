@@ -122,6 +122,18 @@ impl StudioBridgeService {
         .await
     }
 
+    pub async fn set_source_device(
+        &self,
+        channel_id: &str,
+        device_node_id: Option<u32>,
+    ) -> BridgeResult<()> {
+        backend_call(
+            "PipeWeaver",
+            self.mixer.set_source_device(channel_id, device_node_id),
+        )
+        .await
+    }
+
     pub async fn set_default_input(&self, device_id: &str) -> BridgeResult<()> {
         backend_call("PipeWeaver", self.mixer.set_default_input(device_id)).await
     }
@@ -208,6 +220,19 @@ impl StudioBridgeService {
             self.set_volume_linked(&channel.id, channel.volumes_linked)
                 .await?;
             self.set_mute(&channel.id, channel.mute_state).await?;
+            if channel.source_kind == crate::MixerSourceKind::Physical {
+                if channel.attached_devices.is_empty() {
+                    self.set_source_device(&channel.id, None).await?;
+                } else if let Some(input) = current.physical_inputs.iter().find(|input| {
+                    channel
+                        .attached_devices
+                        .iter()
+                        .any(|attached| physical_device_matches(attached, &input.descriptor))
+                }) {
+                    self.set_source_device(&channel.id, Some(input.node_id))
+                        .await?;
+                }
+            }
         }
         for target in &desired.targets {
             if current.targets.iter().any(|item| item.id == target.id) {
@@ -321,6 +346,7 @@ fn disconnected_mixer(error: crate::BridgeError) -> MixerSnapshot {
         default_inputs: Vec::new(),
         default_outputs: Vec::new(),
         physical_outputs: Vec::new(),
+        physical_inputs: Vec::new(),
     }
 }
 
@@ -481,6 +507,10 @@ mod tests {
             .set_target_device("headphones", Some(103))
             .await
             .unwrap();
+        service
+            .set_source_device("microphone", Some(202))
+            .await
+            .unwrap();
 
         service.apply_mixer_profile(&saved).await.unwrap();
         let restored = service.snapshot().await.unwrap().mixer;
@@ -523,6 +553,20 @@ mod tests {
                 .targets
                 .iter()
                 .find(|target| target.id == "headphones")
+                .unwrap()
+                .attached_devices
+        );
+        assert_eq!(
+            restored
+                .channels
+                .iter()
+                .find(|channel| channel.id == "microphone")
+                .unwrap()
+                .attached_devices,
+            saved
+                .channels
+                .iter()
+                .find(|channel| channel.id == "microphone")
                 .unwrap()
                 .attached_devices
         );

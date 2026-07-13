@@ -73,6 +73,7 @@ POST /api/mixer/volume
 POST /api/mixer/target-volume
 POST /api/mixer/target-mute
 POST /api/mixer/target-device
+POST /api/mixer/source-device
 POST /api/mixer/default-input
 POST /api/mixer/default-output
 POST /api/mixer/volume-link

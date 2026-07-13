@@ -40,6 +40,10 @@ and issue-tracker HTTPS destinations; arbitrary URLs are refused.
   with a checkmark. Selecting a row changes the main action and closes the menu;
   clicking outside or pressing Escape dismisses it without changing the action.
   Pressing the main area applies the selected action.
+- Physical capture choices occupy the 82-pixel source-body region as compact
+  device rows. The active capture uses a teal circular indicator and teal label;
+  inactive captures use quiet outlined indicators. This list is independent of
+  the source-header arrow, which continues to open only the Delete Knob menu.
 - Personal and Audience master devices remain visible directly below the
   source strips. The Personal card combines its playback-device selector and
   master level, while the Audience card keeps the virtual mix and master level
@@ -100,6 +104,12 @@ available and unassigned applications stay visible. The Personal device,
 recording/playback defaults, outgoing Link assignments, and application
 destinations share the measured BEACN selector treatment rather than native
 toolkit combo-box styling.
+
+Physical PipeWire source nodes expose the same compact capture-device rows
+observed in BEACN. StudioBridge validates usable input nodes before a change,
+attaches a replacement before removing stale inputs, permits deliberate detach,
+and restores available saved descriptors through mixer profiles. These are
+PipeWire commands and never enable BEACN USB hardware writes.
 
 ## Routing table
 

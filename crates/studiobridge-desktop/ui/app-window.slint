@@ -13,6 +13,8 @@ export struct SourceModel {
     personal-muted: bool,
     audience-muted: bool,
     mute-action: string,
+    physical: bool,
+    input-device-index: int,
 }
 
 export struct RouteModel {
@@ -500,6 +502,48 @@ component BeacnSelector inherits Rectangle {
     }
 }
 
+component InputDeviceRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback activated;
+    height: 18px;
+    background: input-touch.has-hover ? #252529 : transparent;
+    Rectangle {
+        x: 3px; y: 4px; width: 10px; height: 10px;
+        border-radius: 5px;
+        border-width: 1px;
+        border-color: root.selected ? Theme.teal : #626168;
+        background: root.selected ? Theme.teal : transparent;
+        if root.selected: Rectangle {
+            x: 3px; y: 3px; width: 4px; height: 4px;
+            border-radius: 2px; background: #173e3c;
+        }
+    }
+    Text {
+        x: 17px; width: parent.width - 20px;
+        text: root.label;
+        color: root.selected ? Theme.teal : Theme.quiet;
+        font-size: 8px;
+        font-weight: root.selected ? 700 : 400;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    input-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: checkbox;
+        accessible-checked: root.selected;
+        accessible-label: (root.selected ? "Detach " : "Attach ") + root.label;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                root.activated();
+                return accept;
+            }
+            return reject;
+        }
+        input-touch := TouchArea { clicked => { input-focus.focus(); root.activated(); } }
+    }
+}
+
 component SourceStrip inherits Rectangle {
     in property <SourceModel> source;
     in property <int> source-index;
@@ -508,6 +552,7 @@ component SourceStrip inherits Rectangle {
     in property <bool> application-dragging: false;
     in property <length> application-drag-x: 0px;
     in property <length> application-drag-y: 0px;
+    in property <[string]> input-device-names;
     property <bool> application-hovered: root.application-dragging
         && root.application-drag-x >= root.absolute-position.x
         && root.application-drag-x < root.absolute-position.x + root.width
@@ -522,6 +567,7 @@ component SourceStrip inherits Rectangle {
     callback reorder-requested(float);
     callback link-changed(bool);
     callback delete-source;
+    callback input-device-selected(int);
     width: 133px;
     height: 398px;
     border-radius: 2px;
@@ -651,7 +697,26 @@ component SourceStrip inherits Rectangle {
             background: #1a1a1d;
             border-width: 1px;
             border-color: #2d2d31;
-            Text { x: 7px; y: 6px; width: parent.width - 14px; text: root.source.detail; color: Theme.quiet; font-size: 8px; overflow: elide; }
+            if root.source.physical: ScrollView {
+                width: parent.width; height: parent.height;
+                vertical-scrollbar-policy: ScrollBarPolicy.as-needed;
+                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                VerticalLayout {
+                    padding-left: 3px; padding-right: 3px; padding-top: 3px; padding-bottom: 3px;
+                    spacing: 0px;
+                    for input[index] in root.input-device-names: InputDeviceRow {
+                        label: input;
+                        selected: root.source.input-device-index == index;
+                        activated => { root.input-device-selected(root.source.input-device-index == index ? -1 : index); }
+                    }
+                    if root.input-device-names.length == 0: Text {
+                        text: "No physical inputs available";
+                        color: Theme.quiet; font-size: 8px;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            if !root.source.physical: Text { x: 7px; y: 6px; width: parent.width - 14px; text: root.source.detail; color: Theme.quiet; font-size: 8px; overflow: elide; }
         }
         Rectangle {
             height: 20px;
@@ -1756,6 +1821,8 @@ export component MainWindow inherits Window {
     in property <[string]> default-output-ids;
     in property <[string]> physical-output-names;
     in property <[string]> physical-output-ids;
+    in property <[string]> physical-input-names;
+    in property <[string]> physical-input-ids;
     in property <string> source-name-key: "";
     in property <int> default-input-index: -1;
     in property <int> default-output-index: -1;
@@ -1856,6 +1923,7 @@ export component MainWindow inherits Window {
     callback set-target-volume(string, float);
     callback set-target-mute(string, bool);
     callback set-target-device(string, string);
+    callback set-source-device(string, string);
     callback set-default-input(string);
     callback set-default-output(string);
     callback set-source-mute(string, string, bool);
@@ -1959,6 +2027,7 @@ export component MainWindow inherits Window {
                             for source[index] in root.sources: SourceStrip {
                                 source: source;
                                 source-index: index;
+                                input-device-names: root.physical-input-names;
                                 application-dragging: root.application-pointer-dragging;
                                 application-drag-x: root.application-pointer-x;
                                 application-drag-y: root.application-pointer-y;
@@ -1979,6 +2048,13 @@ export component MainWindow inherits Window {
                                 reorder-requested(position) => { root.reorder-source(source.channel-id, position); }
                                 link-changed(linked) => { root.set-volume-linked(source.channel-id, linked); }
                                 delete-source => { root.remove-source(source.channel-id); }
+                                input-device-selected(device-index) => {
+                                    if device-index < 0 {
+                                        root.set-source-device(source.channel-id, "");
+                                    } else if device-index < root.physical-input-ids.length {
+                                        root.set-source-device(source.channel-id, root.physical-input-ids[device-index]);
+                                    }
+                                }
                             }
                             Rectangle {
                                 width: 133px; height: 398px; background: #19191c; border-width: 1px; border-color: Theme.border; border-radius: 2px;

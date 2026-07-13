@@ -103,6 +103,8 @@ pub struct MixerChannel {
     pub applications: Vec<String>,
     pub source_kind: MixerSourceKind,
     pub volumes_linked: bool,
+    #[serde(default)]
+    pub attached_devices: Vec<MixerPhysicalDeviceDescriptor>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -169,6 +171,8 @@ pub struct MixerSnapshot {
     pub default_outputs: Vec<MixerDeviceChoice>,
     #[serde(default)]
     pub physical_outputs: Vec<MixerPhysicalDeviceChoice>,
+    #[serde(default)]
+    pub physical_inputs: Vec<MixerPhysicalDeviceChoice>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -219,6 +223,12 @@ pub struct SetTargetMuteRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetTargetDeviceRequest {
     pub target_id: String,
+    pub device_node_id: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetSourceDeviceRequest {
+    pub channel_id: String,
     pub device_node_id: Option<u32>,
 }
 
