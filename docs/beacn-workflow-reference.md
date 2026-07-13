@@ -151,8 +151,8 @@ state. The Noise Suppression, Expander, Compressor, and Headphones On switches
 likewise reflect their module's stored enabled state. Mode and enable changes
 are staged only while that exact module is armed; Apply + verify is still the
 only operation that can send the staged state to the daemon.
-The unsupported Mic Output gain remains visibly read-only instead of guessing a
-device command or exposing a write path.
+Mic Output gain uses the exact read message and remains visibly read-only; no
+setter or general hardware-write path is exposed.
 
 ## Lighting workspace
 
@@ -190,7 +190,9 @@ global hardware-write gate remains off.
 
 StudioBridge adaptation: preserve this read-only information hierarchy and
 dialog workflow while continuing to expose USB2 driverless mode as read-only;
-opening or dismissing the dialog never enters a hardware write path.
+opening or dismissing the dialog never enters a hardware write path. The state
+comes from the exact Studio driverless-mode read message rather than a UI
+placeholder.
 
 ## Application settings
 

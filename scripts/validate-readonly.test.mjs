@@ -13,9 +13,9 @@ function validFixture() {
     },
     state: {
       studio: {
-        identity: { status: "connected", product: "BEACN Studio", serial: "private", firmware: "1.2.3" },
+        identity: { status: "connected", product: "BEACN Studio", serial: "private", firmware: "1.2.3", driverless_mode: false },
         microphone: { gain_db: 40, phantom_power: false },
-        headphones: { volume: 65 },
+        headphones: { volume: 65, mic_monitor: 40, channels_linked: true, output_mode: "line_level", mic_output_gain_tenths_db: 60 },
         linked_applications: [{ name: "Game", channel: "link1" }],
       },
       mixer: {
@@ -53,6 +53,17 @@ test("refuses a daemon with hardware writes enabled", () => {
   fixture.health.hardware_writes_enabled = true;
   const result = validateReadonly(fixture.health, fixture.state);
   assert(result.failures.some((failure) => failure.includes("hardware writes are enabled")));
+});
+
+test("rejects invalid read-only headphone and driverless states", () => {
+  const fixture = validFixture();
+  fixture.state.studio.identity.driverless_mode = "off";
+  fixture.state.studio.headphones.mic_output_gain_tenths_db = 121;
+  fixture.state.studio.headphones.output_mode = "unknown";
+  const result = validateReadonly(fixture.health, fixture.state);
+  assert(result.failures.some((failure) => failure.includes("driverless-mode")));
+  assert(result.failures.some((failure) => failure.includes("output gain")));
+  assert(result.failures.some((failure) => failure.includes("output mode")));
 });
 
 test("requires the narrow USB1 Link host control when requested", () => {

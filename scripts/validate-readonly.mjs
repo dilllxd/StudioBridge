@@ -24,9 +24,14 @@ export function validateReadonly(health, state, { expectLinkControl = false } = 
   check(identity.status === "connected", `BEACN Studio is not connected: ${identity.error ?? "unknown error"}`);
   check(typeof identity.serial === "string" && identity.serial.length > 0, "Studio serial number could not be read");
   check(typeof identity.firmware === "string" && identity.firmware.length > 0, "Studio firmware version could not be read");
+  check(typeof identity.driverless_mode === "boolean", "USB2 driverless-mode state is invalid");
   check(Number.isInteger(studio.microphone?.gain_db) && studio.microphone.gain_db >= 0 && studio.microphone.gain_db <= 69, "microphone gain is outside 0–69 dB");
   check(typeof studio.microphone?.phantom_power === "boolean", "phantom-power state is invalid");
   check(Number.isInteger(studio.headphones?.volume) && studio.headphones.volume >= 0 && studio.headphones.volume <= 100, "headphone level is outside 0–100%");
+  check(Number.isInteger(studio.headphones?.mic_monitor) && studio.headphones.mic_monitor >= 0 && studio.headphones.mic_monitor <= 100, "microphone monitor level is outside 0–100%");
+  check(typeof studio.headphones?.channels_linked === "boolean", "headphone channel-link state is invalid");
+  check(["in_ear_monitors", "line_level", "normal_power", "high_impedance"].includes(studio.headphones?.output_mode), "headphone output mode is invalid");
+  check(Number.isInteger(studio.headphones?.mic_output_gain_tenths_db) && studio.headphones.mic_output_gain_tenths_db >= 0 && studio.headphones.mic_output_gain_tenths_db <= 120, "microphone output gain is outside 0–12 dB");
   check(Array.isArray(studio.linked_applications), "Link application list is invalid");
 
   const mixer = state.mixer ?? {};
@@ -71,6 +76,8 @@ export function validateReadonly(health, state, { expectLinkControl = false } = 
     summary: {
       product: identity.product ?? "BEACN Studio",
       firmware: identity.firmware ?? "unknown firmware",
+      driverlessMode: identity.driverless_mode,
+      micOutputGainDb: (studio.headphones?.mic_output_gain_tenths_db ?? 0) / 10,
       linkApplications: (studio.linked_applications ?? []).length,
       sources: (mixer.channels ?? []).length,
       targets: (mixer.targets ?? []).length,
@@ -87,6 +94,8 @@ function printResult(result, expectLinkControl) {
   console.log("  Hardware writes: disabled");
   console.log(`  Link host control: ${expectLinkControl ? "enabled (heartbeat and assignments only)" : "disabled"}`);
   console.log(`  Studio: ${summary.product} (${summary.firmware})`);
+  console.log(`  USB2 driverless mode: ${summary.driverlessMode ? "on" : "off"} (read only)`);
+  console.log(`  Mic output gain: ${summary.micOutputGainDb} dB (read only)`);
   console.log(`  Link applications: ${summary.linkApplications}`);
   console.log(`  PipeWeaver: ${summary.sources} source(s), ${summary.targets} target(s), ${summary.routes} route(s)`);
   console.log(`  Mix routes: ${summary.personalRoutes} Personal, ${summary.audienceRoutes} Audience`);

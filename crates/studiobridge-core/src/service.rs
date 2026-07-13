@@ -260,6 +260,7 @@ fn disconnected_studio(error: crate::BridgeError) -> StudioSnapshot {
             serial: None,
             firmware: None,
             usb_port: "USB1".into(),
+            driverless_mode: false,
         },
         microphone: MicrophoneState {
             gain_db: 0,
@@ -272,6 +273,7 @@ fn disconnected_studio(error: crate::BridgeError) -> StudioSnapshot {
             muted: false,
             channels_linked: false,
             output_mode: crate::HeadphoneOutputMode::LineLevel,
+            mic_output_gain_tenths_db: 0,
         },
         linked_applications: Vec::new(),
     }

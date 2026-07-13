@@ -192,6 +192,10 @@ The health response must report `hardware_writes_enabled:false` and
 raw storage, gain, phantom-power, and other unrestricted hardware writes remain
 disabled.
 
+The same read-only state includes Mic Output Gain in tenths of a decibel and
+the USB2 driverless-mode flag. Both values are GET-only in StudioBridge; the
+validator rejects missing or out-of-range readback without exposing setters.
+
 ## Microphone DSP validation and scoped writes
 
 Capture and validate the complete onboard processing chain while all DSP module

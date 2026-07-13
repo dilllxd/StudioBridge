@@ -1495,12 +1495,14 @@ export component MainWindow inherits Window {
     in property <string> device-name: "BEACN Studio";
     in property <string> device-serial: "Unavailable";
     in property <string> device-firmware: "Unavailable";
+    in property <bool> driverless-mode: false;
     in property <float> microphone-gain-db: 0;
     in property <bool> phantom-power: false;
     in property <float> headphone-volume-percent: 0;
     in property <float> headphone-monitor-percent: 0;
     in property <bool> headphone-channels-linked: false;
     in property <string> headphone-output-mode: "line_level";
+    in property <float> mic-output-gain-db: 0;
     in property <bool> headphone-subwoofer-enabled: false;
     in-out property <float> headphone-subwoofer-amount: 0;
     in-out property <float> lighting-speed: 0;
@@ -2371,11 +2373,11 @@ export component MainWindow inherits Window {
                             height: 130px;
                             HorizontalLayout {
                                 Rectangle { horizontal-stretch: 1; }
-                                VerticalFader { width: 38px; value: 50; accent: Theme.teal; muted: false; personal: true; show-mute: false; }
+                                VerticalFader { width: 38px; value: root.mic-output-gain-db / 12 * 100; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: false; }
                                 Rectangle { horizontal-stretch: 1; }
                             }
                         }
-                        Text { height: 24px; text: "READ ONLY"; color: Theme.amber; font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { height: 24px; text: round(root.mic-output-gain-db * 10) / 10 + "dB · READ ONLY"; color: Theme.amber; font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
                         Rectangle {
                             height: 30px; background: #242427; border-width: 1px; border-color: Theme.border;
                             Text { x: 5px; width: 78px; text: "10.0s / 10.0s"; color: Theme.text; font-size: 9px; vertical-alignment: center; }
@@ -2493,8 +2495,8 @@ export component MainWindow inherits Window {
                             clicked => { root.legal-dialog-open = true; }
                         }
                         Text { x: 110px; y: 242px; text: "USB2 Driverless Mode"; color: Theme.quiet; font-size: 11px; font-weight: 700; }
-                        ToggleSwitch { x: 614px; y: 239px; checked: false; interactive: false; control-label: "USB2 Driverless Mode read-only state"; }
-                        Text { x: 450px; y: 244px; text: "read-only"; color: Theme.amber; font-size: 9px; }
+                        ToggleSwitch { x: 614px; y: 239px; checked: root.driverless-mode; interactive: false; control-label: "USB2 Driverless Mode " + (root.driverless-mode ? "on" : "off") + ", read-only"; }
+                        Text { x: 450px; y: 244px; text: (root.driverless-mode ? "ON" : "OFF") + " · read-only"; color: Theme.amber; font-size: 9px; }
                     }
                 }
                 Rectangle { vertical-stretch: 1; }

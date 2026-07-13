@@ -1707,6 +1707,7 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
             .unwrap_or_else(|| "Unavailable".into())
             .into(),
     );
+    window.set_driverless_mode(snapshot.studio.identity.driverless_mode);
     window.set_microphone_gain_db(snapshot.studio.microphone.gain_db as f32);
     window.set_phantom_power(snapshot.studio.microphone.phantom_power);
     window.set_headphone_volume_percent(snapshot.studio.headphones.volume as f32);
@@ -1721,6 +1722,8 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
         }
         .into(),
     );
+    window
+        .set_mic_output_gain_db(snapshot.studio.headphones.mic_output_gain_tenths_db as f32 / 10.0);
     window.set_source_name_key(
         snapshot
             .mixer
@@ -2752,6 +2755,7 @@ mod desktop_tests {
     use studiobridge_core::{
         DspMode, EqualizerBandState, EqualizerBandType, HeadphoneEqualizerState,
         HeadphoneOutputMode, HeadphoneState, MicrophoneDspSnapshot, MicrophoneDspUpdate, MuteState,
+        StudioIdentity,
     };
 
     fn dsp_snapshot() -> MicrophoneDspSnapshot {
@@ -2820,6 +2824,18 @@ mod desktop_tests {
         .unwrap();
         assert!(!headphones.channels_linked);
         assert_eq!(headphones.output_mode, HeadphoneOutputMode::LineLevel);
+        assert_eq!(headphones.mic_output_gain_tenths_db, 0);
+
+        let identity: StudioIdentity = serde_json::from_value(serde_json::json!({
+            "status": "connected",
+            "error": null,
+            "product": "BEACN Studio",
+            "serial": "test",
+            "firmware": "1.0.0",
+            "usb_port": "USB1"
+        }))
+        .unwrap();
+        assert!(!identity.driverless_mode);
 
         let equalizer: HeadphoneEqualizerState = serde_json::from_value(serde_json::json!({
             "bands": [

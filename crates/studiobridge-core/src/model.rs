@@ -17,6 +17,8 @@ pub struct StudioIdentity {
     pub serial: Option<String>,
     pub firmware: Option<String>,
     pub usb_port: String,
+    #[serde(default)]
+    pub driverless_mode: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -45,6 +47,8 @@ pub struct HeadphoneState {
     pub channels_linked: bool,
     #[serde(default)]
     pub output_mode: HeadphoneOutputMode,
+    #[serde(default)]
+    pub mic_output_gain_tenths_db: u16,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

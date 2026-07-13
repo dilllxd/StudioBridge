@@ -29,7 +29,8 @@ BEACN firmware or code copied from the official application.
 The alpha contains mock and real backends behind the same local daemon. The real
 Studio adapter discovers USB1, reads serial/firmware, microphone gain, phantom
 power, headphone level, mic-monitor level, headphone channel-link state, amp
-output mode, and Windows Link assignments. General
+output mode, microphone output gain, USB2 driverless-mode state, and Windows
+Link assignments. General
 hardware writes remain disabled unless `--allow-hardware-writes` is supplied.
 After the read-only baseline passes, `--enable-link-host` independently enables
 only the fixed USB1 host heartbeat and Link application assignments. The complete

@@ -62,6 +62,7 @@ impl Default for MockStudioBackend {
                     serial: Some("MOCK-STUDIO-001".into()),
                     firmware: Some("mock-1.0.0".into()),
                     usb_port: "USB1".into(),
+                    driverless_mode: false,
                 },
                 microphone: MicrophoneState {
                     gain_db: 48,
@@ -74,6 +75,7 @@ impl Default for MockStudioBackend {
                     muted: false,
                     channels_linked: true,
                     output_mode: crate::HeadphoneOutputMode::LineLevel,
+                    mic_output_gain_tenths_db: 60,
                 },
                 linked_applications: vec![
                     LinkedApplication {

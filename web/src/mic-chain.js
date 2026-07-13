@@ -50,6 +50,8 @@ function setupMarkup(snapshot) {
         <header><div><h2>Input setup</h2><p>Physical XLR preamp state</p></div>${enabledBadge(true)}</header>
         ${readonlyControl("Microphone gain", snapshot.studio.microphone.gain_db, " dB", 0, 69)}
         <div class="dsp-fact"><span>Phantom power</span><strong>${snapshot.studio.microphone.phantom_power ? "48V enabled" : "Off"}</strong></div>
+        <div class="dsp-fact"><span>Mic output gain</span><strong>${number((snapshot.studio.headphones?.mic_output_gain_tenths_db ?? 0) / 10)} dB · read only</strong></div>
+        <div class="dsp-fact"><span>USB2 driverless mode</span><strong>${snapshot.studio.identity?.driverless_mode ? "On" : "Off"} · read only</strong></div>
         <p class="dsp-warning">Phantom power is never changed automatically.</p>
       </article>
       <article class="dsp-card">

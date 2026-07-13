@@ -41,7 +41,11 @@ const dsp = {
 };
 
 const snapshot = {
-  studio: { microphone: { gain_db: 45, phantom_power: false } },
+  studio: {
+    identity: { driverless_mode: true },
+    microphone: { gain_db: 45, phantom_power: false },
+    headphones: { mic_output_gain_tenths_db: 65 },
+  },
   mixer: { channels: [{ name: "Microphone", meter_id: "mic-meter" }] },
 };
 
@@ -67,6 +71,9 @@ test("renders the complete microphone module navigation and safety state", () =>
   }
   assert.match(markup, /General hardware writes disabled/);
   assert.match(markup, /Phantom power is never changed automatically/);
+  assert.match(markup, /6\.5 dB · read only/);
+  assert.match(markup, /USB2 driverless mode/);
+  assert.match(markup, /On · read only/);
   assert.match(markup, /data-meter-id="mic-meter"/);
 });
 

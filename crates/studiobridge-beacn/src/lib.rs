@@ -398,6 +398,11 @@ fn read_snapshot(device: &dyn BeacnAudioDevice) -> BridgeResult<StudioSnapshot> 
         Message::Headphones(Headphones::StudioMicMonitor(value)) => value.0,
         response => return Err(unexpected("microphone monitor level", response)),
     };
+    let mic_output_gain_db =
+        match execute(device, Message::Headphones(Headphones::GetMicOutputGain))? {
+            Message::Headphones(Headphones::MicOutputGain(value)) => value.0,
+            response => return Err(unexpected("microphone output gain", response)),
+        };
     let channels_linked = match execute(
         device,
         Message::Headphones(Headphones::GetStudioChannelsLinked),
@@ -414,6 +419,11 @@ fn read_snapshot(device: &dyn BeacnAudioDevice) -> BridgeResult<StudioSnapshot> 
         },
         response => return Err(unexpected("headphone output mode", response)),
     };
+    let driverless_mode =
+        match execute(device, Message::Headphones(Headphones::GetStudioDriverless))? {
+            Message::Headphones(Headphones::StudioDriverless(value)) => value,
+            response => return Err(unexpected("USB2 driverless mode", response)),
+        };
     let linked = device
         .get_linked_app_list()
         .map_err(beacn_error)?
@@ -433,6 +443,7 @@ fn read_snapshot(device: &dyn BeacnAudioDevice) -> BridgeResult<StudioSnapshot> 
             serial: Some(device.get_serial()),
             firmware: Some(device.get_version().to_string()),
             usb_port: "USB1".into(),
+            driverless_mode,
         },
         microphone: MicrophoneState {
             gain_db: gain,
@@ -446,6 +457,7 @@ fn read_snapshot(device: &dyn BeacnAudioDevice) -> BridgeResult<StudioSnapshot> 
             muted: headphone_db <= -70.0,
             channels_linked,
             output_mode,
+            mic_output_gain_tenths_db: output_gain_to_tenths(mic_output_gain_db),
         },
         linked_applications: linked,
     })
@@ -502,6 +514,10 @@ fn unexpected(label: &str, response: Message) -> BridgeError {
 
 fn db_to_percent(value: f32, minimum: f32, maximum: f32) -> u8 {
     (((value.clamp(minimum, maximum) - minimum) / (maximum - minimum)) * 100.0).round() as u8
+}
+
+fn output_gain_to_tenths(value: f32) -> u16 {
+    (value.clamp(0.0, 12.0) * 10.0).round() as u16
 }
 
 fn to_beacn_channel(channel: LinkChannel) -> BeacnLinkChannel {
@@ -562,6 +578,13 @@ mod tests {
         assert_eq!(db_to_percent(-70.0, -70.0, 0.0), 0);
         assert_eq!(db_to_percent(0.0, -70.0, 0.0), 100);
         assert_eq!(db_to_percent(-35.0, -70.0, 0.0), 50);
+    }
+
+    #[test]
+    fn output_gain_readback_is_bounded_and_keeps_tenths() {
+        assert_eq!(output_gain_to_tenths(-1.0), 0);
+        assert_eq!(output_gain_to_tenths(6.25), 63);
+        assert_eq!(output_gain_to_tenths(12.5), 120);
     }
 
     #[test]
