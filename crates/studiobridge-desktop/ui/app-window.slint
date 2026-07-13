@@ -87,9 +87,9 @@ component RailButton inherits Rectangle {
     callback clicked;
     height: 58px;
     border-radius: 29px;
-    background: active ? Theme.teal : #202023;
+    background: active ? Theme.teal : rail-focus.has-focus ? #2f3033 : #202023;
     border-width: 1px;
-    border-color: active ? #78e5df : #29292d;
+    border-color: active ? #78e5df : rail-focus.has-focus ? Theme.teal : #29292d;
     if root.label == "MIXER": HorizontalLayout {
         x: 14px; y: 12px; width: 30px; height: 34px; spacing: 5px;
         Rectangle { width: 4px; background: root.active ? #ffffff : Theme.quiet; border-radius: 2px; Rectangle { x: -3px; y: 7px; width: 10px; height: 5px; background: root.active ? #ffffff : Theme.quiet; border-radius: 2px; } }
@@ -111,7 +111,19 @@ component RailButton inherits Rectangle {
         Rectangle { x: 5px; y: 23px; width: 12px; height: 3px; background: root.active ? #ffffff : Theme.quiet; }
     }
     if root.label == "DEVICE" || root.label == "SETTINGS": Text { text: "⚙"; color: root.active ? #ffffff : Theme.quiet; font-size: 27px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
-    TouchArea { clicked => { root.clicked(); } }
+    rail-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: button;
+        accessible-label: root.label + (root.active ? ", selected" : "");
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+        TouchArea { clicked => { rail-focus.focus(); root.clicked(); } }
+    }
 }
 
 component LevelMeter inherits Rectangle {
@@ -157,6 +169,7 @@ export struct HotkeyModel {
 
 component VerticalFader inherits Rectangle {
     in property <float> value;
+    in property <string> control-label: "Volume";
     in property <color> accent: Theme.teal;
     in property <bool> muted;
     in property <bool> personal;
@@ -167,7 +180,7 @@ component VerticalFader inherits Rectangle {
     width: 34px;
     background: #171719;
     border-width: 1px;
-    border-color: root.accent == Theme.teal ? Theme.teal : #111113;
+    border-color: fader-focus.has-focus ? #ffffff : root.accent == Theme.teal ? Theme.teal : #111113;
     border-radius: 3px;
     Rectangle {
         x: (parent.width - 5px) / 2;
@@ -182,7 +195,7 @@ component VerticalFader inherits Rectangle {
         y: 7px + (parent.height - (root.show-mute ? 64px : 24px)) * (1.0 - root.value / 100.0);
         width: parent.width - 12px;
         height: 7px;
-        background: #e5e5e5;
+        background: fader-focus.has-focus ? #ffffff : #e5e5e5;
         border-radius: 1px;
         animate y { duration: 55ms; easing: ease-out; }
     }
@@ -197,22 +210,65 @@ component VerticalFader inherits Rectangle {
         border-color: root.muted ? Theme.red : #34343a;
         border-radius: 4px;
         Text { text: root.personal ? "◉" : "((•))"; color: root.muted ? Theme.red : Theme.quiet; font-size: root.personal ? 19px : 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
-        TouchArea { clicked => { root.mute-clicked(); } }
+        mute-focus := FocusScope {
+            width: parent.width; height: parent.height;
+            accessible-role: button;
+            accessible-label: (root.muted ? "Unmute " : "Mute ") + root.control-label;
+            accessible-enabled: root.interactive;
+            key-pressed(event) => {
+                if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
+                    root.mute-clicked();
+                    return accept;
+                }
+                return reject;
+            }
+            TouchArea { enabled: root.interactive; clicked => { mute-focus.focus(); root.mute-clicked(); } }
+        }
     }
-    TouchArea {
-        enabled: root.interactive;
+    fader-focus := FocusScope {
+        width: parent.width;
         height: root.show-mute ? parent.height - 45px : parent.height;
-        moved => {
-            if (self.pressed) {
-                root.changed(100.0 - self.mouse-y / self.height * 100.0);
+        accessible-role: slider;
+        accessible-label: root.control-label;
+        accessible-enabled: root.interactive;
+        accessible-value: round(root.value) + "%";
+        accessible-value-minimum: 0;
+        accessible-value-maximum: 100;
+        accessible-value-step: 1;
+        accessible-action-set-value(value) => {
+            if root.interactive && value.is-float() {
+                root.changed(clamp(value.to-float(), 0, 100));
             }
         }
-        clicked => { root.changed(100.0 - self.mouse-y / self.height * 100.0); }
+        accessible-action-increment => { if root.interactive { root.changed(clamp(root.value + 1, 0, 100)); } }
+        accessible-action-decrement => { if root.interactive { root.changed(clamp(root.value - 1, 0, 100)); } }
+        key-pressed(event) => {
+            if root.interactive && (event.text == Key.UpArrow || event.text == Key.RightArrow) {
+                root.changed(clamp(root.value + 1, 0, 100));
+                return accept;
+            }
+            if root.interactive && (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
+                root.changed(clamp(root.value - 1, 0, 100));
+                return accept;
+            }
+            return reject;
+        }
+        TouchArea {
+            enabled: root.interactive;
+            moved => {
+                if (self.pressed) {
+                    root.changed(clamp(100.0 - self.mouse-y / self.height * 100.0, 0, 100));
+                }
+            }
+            clicked => { fader-focus.focus(); root.changed(clamp(100.0 - self.mouse-y / self.height * 100.0, 0, 100)); }
+        }
     }
 }
 
 component HorizontalFader inherits Rectangle {
     in property <float> value;
+    in property <string> control-label: "Output volume";
+    in property <bool> interactive: true;
     callback changed(float);
     height: 20px;
     background: transparent;
@@ -223,26 +279,59 @@ component HorizontalFader inherits Rectangle {
         y: 3px;
         width: 10px;
         height: 14px;
-        background: #dedee0;
+        background: horizontal-fader-focus.has-focus ? #ffffff : #dedee0;
+        border-width: horizontal-fader-focus.has-focus ? 1px : 0px;
+        border-color: Theme.teal;
         border-radius: 2px;
         animate x { duration: 55ms; easing: ease-out; }
     }
-    TouchArea {
-        moved => {
-            if (self.pressed) {
+    horizontal-fader-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: slider;
+        accessible-label: root.control-label;
+        accessible-enabled: root.interactive;
+        accessible-value: round(root.value) + "%";
+        accessible-value-minimum: 0;
+        accessible-value-maximum: 100;
+        accessible-value-step: 1;
+        accessible-action-set-value(value) => {
+            if root.interactive && value.is-float() {
+                root.changed(clamp(value.to-float(), 0, 100));
+            }
+        }
+        accessible-action-increment => { if root.interactive { root.changed(clamp(root.value + 1, 0, 100)); } }
+        accessible-action-decrement => { if root.interactive { root.changed(clamp(root.value - 1, 0, 100)); } }
+        key-pressed(event) => {
+            if root.interactive && (event.text == Key.UpArrow || event.text == Key.RightArrow) {
+                root.changed(clamp(root.value + 1, 0, 100));
+                return accept;
+            }
+            if root.interactive && (event.text == Key.DownArrow || event.text == Key.LeftArrow) {
+                root.changed(clamp(root.value - 1, 0, 100));
+                return accept;
+            }
+            return reject;
+        }
+        TouchArea {
+            enabled: root.interactive;
+            moved => {
+                if (self.pressed) {
+                    let candidate = self.mouse-x / self.width * 100.0;
+                    root.changed(candidate <= 1.0 ? 0.0 : candidate >= 99.0 ? 100.0 : candidate);
+                }
+            }
+            clicked => {
+                horizontal-fader-focus.focus();
                 let candidate = self.mouse-x / self.width * 100.0;
                 root.changed(candidate <= 1.0 ? 0.0 : candidate >= 99.0 ? 100.0 : candidate);
             }
-        }
-        clicked => {
-            let candidate = self.mouse-x / self.width * 100.0;
-            root.changed(candidate <= 1.0 ? 0.0 : candidate >= 99.0 ? 100.0 : candidate);
         }
     }
 }
 
 component MixFader inherits Rectangle {
     in property <string> label;
+    in property <string> channel-name;
     in property <float> value;
     in property <float> meter;
     in property <bool> muted;
@@ -260,6 +349,7 @@ component MixFader inherits Rectangle {
             LevelMeter { value: root.muted ? 0 : root.meter; colour: root.accent; }
             VerticalFader {
                 value: root.value;
+                control-label: root.channel-name + " " + root.label + " volume";
                 accent: root.accent;
                 muted: root.muted;
                 personal: root.label == "PERSONAL";
@@ -507,6 +597,7 @@ component SourceStrip inherits Rectangle {
             spacing: 3px;
             MixFader {
                 label: "PERSONAL";
+                channel-name: root.source.name;
                 value: root.source.personal;
                 meter: root.source.meter;
                 muted: root.source.personal-muted;
@@ -516,6 +607,7 @@ component SourceStrip inherits Rectangle {
             }
             MixFader {
                 label: "AUDIENCE";
+                channel-name: root.source.name;
                 value: root.source.audience;
                 meter: root.source.meter * root.source.audience / 100.0;
                 muted: root.source.audience-muted;
@@ -536,7 +628,19 @@ component SourceStrip inherits Rectangle {
                     border-color: root.source.linked ? Theme.teal : Theme.border;
                     background: root.source.linked ? #15302e : #101619;
                     Text { text: root.source.linked ? "∞" : "--"; color: root.source.linked ? Theme.teal : Theme.quiet; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                    TouchArea { clicked => { root.link-changed(!root.source.linked); } }
+                    link-focus := FocusScope {
+                        width: parent.width; height: parent.height;
+                        accessible-role: button;
+                        accessible-label: (root.source.linked ? "Unlink " : "Link ") + root.source.name + " Personal and Audience volumes";
+                        key-pressed(event) => {
+                            if event.text == Key.Return || event.text == Key.Space {
+                                root.link-changed(!root.source.linked);
+                                return accept;
+                            }
+                            return reject;
+                        }
+                        TouchArea { clicked => { link-focus.focus(); root.link-changed(!root.source.linked); } }
+                    }
                 }
                 Rectangle { horizontal-stretch: 1; }
             }
@@ -729,7 +833,12 @@ component TargetStrip inherits Rectangle {
                 Text { x: 7px; width: parent.width - 14px; text: root.target.name; color: Theme.teal; font-size: 10px; font-weight: 700; vertical-alignment: center; overflow: elide; }
             }
             LevelMeter { width: 8px; height: 24px; value: root.target.muted ? 0 : root.target.meter; colour: root.target.mix == "Personal" ? Theme.teal : Theme.amber; }
-            HorizontalFader { horizontal-stretch: 1; value: root.target.volume; changed(value) => { root.volume-changed(value); } }
+            HorizontalFader {
+                horizontal-stretch: 1;
+                value: root.target.volume;
+                control-label: root.target.name + " output volume";
+                changed(value) => { root.volume-changed(value); }
+            }
             Rectangle {
                 width: 34px; height: 27px; border-radius: 3px;
                 border-width: 1px; border-color: root.target.muted ? #6d3734 : Theme.border;
@@ -757,7 +866,11 @@ component TargetStrip inherits Rectangle {
             horizontal-stretch: 1;
             Text { text: root.target.name; color: Theme.text; font-size: 12px; font-weight: 800; overflow: elide; }
             Text { text: root.target.mix + (root.target.muted ? " · MUTED" : " output"); color: root.target.muted ? Theme.red : Theme.quiet; font-size: 9px; }
-            HorizontalFader { value: root.target.volume; changed(value) => { root.volume-changed(value); } }
+            HorizontalFader {
+                value: root.target.volume;
+                control-label: root.target.name + " output volume";
+                changed(value) => { root.volume-changed(value); }
+            }
         }
         LevelMeter { width: 12px; value: root.target.muted ? 0 : root.target.meter; colour: root.target.mix == "Personal" ? Theme.teal : Theme.amber; }
         Text { text: round(root.target.volume) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; }

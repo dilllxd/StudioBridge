@@ -52,11 +52,14 @@ than copying its source or visual assets:
   when switching between Mixer, Studio, device, and application settings,
   remains user-resizable, and returns to that default on a clean restart;
 - a persistent five-button device navigation hierarchy plus application
-  settings at the foot of the rail;
+  settings at the foot of the rail, with visible focus and Return/Space
+  activation;
 - a measured 28-pixel application header with fixed-destination Project and
   Support actions plus the persistent Profiles control, all keyboard and
   accessibility enabled;
-- a source-first mixer with Personal and Audience controls;
+- a source-first mixer whose Personal and Audience faders expose named slider
+  ranges, values, one-percent keyboard steps, assistive-technology value
+  actions, visible focus, and keyboard-accessible mute and volume-link controls;
 - draggable and keyboard-accessible source-strip grips backed by the native
   PipeWeaver order command, with saved profiles restoring the captured order;
 - measured source-header Delete Knob popups with native outside-click and
@@ -77,9 +80,10 @@ than copying its source or visual assets:
   170-by-27 master field, 24-pixel alternative rows, content-width popup,
   native outside/Escape dismissal, and mouse plus arrow-key activation;
 - additional target strips and routing rows for Voice Chat Mic and VOD Track;
-- functional keyboard-accessible target-master mute controls for Personal,
-  Audience, Voice Chat Mic, VOD Track, and future PipeWeaver outputs, backed by
-  PipeWeaver's exact target mute-state command and restored by mixer profiles;
+- functional keyboard-accessible target-master volume sliders and mute controls
+  for Personal, Audience, Voice Chat Mic, VOD Track, and future PipeWeaver
+  outputs, backed by PipeWeaver's exact target commands and restored by mixer
+  profiles;
 - measured 126/135-pixel Assignments and Routing Table tabs with native tab
   accessibility and keyboard activation;
 - a measured routing matrix with 112-pixel destinations, 90-pixel source
