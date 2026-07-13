@@ -66,7 +66,7 @@ than copying its source or visual assets:
 - a persistent per-source mute action menu matching BEACN's measured
   112-by-60 popup, three 20-pixel rows, checked selection, outside/Escape
   dismissal, and keyboard activation for Mute to All, Mute to Audience, and
-  Mute to Chat while retaining the internal Personal target;
+  Mute to Self while retaining the internal Personal target;
 - a prominent Main Out section;
 - BEACN-aligned Personal and Audience master-device cards backed by the real
   default-output selector and independent PipeWeaver target masters;

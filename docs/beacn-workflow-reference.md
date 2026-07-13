@@ -21,7 +21,7 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
   Escape dismisses it without changing the mixer.
 - The compact mute action at the bottom of each strip has a separate arrow menu:
   a 112-by-60 popup anchored over the next strip, with three 20-pixel rows for
-  Mute to All, Mute to Audience, and Mute to Chat. The active action is shown
+  Mute to All, Mute to Audience, and Mute to Self. The active action is shown
   with a checkmark. Selecting a row changes the main action and closes the menu;
   clicking outside or pressing Escape dismisses it without changing the action.
   Pressing the main area applies the selected action.

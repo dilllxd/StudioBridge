@@ -546,7 +546,7 @@ component SourceStrip inherits Rectangle {
             border-color: #303034;
             Text {
                 width: parent.width - 20px;
-                text: root.source.mute-action == "all" ? "Mute to All" : root.source.mute-action == "personal" ? "Mute to Chat" : "Mute to Audience";
+                text: root.source.mute-action == "all" ? "Mute to All" : root.source.mute-action == "personal" ? "Mute to Self" : "Mute to Audience";
                 color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center;
             }
             Rectangle {
@@ -610,7 +610,7 @@ component SourceStrip inherits Rectangle {
                     activated => { mute-menu.close(); root.mute-action-selected("audience"); }
                 }
                 MuteActionRow {
-                    label: "Mute to Chat"; selected: root.source.mute-action == "personal";
+                    label: "Mute to Self"; selected: root.source.mute-action == "personal";
                     activated => { mute-menu.close(); root.mute-action-selected("personal"); }
                 }
             }
