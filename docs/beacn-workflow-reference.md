@@ -14,6 +14,10 @@ contain BEACN source code, extracted assets, or a pixel-for-pixel design.
 - Sources are horizontal channel strips. Each strip keeps its color, name,
   source/application list, Personal fader, Audience fader, separate mute
   actions, and a link toggle together.
+- The two faders are distinguished by their Personal/Audience icons and teal or
+  neutral treatment rather than persistent text captions above the tracks. The
+  compact header leaves enough blank separation below its colour rule for the
+  fader tracks to begin at the same height in every strip.
 - The grip at the leading edge of each source header reorders the strip by
   dragging; order is mixer state and follows saved profiles.
 - The arrow at the trailing edge of a source header opens a compact 93-by-20
