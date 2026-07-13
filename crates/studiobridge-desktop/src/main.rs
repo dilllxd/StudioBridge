@@ -560,6 +560,50 @@ fn source_name_available(name: &str, source_names: &str) -> bool {
         .any(|source| source.eq_ignore_ascii_case(name))
 }
 
+fn application_chip_text_width(text: &str, minimum: f32, maximum: f32) -> f32 {
+    let measured = text.chars().fold(0.0_f32, |width, character| {
+        width
+            + if character.is_ascii_uppercase() {
+                6.2
+            } else if character.is_ascii_whitespace() {
+                3.2
+            } else if matches!(character, 'i' | 'l' | 'I' | '.' | ',' | ':' | ';' | '!') {
+                3.3
+            } else {
+                5.2
+            }
+    });
+    (measured + 3.0).clamp(minimum, maximum)
+}
+
+fn link_channel_label(channel: LinkChannel) -> &'static str {
+    match channel {
+        LinkChannel::System => "System",
+        LinkChannel::Link1 => "Link 1",
+        LinkChannel::Link2 => "Link 2",
+        LinkChannel::Link3 => "Link 3",
+        LinkChannel::Link4 => "Link 4",
+    }
+}
+
+fn link_channel_for_source(name: &str) -> i32 {
+    let normalized = name.trim().to_ascii_lowercase();
+    if normalized == "system" {
+        return 0;
+    }
+    for channel in (2..=4).rev() {
+        if normalized.contains(&format!("link {channel}"))
+            || normalized.contains(&format!("link{channel}"))
+        {
+            return channel;
+        }
+    }
+    if normalized == "link in" || normalized.contains("link 1") || normalized.contains("link1") {
+        return 1;
+    }
+    -1
+}
+
 fn mute_state_with_target(current: MuteState, target: &str, muted: bool) -> MuteState {
     let personal = if target == "personal" || target == "all" {
         muted
@@ -783,6 +827,7 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_source_name_available(|name, source_names| {
         source_name_available(name.as_str(), source_names.as_str())
     });
+    window.on_link_channel_for_source(|name| link_channel_for_source(name.as_str()));
 
     let preferences_window = window.as_weak();
     window.on_save_preferences(
@@ -2067,15 +2112,8 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
         .mixer
         .applications
         .iter()
-        .map(|application| ApplicationModel {
-            process: application.process.clone().into(),
-            name: application.name.clone().into(),
-            title: application
-                .title
-                .as_deref()
-                .unwrap_or(&application.name)
-                .into(),
-            channel_index: application
+        .map(|application| {
+            let channel_index = application
                 .channel_id
                 .as_ref()
                 .and_then(|id| {
@@ -2085,22 +2123,46 @@ fn apply_snapshot(window: &MainWindow, snapshot: AppSnapshot, profile_names: &[S
                         .iter()
                         .position(|channel| &channel.id == id)
                 })
-                .map_or(0, |index| index as i32 + 1),
+                .map_or(0, |index| index as i32 + 1);
+            let destination = if channel_index <= 0 {
+                "Unassigned"
+            } else {
+                snapshot
+                    .mixer
+                    .channels
+                    .get((channel_index - 1) as usize)
+                    .map_or("Unassigned", |channel| channel.name.as_str())
+            };
+            ApplicationModel {
+                process: application.process.clone().into(),
+                name: application.name.clone().into(),
+                channel_index,
+                destination: destination.into(),
+                name_width: application_chip_text_width(&application.name, 28.0, 126.0),
+                destination_width: application_chip_text_width(destination, 38.0, 86.0) + 6.0,
+            }
         })
         .collect::<Vec<_>>();
     let link_applications = snapshot
         .studio
         .linked_applications
         .iter()
-        .map(|application| LinkApplicationModel {
-            name: application.name.clone().into(),
-            channel_index: match application.channel {
+        .map(|application| {
+            let channel_index = match application.channel {
                 LinkChannel::System => 0,
                 LinkChannel::Link1 => 1,
                 LinkChannel::Link2 => 2,
                 LinkChannel::Link3 => 3,
                 LinkChannel::Link4 => 4,
-            },
+            };
+            let destination = link_channel_label(application.channel);
+            LinkApplicationModel {
+                name: application.name.clone().into(),
+                channel_index,
+                destination: destination.into(),
+                name_width: application_chip_text_width(&application.name, 28.0, 126.0),
+                destination_width: application_chip_text_width(destination, 38.0, 86.0) + 6.0,
+            }
         })
         .collect::<Vec<_>>();
     let mut channel_names = vec!["Unassigned".to_string()];
@@ -3187,19 +3249,19 @@ fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
 mod desktop_tests {
     use super::{
         AppPreferences, DspSelection, active_eq_profile, add_eq_band, adjust_eq_band_value,
-        external_link_url, hotkey_key_name, mock_meter_level, mute_state_with_target,
-        normalize_captured_hotkey, normalize_mute_action, preferred_default_repair, remove_eq_band,
-        selected_dsp_enabled, set_enhancement_preset, set_enhancement_value,
-        set_eq_band_type_value, set_eq_band_value, set_headphone_eq_band_value,
-        set_headphone_subwoofer_value, set_selected_dsp_enabled, should_start_in_background,
-        source_name_available, update_from_values,
+        application_chip_text_width, external_link_url, hotkey_key_name, link_channel_for_source,
+        link_channel_label, mock_meter_level, mute_state_with_target, normalize_captured_hotkey,
+        normalize_mute_action, preferred_default_repair, remove_eq_band, selected_dsp_enabled,
+        set_enhancement_preset, set_enhancement_value, set_eq_band_type_value, set_eq_band_value,
+        set_headphone_eq_band_value, set_headphone_subwoofer_value, set_selected_dsp_enabled,
+        should_start_in_background, source_name_available, update_from_values,
     };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
     use studiobridge_core::{
         DspMode, EqualizerBandState, EqualizerBandType, HeadphoneEqualizerState,
-        HeadphoneOutputMode, HeadphoneState, MicrophoneDspSnapshot, MicrophoneDspUpdate,
-        MixerDeviceChoice, MuteState, StudioIdentity,
+        HeadphoneOutputMode, HeadphoneState, LinkChannel, MicrophoneDspSnapshot,
+        MicrophoneDspUpdate, MixerDeviceChoice, MuteState, StudioIdentity,
     };
 
     fn dsp_snapshot() -> MicrophoneDspSnapshot {
@@ -3454,6 +3516,27 @@ mod desktop_tests {
         assert!(!source_name_available("LINK IN", source_names));
         assert!(source_name_available("Aux 1", source_names));
         assert!(source_name_available("Link 2 In", source_names));
+    }
+
+    #[test]
+    fn application_chips_use_compact_beacn_destinations() {
+        assert_eq!(link_channel_label(LinkChannel::System), "System");
+        assert_eq!(link_channel_label(LinkChannel::Link4), "Link 4");
+        assert_eq!(link_channel_for_source("System"), 0);
+        assert_eq!(link_channel_for_source("Link In"), 1);
+        assert_eq!(link_channel_for_source("Link 2 In"), 2);
+        assert_eq!(link_channel_for_source("BEACN Link4"), 4);
+        assert_eq!(link_channel_for_source("Chat"), -1);
+
+        assert_eq!(application_chip_text_width("i", 28.0, 126.0), 28.0);
+        assert_eq!(
+            application_chip_text_width("a very long application display name", 28.0, 80.0),
+            80.0
+        );
+        assert!(
+            application_chip_text_width("powershell", 28.0, 126.0)
+                > application_chip_text_width("chat", 28.0, 126.0)
+        );
     }
 
     #[test]

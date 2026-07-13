@@ -18,4 +18,9 @@ LICENSE text eol=lf
 *.desktop text eol=lf
 *.rules text eol=lf
 
+# Debian maintainer scripts and Arch's PKGBUILD are extensionless shell files.
+packaging/debian/postinst text eol=lf
+packaging/debian/postrm text eol=lf
+packaging/arch/PKGBUILD text eol=lf
+
 *.png binary

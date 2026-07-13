@@ -5,3 +5,4 @@ if command -v udevadm >/dev/null 2>&1; then
 fi
 printf '%s\n' 'Run: systemctl --user enable --now studiobridge.service'
 printf '%s\n' 'General BEACN hardware writes remain disabled by default.'
+exit 0

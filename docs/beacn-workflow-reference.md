@@ -102,13 +102,20 @@ profile icon likewise toggles and persists the complete 285-pixel rail.
 - Empty destinations remain visible as drop/assignment targets.
 
 StudioBridge adaptation: Windows Link and Linux PipeWire application pools live
-in the mixer Assignments tab. Linux application chips can be dragged directly
-onto a source or the unassign target, while keyboard/touch selectors remain
-available and unassigned applications stay visible. The Personal device,
-recording/playback defaults, outgoing Link assignments, and application
-destinations share the measured BEACN selector treatment rather than native
-toolkit combo-box styling. PipeWire exposes one default per direction, so the
-two BEACN-labelled default rows in each Linux group intentionally control and
+together in the mixer Assignments tab without platform headings. A running
+application is one compact teal name plus destination badge, and the empty state
+is only the Applications heading and blank body. A pointer drag from anywhere on
+that row to a source performs the assignment; an ordinary click does not open a
+selector, matching the measured BEACN behavior. Focused chips additionally
+support arrow-key reassignment for accessibility without adding a visible
+BEACN-inaccurate control. Linux applications accept any mixer source. Link
+applications accept System or the correspondingly numbered Link input and keep
+their separately gated Link control path. Unassigned Linux sessions remain
+visible with an Unassigned badge but no permanent drop target. The Personal
+device, recording/playback defaults, outgoing Link assignments, and application
+destinations share the measured BEACN treatment rather than native toolkit
+combo-box styling. PipeWire exposes one default per direction, so the two
+BEACN-labelled default rows in each Linux group intentionally control and
 display that same real default instead of fabricating a communications role.
 
 The four outgoing rows use the upstream ALSA UCM channel map: BEACN Studio

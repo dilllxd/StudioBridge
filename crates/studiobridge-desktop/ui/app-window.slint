@@ -32,13 +32,18 @@ export struct RouteModel {
 export struct ApplicationModel {
     process: string,
     name: string,
-    title: string,
     channel-index: int,
+    destination: string,
+    name-width: float,
+    destination-width: float,
 }
 
 export struct LinkApplicationModel {
     name: string,
     channel-index: int,
+    destination: string,
+    name-width: float,
+    destination-width: float,
 }
 
 export struct TargetModel {
@@ -988,12 +993,92 @@ component TargetStrip inherits Rectangle {
     }
 }
 
-component AssignmentRow inherits Rectangle {
-    in property <string> title;
-    in property <string> subtitle;
-    height: 58px;
-    border-radius: 3px;
-    background: Theme.raised;
+component ApplicationChip inherits Rectangle {
+    in property <string> application-name;
+    in property <string> destination;
+    in property <float> application-name-width: 44;
+    in property <float> destination-width: 44;
+    in property <bool> dragging: false;
+    callback drag-started(length, length);
+    callback drag-moved(length, length);
+    callback drag-ended(length, length);
+    callback drag-cancelled;
+    callback assignment-step(int);
+    width: 220px;
+    height: 18px;
+    border-radius: 2px;
+    border-width: chip-focus.has-focus ? 1px : 0px;
+    border-color: chip-focus.has-focus ? #78e5df : transparent;
+    background: root.dragging ? #1a3d3c : transparent;
+    opacity: root.dragging ? 0.82 : 1.0;
+
+    HorizontalLayout {
+        padding-left: 3px;
+        padding-right: 3px;
+        spacing: 5px;
+        Text {
+            width: root.application-name-width * 1px;
+            text: root.application-name;
+            color: Theme.teal;
+            font-size: 9px;
+            font-weight: 700;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        Rectangle {
+            width: root.destination-width * 1px;
+            height: 14px;
+            border-radius: 4px;
+            background: Theme.teal;
+            Text {
+                x: 4px;
+                width: parent.width - 8px;
+                text: root.destination;
+                color: #172224;
+                font-size: 9px;
+                font-weight: 800;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+        Rectangle { horizontal-stretch: 1; background: transparent; }
+    }
+
+    chip-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        accessible-role: button;
+        accessible-label: root.application-name + ", assigned to " + root.destination + ". Drag onto a source";
+        key-pressed(event) => {
+            if event.text == Key.LeftArrow || event.text == Key.UpArrow {
+                root.assignment-step(-1);
+                return accept;
+            }
+            if event.text == Key.RightArrow || event.text == Key.DownArrow {
+                root.assignment-step(1);
+                return accept;
+            }
+            return reject;
+        }
+        chip-touch := TouchArea {
+            mouse-cursor: root.dragging ? MouseCursor.grabbing : MouseCursor.grab;
+            pointer-event(event) => {
+                let pointer-x = self.absolute-position.x + self.mouse-x;
+                let pointer-y = self.absolute-position.y + self.mouse-y;
+                if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
+                    chip-focus.focus();
+                    root.drag-started(pointer-x, pointer-y);
+                } else if event.kind == PointerEventKind.move && root.dragging {
+                    root.drag-moved(pointer-x, pointer-y);
+                } else if event.kind == PointerEventKind.up && root.dragging {
+                    root.drag-ended(pointer-x, pointer-y);
+                } else if event.kind == PointerEventKind.cancel && root.dragging {
+                    root.drag-cancelled();
+                }
+            }
+        }
+    }
 }
 
 component Dial inherits Rectangle {
@@ -1957,6 +2042,7 @@ export component MainWindow inherits Window {
     callback normalize-hotkey(string, bool, bool, bool, bool) -> string;
     callback hotkey-key-label(string) -> string;
     pure callback source-name-available(string, string) -> bool;
+    pure callback link-channel-for-source(string) -> int;
     callback assign-linux-application(string, string, int);
     callback assign-link-application(string, int);
     callback select-dsp-module(string);
@@ -2181,16 +2267,16 @@ export component MainWindow inherits Window {
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
                             padding: 8px; spacing: 2px;
-                            Text { text: "RECORDING DEVICES"; color: Theme.text; font-size: 11px; font-weight: 800; }
-                            Text { text: "DEFAULT"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
+                            Text { text: "Recording Devices"; color: Theme.text; font-size: 11px; font-weight: 800; }
+                            Text { text: "Default"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
                             BeacnSelector { height: 22px; model: root.default-input-names; current-index: root.default-input-index; placeholder: "Choose Audio to input..."; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-input-ids.length { root.set-default-input(root.default-input-ids[index]); } } }
-                            Text { text: "DEFAULT COMMUNICATION"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
+                            Text { text: "Default Communication"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
                             BeacnSelector { height: 22px; model: root.default-input-names; current-index: root.default-input-index; placeholder: "Choose Audio to input..."; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-input-ids.length { root.set-default-input(root.default-input-ids[index]); } } }
                             Rectangle { height: 3px; background: transparent; }
-                            Text { text: "PLAYBACK DEVICES"; color: Theme.text; font-size: 11px; font-weight: 800; }
-                            Text { text: "DEFAULT"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
+                            Text { text: "Playback Devices"; color: Theme.text; font-size: 11px; font-weight: 800; }
+                            Text { text: "Default"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
                             BeacnSelector { height: 22px; model: root.default-output-names; current-index: root.default-output-index; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-output-ids.length { root.set-default-output(root.default-output-ids[index]); } } }
-                            Text { text: "DEFAULT COMMUNICATION"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
+                            Text { text: "Default Communication"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
                             BeacnSelector { height: 22px; model: root.default-output-names; current-index: root.default-output-index; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-output-ids.length { root.set-default-output(root.default-output-ids[index]); } } }
                             Rectangle { vertical-stretch: 1; }
                         }
@@ -2200,7 +2286,7 @@ export component MainWindow inherits Window {
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
                             padding: 8px; spacing: 2px;
-                            Text { text: "OUTGOING STUDIO LINK ASSIGNMENTS"; color: Theme.text; font-size: 11px; font-weight: 800; }
+                            Text { text: "Outgoing Studio Link Assignments"; color: Theme.text; font-size: 11px; font-weight: 800; }
                             for link in root.link-outputs: VerticalLayout {
                                 height: 42px;
                                 spacing: 2px;
@@ -2223,101 +2309,105 @@ export component MainWindow inherits Window {
                         }
                     }
                     Rectangle {
-                        horizontal-stretch: 1;
+                        width: 250px;
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
-                            padding: 9px; spacing: 6px;
-                            Text { text: "APPLICATIONS"; color: Theme.text; font-size: 11px; font-weight: 800; }
-                            Text { text: "Drag applications onto a source, or use the selector"; color: Theme.quiet; font-size: 9px; }
-                            Text { height: 14px; text: root.last-application-drag; color: Theme.teal; font-size: 8px; }
-                            unassign-target := Rectangle {
-                                height: 25px;
-                                property <bool> drag-hovered: root.application-pointer-dragging
-                                    && root.application-pointer-x >= self.absolute-position.x
-                                    && root.application-pointer-x < self.absolute-position.x + self.width
-                                    && root.application-pointer-y >= self.absolute-position.y
-                                    && root.application-pointer-y < self.absolute-position.y + self.height;
-                                border-width: 1px; border-color: self.drag-hovered ? Theme.red : Theme.border;
-                                background: self.drag-hovered ? #43221f : #1b1b1e;
-                                Text { text: "UNASSIGNED DROP TARGET"; color: unassign-target.drag-hovered ? #f0b0aa : Theme.quiet; font-size: 8px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                            }
+                            padding: 9px; spacing: 2px;
+                            Text { text: "Applications"; color: Theme.text; font-size: 11px; font-weight: 800; }
                             ScrollView {
                                 vertical-stretch: 1;
+                                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                                vertical-scrollbar-policy: ScrollBarPolicy.as-needed;
                                 VerticalLayout {
-                                    spacing: 6px;
-                                    Text { height: 18px; text: "WINDOWS LINK APPLICATIONS"; color: Theme.quiet; font-size: 8px; font-weight: 800; vertical-alignment: bottom; }
-                                    for app in root.link-applications: AssignmentRow {
-                                        title: app.name;
-                                        HorizontalLayout {
-                                            padding-left: 10px; padding-right: 8px;
-                                            Text { text: app.name; color: Theme.text; font-size: 11px; font-weight: 700; horizontal-stretch: 1; overflow: elide; }
-                                            BeacnSelector { width: 112px; model: root.link-channel-names; current-index: app.channel-index; popup-width: 180px; selected(index) => { root.assign-link-application(app.name, index); } }
+                                    spacing: 0px;
+                                    for app in root.link-applications: ApplicationChip {
+                                        application-name: app.name;
+                                        destination: app.destination;
+                                        application-name-width: app.name-width;
+                                        destination-width: app.destination-width;
+                                        dragging: root.application-pointer-dragging && root.dragged-application-process == "link:" + app.name;
+                                        drag-started(pointer-x, pointer-y) => {
+                                            root.application-pointer-dragging = true;
+                                            root.dragged-application-process = "link:" + app.name;
+                                            root.application-pointer-x = pointer-x;
+                                            root.application-pointer-y = pointer-y;
+                                            root.last-application-drag = "Dragging " + app.name;
                                         }
-                                    }
-                                    Text { height: 18px; text: "LINUX APPLICATIONS"; color: Theme.quiet; font-size: 8px; font-weight: 800; vertical-alignment: bottom; }
-                                    for app in root.linux-applications: AssignmentRow {
-                                        title: app.title;
-                                        background: root.application-pointer-dragging && root.dragged-application-process == app.process ? #24413f : Theme.raised;
-                                        HorizontalLayout {
-                                            padding-left: 8px; padding-right: 6px; spacing: 6px;
-                                            Rectangle {
-                                                width: 18px;
-                                                height: parent.height;
-                                                Text { text: "⠿"; color: root.application-pointer-dragging && root.dragged-application-process == app.process ? Theme.teal : #626167; font-size: 10px; vertical-alignment: center; }
-                                                app-drag-touch := TouchArea {
-                                                    mouse-cursor: root.application-pointer-dragging && root.dragged-application-process == app.process ? MouseCursor.grabbing : MouseCursor.grab;
-                                                    pointer-event(event) => {
-                                                        let pointer-x = self.absolute-position.x + self.mouse-x;
-                                                        let pointer-y = self.absolute-position.y + self.mouse-y;
-                                                        if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
-                                                            root.application-pointer-dragging = true;
-                                                            root.dragged-application-process = app.process;
-                                                            root.application-pointer-x = pointer-x;
-                                                            root.application-pointer-y = pointer-y;
-                                                            root.last-application-drag = "Dragging " + app.title;
-                                                        } else if event.kind == PointerEventKind.move && root.application-pointer-dragging && root.dragged-application-process == app.process {
-                                                            root.application-pointer-x = pointer-x;
-                                                            root.application-pointer-y = pointer-y;
-                                                        } else if event.kind == PointerEventKind.up && root.application-pointer-dragging && root.dragged-application-process == app.process {
-                                                            root.application-pointer-x = pointer-x;
-                                                            root.application-pointer-y = pointer-y;
-                                                            root.application-pointer-dragging = false;
-                                                            root.dragged-application-process = "";
-                                                            if pointer-x >= unassign-target.absolute-position.x
-                                                                && pointer-x < unassign-target.absolute-position.x + unassign-target.width
-                                                                && pointer-y >= unassign-target.absolute-position.y
-                                                                && pointer-y < unassign-target.absolute-position.y + unassign-target.height {
-                                                                root.assign-linux-application(app.process, app.name, 0);
-                                                                root.last-application-drag = app.title + " unassigned";
-                                                            } else if pointer-x >= source-scroll.absolute-position.x
-                                                                && pointer-x < source-scroll.absolute-position.x + source-scroll.width
-                                                                && pointer-y >= source-scroll.absolute-position.y
-                                                                && pointer-y < source-scroll.absolute-position.y + source-scroll.height {
-                                                                let source-position = floor((pointer-x - source-scroll.absolute-position.x - source-scroll.viewport-x) / 137px);
-                                                                if source-position >= 0 && source-position < root.sources.length {
-                                                                    root.assign-linux-application(app.process, app.name, source-position + 1);
-                                                                    root.last-application-drag = app.title + " assigned to " + root.sources[source-position].name;
-                                                                } else {
-                                                                    root.last-application-drag = "Application drag cancelled";
-                                                                }
-                                                            } else {
-                                                                root.last-application-drag = "Application drag cancelled";
-                                                            }
-                                                        } else if event.kind == PointerEventKind.cancel {
-                                                            root.application-pointer-dragging = false;
-                                                            root.dragged-application-process = "";
-                                                            root.last-application-drag = "Application drag cancelled";
-                                                        }
+                                        drag-moved(pointer-x, pointer-y) => {
+                                            root.application-pointer-x = pointer-x;
+                                            root.application-pointer-y = pointer-y;
+                                        }
+                                        drag-ended(pointer-x, pointer-y) => {
+                                            root.application-pointer-x = pointer-x;
+                                            root.application-pointer-y = pointer-y;
+                                            root.application-pointer-dragging = false;
+                                            root.dragged-application-process = "";
+                                            if pointer-x >= source-scroll.absolute-position.x
+                                                && pointer-x < source-scroll.absolute-position.x + source-scroll.width
+                                                && pointer-y >= source-scroll.absolute-position.y
+                                                && pointer-y < source-scroll.absolute-position.y + source-scroll.height {
+                                                let source-position = floor((pointer-x - source-scroll.absolute-position.x - source-scroll.viewport-x) / 137px);
+                                                if source-position >= 0 && source-position < root.sources.length {
+                                                    let link-channel = root.link-channel-for-source(root.sources[source-position].name);
+                                                    if link-channel >= 0 {
+                                                        root.assign-link-application(app.name, link-channel);
+                                                        root.last-application-drag = app.name + " assigned to " + root.sources[source-position].name;
+                                                    } else {
+                                                        root.last-application-drag = "Application drag cancelled";
                                                     }
                                                 }
                                             }
-                                            VerticalLayout {
-                                                horizontal-stretch: 1;
-                                                Text { text: app.title; color: Theme.text; font-size: 11px; font-weight: 700; overflow: elide; }
-                                                Text { text: app.process; color: Theme.quiet; font-size: 8px; overflow: elide; }
-                                            }
-                                            BeacnSelector { width: 94px; model: root.mixer-channel-names; current-index: app.channel-index; placeholder: "Unassigned"; popup-width: 140px; selected(index) => { root.assign-linux-application(app.process, app.name, index); } }
                                         }
+                                        drag-cancelled => {
+                                            root.application-pointer-dragging = false;
+                                            root.dragged-application-process = "";
+                                            root.last-application-drag = "Application drag cancelled";
+                                        }
+                                        assignment-step(delta) => {
+                                            root.assign-link-application(app.name, clamp(app.channel-index + delta, 0, root.link-channel-names.length - 1));
+                                        }
+                                    }
+                                    for app in root.linux-applications: ApplicationChip {
+                                        application-name: app.name;
+                                        destination: app.destination;
+                                        application-name-width: app.name-width;
+                                        destination-width: app.destination-width;
+                                        dragging: root.application-pointer-dragging && root.dragged-application-process == "linux:" + app.process;
+                                        drag-started(pointer-x, pointer-y) => {
+                                            root.application-pointer-dragging = true;
+                                            root.dragged-application-process = "linux:" + app.process;
+                                            root.application-pointer-x = pointer-x;
+                                            root.application-pointer-y = pointer-y;
+                                            root.last-application-drag = "Dragging " + app.name;
+                                        }
+                                        drag-moved(pointer-x, pointer-y) => {
+                                            root.application-pointer-x = pointer-x;
+                                            root.application-pointer-y = pointer-y;
+                                        }
+                                        drag-ended(pointer-x, pointer-y) => {
+                                            root.application-pointer-x = pointer-x;
+                                            root.application-pointer-y = pointer-y;
+                                            root.application-pointer-dragging = false;
+                                            root.dragged-application-process = "";
+                                            if pointer-x >= source-scroll.absolute-position.x
+                                                && pointer-x < source-scroll.absolute-position.x + source-scroll.width
+                                                && pointer-y >= source-scroll.absolute-position.y
+                                                && pointer-y < source-scroll.absolute-position.y + source-scroll.height {
+                                                let source-position = floor((pointer-x - source-scroll.absolute-position.x - source-scroll.viewport-x) / 137px);
+                                                if source-position >= 0 && source-position < root.sources.length {
+                                                    root.assign-linux-application(app.process, app.name, source-position + 1);
+                                                    root.last-application-drag = app.name + " assigned to " + root.sources[source-position].name;
+                                                }
+                                            }
+                                        }
+                                        drag-cancelled => {
+                                            root.application-pointer-dragging = false;
+                                            root.dragged-application-process = "";
+                                            root.last-application-drag = "Application drag cancelled";
+                                        }
+                                        assignment-step(delta) => {
+                                            root.assign-linux-application(app.process, app.name, clamp(app.channel-index + delta, 0, root.mixer-channel-names.length - 1));
+                                                }
                                     }
                                 }
                             }
