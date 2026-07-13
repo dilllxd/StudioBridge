@@ -13,6 +13,7 @@ serde_json.workspace = true
 slint = { version = "1.17", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "renderer-software", "accessibility", "compat-1-2", "system-tray"] }
 studiobridge-core = { path = "../studiobridge-core" }
 tungstenite = "0.29"
+webbrowser = "1.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.13", features = ["global_shortcuts"] }

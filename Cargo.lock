@@ -5569,6 +5569,7 @@ dependencies = [
  "studiobridge-core",
  "tokio",
  "tungstenite",
+ "webbrowser",
 ]
 
 [[package]]

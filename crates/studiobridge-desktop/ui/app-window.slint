@@ -1252,6 +1252,24 @@ component ProfileDrawerButton inherits Rectangle {
     }
 }
 
+component HeaderActionButton inherits Rectangle {
+    in property <string> glyph;
+    in property <string> label;
+    callback clicked;
+    width: 30px;
+    height: 26px;
+    background: header-action-touch.has-hover || header-action-focus.has-focus ? #2c2c30 : transparent;
+    border-radius: 2px;
+    Text { text: root.glyph; color: Theme.quiet; font-size: 14px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+    header-action-focus := FocusScope {
+        width: parent.width; height: parent.height;
+        accessible-role: button;
+        accessible-label: root.label;
+        key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.clicked(); return accept; } return reject; }
+        header-action-touch := TouchArea { clicked => { header-action-focus.focus(); root.clicked(); } }
+    }
+}
+
 component SaveProfileGlyph inherits Rectangle {
     in property <color> colour: Theme.quiet;
     background: transparent;
@@ -1635,6 +1653,7 @@ export component MainWindow inherits Window {
     callback save-preferences(bool, bool, bool, bool, bool, bool, bool);
     callback save-profile-expansion(bool, bool);
     callback save-profile-drawer(bool);
+    callback open-external-link(string);
 
     VerticalLayout {
         spacing: 0px;
@@ -1648,6 +1667,9 @@ export component MainWindow inherits Window {
                 padding-right: 12px;
                 Text { text: "◇  STUDIOBRIDGE"; color: Theme.text; font-size: 10px; font-weight: 800; horizontal-stretch: 1; vertical-alignment: center; }
                 Text { text: root.daemon-connected ? "CONNECTED" : "OFFLINE"; color: root.daemon-connected ? Theme.teal : Theme.red; font-size: 9px; font-weight: 800; vertical-alignment: center; }
+                Text { text: "NEED HELP?"; color: Theme.quiet; font-size: 9px; font-weight: 700; vertical-alignment: center; }
+                HeaderActionButton { glyph: "↗"; label: "Open StudioBridge project"; clicked => { root.open-external-link("project"); } }
+                HeaderActionButton { glyph: "?"; label: "Open StudioBridge support"; clicked => { root.open-external-link("support"); } }
                 ProfileDrawerButton { active: root.profiles-drawer-open; clicked => { root.profiles-drawer-open = !root.profiles-drawer-open; root.save-profile-drawer(root.profiles-drawer-open); } }
             }
         }

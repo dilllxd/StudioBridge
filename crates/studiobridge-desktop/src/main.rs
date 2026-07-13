@@ -44,6 +44,8 @@ use client::DaemonClient;
 slint::include_modules!();
 
 const METER_URL: &str = "ws://127.0.0.1:14565/api/websocket/meter";
+const PROJECT_URL: &str = "https://github.com/dilllxd/StudioBridge";
+const SUPPORT_URL: &str = "https://github.com/dilllxd/StudioBridge/issues";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -117,6 +119,14 @@ fn load_preferences() -> AppPreferences {
 
 fn should_start_in_background(requested: bool, preferences: &AppPreferences) -> bool {
     requested && preferences.open_to_system_tray
+}
+
+fn external_link_url(destination: &str) -> Option<&'static str> {
+    match destination {
+        "project" => Some(PROJECT_URL),
+        "support" => Some(SUPPORT_URL),
+        _ => None,
+    }
 }
 
 fn save_preferences(preferences: &AppPreferences) -> Result<(), String> {
@@ -816,6 +826,23 @@ fn main() -> Result<(), slint::PlatformError> {
     let refresh_window = window.as_weak();
     let refresh_client = client.clone();
     window.on_refresh(move || refresh_all(refresh_window.clone(), refresh_client.clone()));
+
+    let external_link_window = window.as_weak();
+    window.on_open_external_link(move |destination| {
+        let destination = destination.to_string();
+        let Some(url) = external_link_url(&destination) else {
+            set_status(
+                external_link_window.clone(),
+                "Unknown external destination refused".into(),
+            );
+            return;
+        };
+        let window = external_link_window.clone();
+        thread::spawn(move || match webbrowser::open(url) {
+            Ok(()) => set_status(window, format!("Opened StudioBridge {destination}")),
+            Err(error) => set_status(window, format!("Could not open {destination}: {error}")),
+        });
+    });
 
     let volume_window = window.as_weak();
     let volume_client = client.clone();
@@ -2801,9 +2828,9 @@ fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
 mod desktop_tests {
     use super::{
         AppPreferences, DspSelection, active_eq_profile, add_eq_band, adjust_eq_band_value,
-        hotkey_key_name, mock_meter_level, mute_state_with_target, normalize_captured_hotkey,
-        normalize_mute_action, remove_eq_band, selected_dsp_enabled, set_enhancement_preset,
-        set_enhancement_value, set_eq_band_type_value, set_eq_band_value,
+        external_link_url, hotkey_key_name, mock_meter_level, mute_state_with_target,
+        normalize_captured_hotkey, normalize_mute_action, remove_eq_band, selected_dsp_enabled,
+        set_enhancement_preset, set_enhancement_value, set_eq_band_type_value, set_eq_band_value,
         set_headphone_eq_band_value, set_headphone_subwoofer_value, set_selected_dsp_enabled,
         should_start_in_background, source_name_available, update_from_values,
     };
@@ -2902,6 +2929,20 @@ mod desktop_tests {
         assert!(!restored.studio_profiles_expanded);
         assert!(!restored.mixer_profiles_expanded);
         assert!(!restored.profiles_drawer_open);
+    }
+
+    #[test]
+    fn header_links_are_limited_to_fixed_https_destinations() {
+        assert_eq!(
+            external_link_url("project"),
+            Some("https://github.com/dilllxd/StudioBridge")
+        );
+        assert_eq!(
+            external_link_url("support"),
+            Some("https://github.com/dilllxd/StudioBridge/issues")
+        );
+        assert_eq!(external_link_url("https://example.com"), None);
+        assert_eq!(external_link_url("unknown"), None);
     }
 
     #[test]

@@ -53,6 +53,9 @@ than copying its source or visual assets:
   remains user-resizable, and returns to that default on a clean restart;
 - a persistent five-button device navigation hierarchy plus application
   settings at the foot of the rail;
+- a measured 28-pixel application header with fixed-destination Project and
+  Support actions plus the persistent Profiles control, all keyboard and
+  accessibility enabled;
 - a source-first mixer with Personal and Audience controls;
 - draggable and keyboard-accessible source-strip grips backed by the native
   PipeWeaver order command, with saved profiles restoring the captured order;

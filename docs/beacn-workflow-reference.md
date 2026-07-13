@@ -4,6 +4,17 @@ This document records interaction patterns observed in the current BEACN app
 through an attended remote-desktop reference session on 2026-07-11. It does not
 contain BEACN source code, extracted assets, or a pixel-for-pixel design.
 
+## Application header
+
+- A 28-pixel application header keeps the product identity at the leading edge
+  and a compact `Need Help?` cluster plus Profiles control at the trailing edge.
+- The installed binary identifies the two help actions as `website` and
+  `discord`; both are direct actions rather than a full settings page.
+
+StudioBridge preserves that relationship with keyboard-accessible Project and
+Support actions beside its Profiles control. They open only the fixed project
+and issue-tracker HTTPS destinations; arbitrary URLs are refused.
+
 ## Mixer
 
 - The mixer is the primary workspace, reached from a narrow left navigation
