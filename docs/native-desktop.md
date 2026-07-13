@@ -100,7 +100,9 @@ than copying its source or visual assets:
 - secondary microphone processors grouped by module;
 - a measured 897/150 microphone editor/output-column split, 864-by-256 graph,
   exact 30-pixel processor tab strip, live Mic source meter, read-back gain and
-  phantom state, and a deliberately read-only unsupported output-gain control;
+  phantom state, module-backed On switches for Noise Suppression, Expander,
+  Compressor, and Headphones, and a deliberately read-only unsupported
+  output-gain control;
 - live profiles plus a known captured state to revert to.
 - fail-closed daemon monitoring that marks the client offline within one health
   interval, clears transient Link and DSP lease indicators, blocks every stale

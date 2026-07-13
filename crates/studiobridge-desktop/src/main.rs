@@ -1139,6 +1139,20 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    let enabled_window = window.as_weak();
+    let enabled_session = dsp_session.clone();
+    window.on_set_dsp_enabled(move |enabled| {
+        let staged = enabled_session.lock().ok().and_then(|mut session| {
+            let selected = session.selected;
+            let snapshot = session.snapshot.as_mut()?;
+            set_selected_dsp_enabled(snapshot, selected, enabled);
+            Some((snapshot.clone(), selected))
+        });
+        if let Some((snapshot, selected)) = staged {
+            show_dsp_snapshot(&enabled_window, &snapshot, selected);
+        }
+    });
+
     let noise_style_window = window.as_weak();
     let noise_style_session = dsp_session.clone();
     window.on_select_noise_style(move |snapshot_style| {
@@ -1908,6 +1922,7 @@ fn show_dsp_snapshot(
         _ => false,
     };
     let noise_snapshot = snapshot.noise_suppression.style == NoiseSuppressionStyle::Snapshot;
+    let enabled = selected_dsp_enabled(snapshot, selected);
     let window = window.clone();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(window) = window.upgrade() else {
@@ -1924,6 +1939,7 @@ fn show_dsp_snapshot(
         window.set_dsp_value_c(values.2);
         window.set_dsp_value_d(values.3);
         window.set_dsp_advanced(advanced);
+        window.set_dsp_enabled(enabled);
         window.set_noise_snapshot(noise_snapshot);
         window.set_dsp_min_a(ranges.0.0);
         window.set_dsp_max_a(ranges.0.1);
@@ -1934,6 +1950,50 @@ fn show_dsp_snapshot(
         window.set_dsp_min_d(ranges.3.0);
         window.set_dsp_max_d(ranges.3.1);
     });
+}
+
+fn selected_dsp_enabled(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> bool {
+    match selected {
+        DspSelection::Compressor => match snapshot.compressor.active_mode {
+            DspMode::Simple => snapshot.compressor.simple.enabled,
+            DspMode::Advanced => snapshot.compressor.advanced.enabled,
+        },
+        DspSelection::Expander => match snapshot.expander.active_mode {
+            DspMode::Simple => snapshot.expander.simple.enabled,
+            DspMode::Advanced => snapshot.expander.advanced.enabled,
+        },
+        DspSelection::NoiseSuppression => snapshot.noise_suppression.enabled,
+        DspSelection::HeadphoneEqualizer => snapshot
+            .headphone_equalizer
+            .bands
+            .iter()
+            .any(|band| band.enabled),
+        DspSelection::Equalizer | DspSelection::EnhancementSuite => true,
+    }
+}
+
+fn set_selected_dsp_enabled(
+    snapshot: &mut MicrophoneDspSnapshot,
+    selected: DspSelection,
+    enabled: bool,
+) {
+    match selected {
+        DspSelection::Compressor => match snapshot.compressor.active_mode {
+            DspMode::Simple => snapshot.compressor.simple.enabled = enabled,
+            DspMode::Advanced => snapshot.compressor.advanced.enabled = enabled,
+        },
+        DspSelection::Expander => match snapshot.expander.active_mode {
+            DspMode::Simple => snapshot.expander.simple.enabled = enabled,
+            DspMode::Advanced => snapshot.expander.advanced.enabled = enabled,
+        },
+        DspSelection::NoiseSuppression => snapshot.noise_suppression.enabled = enabled,
+        DspSelection::HeadphoneEqualizer => {
+            for band in &mut snapshot.headphone_equalizer.bands {
+                band.enabled = enabled;
+            }
+        }
+        DspSelection::Equalizer | DspSelection::EnhancementSuite => {}
+    }
 }
 
 type DspDisplay = (
@@ -2199,12 +2259,45 @@ fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
 #[cfg(test)]
 mod desktop_tests {
     use super::{
-        hotkey_key_name, mock_meter_level, mute_state_with_target, normalize_captured_hotkey,
-        normalize_mute_action, source_name_available,
+        DspSelection, hotkey_key_name, mock_meter_level, mute_state_with_target,
+        normalize_captured_hotkey, normalize_mute_action, selected_dsp_enabled,
+        set_selected_dsp_enabled, source_name_available,
     };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
-    use studiobridge_core::MuteState;
+    use studiobridge_core::{DspMode, MicrophoneDspSnapshot, MuteState};
+
+    fn dsp_snapshot() -> MicrophoneDspSnapshot {
+        serde_json::from_value(serde_json::json!({
+            "equalizer": {
+                "active_mode": "simple",
+                "simple": { "mode": "simple", "bands": [] },
+                "advanced": { "mode": "advanced", "bands": [] }
+            },
+            "compressor": {
+                "active_mode": "simple",
+                "simple": { "mode": "simple", "enabled": true, "threshold_db": -18.0, "ratio": 3.0, "attack_ms": 10.0, "release_ms": 120.0, "makeup_gain_db": 3.0 },
+                "advanced": { "mode": "advanced", "enabled": true, "threshold_db": -18.0, "ratio": 3.0, "attack_ms": 10.0, "release_ms": 120.0, "makeup_gain_db": 3.0 }
+            },
+            "expander": {
+                "active_mode": "advanced",
+                "simple": { "mode": "simple", "enabled": true, "threshold_db": -48.0, "ratio": 2.0, "attack_ms": 10.0, "release_ms": 180.0 },
+                "advanced": { "mode": "advanced", "enabled": true, "threshold_db": -48.0, "ratio": 2.0, "attack_ms": 10.0, "release_ms": 180.0 }
+            },
+            "noise_suppression": { "enabled": true, "style": "adaptive", "amount_percent": 70.0, "sensitivity_db": -85.0, "adapt_time_ms": 1000.0 },
+            "enhancement_suite": {
+                "bass": { "enabled": false, "preset": 1, "amount": 0.0, "drive": 0.0, "mix_percent": 0.0, "attack_ms": 10.0, "release_ms": 250.0, "threshold_db": -27.0, "knee": 2.0, "makeup_gain_db": 0.0, "ratio": 4.0, "cutoff_hz": 100.0, "q": 0.7, "lower_cutoff_hz": 40.0, "lower_q": 0.2 },
+                "de_esser": { "enabled": true, "amount_percent": 35.0 },
+                "exciter": { "enabled": false, "amount_percent": 0.0, "frequency_hz": 3000.0 }
+            },
+            "headphone_equalizer": { "bands": [
+                { "band": "bass", "enabled": true, "amount_db": 1.5 },
+                { "band": "mids", "enabled": true, "amount_db": 0.0 },
+                { "band": "treble", "enabled": true, "amount_db": 2.0 }
+            ] }
+        }))
+        .expect("DSP fixture should deserialize")
+    }
 
     #[test]
     fn mock_meter_motion_is_bounded_and_changes_over_time() {
@@ -2282,5 +2375,34 @@ mod desktop_tests {
         assert!(!source_name_available("LINK IN", source_names));
         assert!(source_name_available("Aux 1", source_names));
         assert!(source_name_available("Link 2 In", source_names));
+    }
+
+    #[test]
+    fn processor_enable_switches_stage_only_the_selected_profile() {
+        let mut snapshot = dsp_snapshot();
+
+        set_selected_dsp_enabled(&mut snapshot, DspSelection::Compressor, false);
+        assert!(!snapshot.compressor.simple.enabled);
+        assert!(snapshot.compressor.advanced.enabled);
+        assert!(!selected_dsp_enabled(&snapshot, DspSelection::Compressor));
+
+        snapshot.compressor.active_mode = DspMode::Advanced;
+        assert!(selected_dsp_enabled(&snapshot, DspSelection::Compressor));
+
+        set_selected_dsp_enabled(&mut snapshot, DspSelection::Expander, false);
+        assert!(!snapshot.expander.advanced.enabled);
+        assert!(snapshot.expander.simple.enabled);
+
+        set_selected_dsp_enabled(&mut snapshot, DspSelection::NoiseSuppression, false);
+        assert!(!snapshot.noise_suppression.enabled);
+
+        set_selected_dsp_enabled(&mut snapshot, DspSelection::HeadphoneEqualizer, false);
+        assert!(
+            snapshot
+                .headphone_equalizer
+                .bands
+                .iter()
+                .all(|band| !band.enabled)
+        );
     }
 }

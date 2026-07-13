@@ -130,8 +130,10 @@ live meter, move the six validated DSP modules to a horizontal tab strip, and
 show the guarded editor below. Preserve explicit module arming, captured-state
 revert, read-back verification, and the permanent phantom-power exclusion.
 Simple/Advanced and Adaptive/Snapshot selections reflect the current read-back
-state and are staged only while that exact module is armed; Apply + verify is
-still the only operation that can send the staged state to the daemon.
+state. The Noise Suppression, Expander, Compressor, and Headphones On switches
+likewise reflect their module's stored enabled state. Mode and enable changes
+are staged only while that exact module is armed; Apply + verify is still the
+only operation that can send the staged state to the daemon.
 The unsupported Mic Output gain remains visibly read-only instead of guessing a
 device command or exposing a write path.
 
