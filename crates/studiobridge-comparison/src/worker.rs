@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -19,15 +20,43 @@ pub struct Command {
     pub kind: CommandKind,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DestinationKind {
+    LocalMonitor,
+    NonLocal,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Destination {
+    pub id: String,
+    pub label: String,
+    pub kind: DestinationKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DestinationSnapshot {
+    pub generation: u64,
+    pub endpoint_generation: u64,
+    pub complete: bool,
+    pub destinations: Vec<Destination>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DestinationAcknowledgement {
+    pub confirmation_id: u64,
+    pub snapshot: DestinationSnapshot,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommandKind {
     ProbeAvailability,
+    UpdateDestinations(DestinationSnapshot),
     ToggleRecord,
-    /// Production use is forbidden until this generation is checked against a
-    /// complete read-only destination snapshot. The simulated worker accepts
-    /// only `None`; no production worker constructor exists yet.
+    /// The simulated worker permits playback only against a complete metadata
+    /// snapshot. Non-local destinations require an exact, protocol-issued,
+    /// one-use acknowledgement. No production worker constructor exists yet.
     TogglePlay {
-        destination_ack_generation: Option<u64>,
+        destination_acknowledgement: Option<DestinationAcknowledgement>,
     },
     Cancel,
     WorkspaceExited,
@@ -124,14 +153,23 @@ pub enum ComparisonMode {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DiagnosticKind {
     CommandRejected(String),
-    PlaybackPolicyNotBound,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TerminalEvent {
     Snapshot(Snapshot),
-    Diagnostic { revision: u64, kind: DiagnosticKind },
-    ShutdownComplete { revision: u64 },
+    DestinationConfirmationRequired {
+        revision: u64,
+        confirmation_id: u64,
+        snapshot: DestinationSnapshot,
+    },
+    Diagnostic {
+        revision: u64,
+        kind: DiagnosticKind,
+    },
+    ShutdownComplete {
+        revision: u64,
+    },
 }
 
 #[derive(Clone, Default)]
@@ -153,6 +191,10 @@ struct ProtocolCore<D: AudioDriver> {
     terminal: mpsc::Sender<TerminalEvent>,
     last_timer_publish_ms: Option<u64>,
     last_command_sequence: Option<u64>,
+    destinations: Option<DestinationSnapshot>,
+    pending_confirmation: Option<(u64, DestinationSnapshot)>,
+    next_confirmation_id: Option<u64>,
+    destination_fault: Option<String>,
 }
 
 impl<D: AudioDriver> ProtocolCore<D> {
@@ -168,6 +210,10 @@ impl<D: AudioDriver> ProtocolCore<D> {
             terminal,
             last_timer_publish_ms: None,
             last_command_sequence: None,
+            destinations: None,
+            pending_confirmation: None,
+            next_confirmation_id: Some(1),
+            destination_fault: None,
         };
         core.publish_semantic_snapshot();
         core
@@ -191,20 +237,40 @@ impl<D: AudioDriver> ProtocolCore<D> {
                 self.publish_semantic_snapshot();
                 return false;
             }
-            CommandKind::ToggleRecord => self.engine.handle(command.sequence, Action::ToggleRecord),
+            CommandKind::UpdateDestinations(snapshot) => {
+                let diagnostic = self.update_destinations(snapshot);
+                if before != self.semantic_signature() {
+                    self.publish_semantic_snapshot();
+                }
+                if let Some(diagnostic) = diagnostic {
+                    self.emit_diagnostic(diagnostic);
+                }
+                return false;
+            }
+            CommandKind::ToggleRecord => {
+                self.pending_confirmation = None;
+                self.engine.handle(command.sequence, Action::ToggleRecord)
+            }
             CommandKind::TogglePlay {
-                destination_ack_generation,
+                destination_acknowledgement,
             } => {
-                if destination_ack_generation.is_some() {
-                    self.emit_diagnostic(DiagnosticKind::PlaybackPolicyNotBound);
+                if !self.authorize_playback(destination_acknowledgement) {
+                    if before != self.semantic_signature() {
+                        self.publish_semantic_snapshot();
+                    }
                     return false;
                 }
                 self.engine.handle(command.sequence, Action::TogglePlay)
             }
-            CommandKind::Cancel => self.engine.handle(command.sequence, Action::Cancel),
-            CommandKind::WorkspaceExited => self
-                .engine
-                .handle(command.sequence, Action::WorkspaceExited),
+            CommandKind::Cancel => {
+                self.pending_confirmation = None;
+                self.engine.handle(command.sequence, Action::Cancel)
+            }
+            CommandKind::WorkspaceExited => {
+                self.pending_confirmation = None;
+                self.engine
+                    .handle(command.sequence, Action::WorkspaceExited)
+            }
             CommandKind::Shutdown => unreachable!("shutdown handled before sequence filtering"),
         };
 
@@ -237,14 +303,27 @@ impl<D: AudioDriver> ProtocolCore<D> {
 
     fn snapshot(&self) -> Snapshot {
         let state = self.engine.state();
-        let reason = match &state {
+        let mut reason = match &state {
             PublicState::Unavailable { reason } => Some(reason.clone()),
             _ => None,
         };
+        let mut controls = Controls::from_state(&state);
+        if controls.play_enabled && !matches!(state, PublicState::Playing { .. }) {
+            match self.destination_status() {
+                Ok(true) => {
+                    reason = Some("Confirmation required for non-local destinations".into());
+                }
+                Ok(false) => {}
+                Err(blocked) => {
+                    controls.play_enabled = false;
+                    reason = Some(blocked);
+                }
+            }
+        }
         Snapshot {
             revision: self.engine.revision(),
             timer_tenths: timer_tenths(&state),
-            controls: Controls::from_state(&state),
+            controls,
             state,
             reason,
             mode: ComparisonMode::Simulated,
@@ -256,13 +335,208 @@ impl<D: AudioDriver> ProtocolCore<D> {
         let _ = self.terminal.send(TerminalEvent::Snapshot(self.snapshot()));
     }
 
-    fn semantic_signature(&self) -> (u64, std::mem::Discriminant<PublicState>, Controls) {
-        let state = self.engine.state();
+    fn semantic_signature(
+        &self,
+    ) -> (
+        u64,
+        std::mem::Discriminant<PublicState>,
+        Controls,
+        Option<String>,
+        Option<DestinationSnapshot>,
+    ) {
+        let snapshot = self.snapshot();
         (
-            self.engine.revision(),
-            std::mem::discriminant(&state),
-            Controls::from_state(&state),
+            snapshot.revision,
+            std::mem::discriminant(&snapshot.state),
+            snapshot.controls,
+            snapshot.reason,
+            self.destinations.clone(),
         )
+    }
+
+    fn destination_status(&self) -> Result<bool, String> {
+        if let Some(fault) = &self.destination_fault {
+            return Err(fault.clone());
+        }
+        let Some(snapshot) = &self.destinations else {
+            return Err("Comparison unavailable: destination set is unknown".into());
+        };
+        if !snapshot.complete {
+            return Err("Comparison unavailable: destination set is incomplete".into());
+        }
+        if !snapshot
+            .destinations
+            .iter()
+            .any(|destination| destination.kind == DestinationKind::LocalMonitor)
+        {
+            return Err("Comparison unavailable: no local audible monitor".into());
+        }
+        let needs_confirmation = snapshot
+            .destinations
+            .iter()
+            .any(|destination| destination.kind == DestinationKind::NonLocal);
+        if needs_confirmation
+            && self.pending_confirmation.is_none()
+            && self.next_confirmation_id.is_none()
+        {
+            return Err("Comparison unavailable: confirmation ID space exhausted".into());
+        }
+        Ok(needs_confirmation)
+    }
+
+    fn update_destinations(&mut self, snapshot: DestinationSnapshot) -> Option<DiagnosticKind> {
+        if let Some(reason) = Self::validate_destination_snapshot(&snapshot) {
+            self.fail_destination_policy(reason.clone());
+            return Some(DiagnosticKind::CommandRejected(reason));
+        }
+        if let Some(current) = &self.destinations {
+            if snapshot.endpoint_generation < current.endpoint_generation {
+                let reason = "endpoint generation regressed".to_string();
+                self.fail_destination_policy(format!("Comparison unavailable: {reason}"));
+                return Some(DiagnosticKind::CommandRejected(reason));
+            }
+            if snapshot.generation < current.generation {
+                return Some(DiagnosticKind::CommandRejected(
+                    "stale destination snapshot ignored".into(),
+                ));
+            }
+            if snapshot.generation == current.generation {
+                if snapshot != *current {
+                    self.fail_destination_policy(
+                        "Comparison unavailable: destination generation content mismatch".into(),
+                    );
+                    return Some(DiagnosticKind::CommandRejected(
+                        "destination generation was reused with different content".into(),
+                    ));
+                }
+                return None;
+            }
+
+            let endpoint_changed = snapshot.endpoint_generation != current.endpoint_generation;
+            let playback_destinations_changed =
+                matches!(self.engine.state(), PublicState::Playing { .. });
+            if (endpoint_changed || playback_destinations_changed)
+                && let Some(token) = self.engine.active_token()
+            {
+                self.engine.stream_error(
+                    token,
+                    "comparison destinations changed during an active stream",
+                );
+            }
+        }
+        self.pending_confirmation = None;
+        self.destination_fault = None;
+        self.destinations = Some(snapshot);
+        None
+    }
+
+    fn validate_destination_snapshot(snapshot: &DestinationSnapshot) -> Option<String> {
+        if !snapshot.complete {
+            return None;
+        }
+        if snapshot.destinations.is_empty() {
+            return Some("complete destination snapshot cannot be empty".into());
+        }
+        if snapshot
+            .destinations
+            .iter()
+            .any(|destination| destination.id.trim().is_empty())
+        {
+            return Some("complete destination snapshot contains a blank ID".into());
+        }
+        let mut ids = HashSet::with_capacity(snapshot.destinations.len());
+        if snapshot
+            .destinations
+            .iter()
+            .any(|destination| !ids.insert(destination.id.as_str()))
+        {
+            return Some("complete destination snapshot contains duplicate IDs".into());
+        }
+        None
+    }
+
+    fn fail_destination_policy(&mut self, reason: String) {
+        self.destination_fault = Some(reason.clone());
+        self.pending_confirmation = None;
+        if let Some(token) = self.engine.active_token() {
+            self.engine.stream_error(token, reason);
+        }
+    }
+
+    fn authorize_playback(&mut self, acknowledgement: Option<DestinationAcknowledgement>) -> bool {
+        if matches!(self.engine.state(), PublicState::Playing { .. }) {
+            if acknowledgement.is_some() {
+                self.emit_diagnostic(DiagnosticKind::CommandRejected(
+                    "destination acknowledgement cannot be replayed".into(),
+                ));
+                return false;
+            }
+            return true;
+        }
+        if !matches!(
+            self.engine.state(),
+            PublicState::Ready { .. }
+                | PublicState::Recording { .. }
+                | PublicState::RecordingPaused { .. }
+        ) {
+            return true;
+        }
+        let needs_confirmation = match self.destination_status() {
+            Ok(needs_confirmation) => needs_confirmation,
+            Err(reason) => {
+                self.emit_diagnostic(DiagnosticKind::CommandRejected(reason));
+                return false;
+            }
+        };
+        if !needs_confirmation {
+            if acknowledgement.is_some() {
+                self.emit_diagnostic(DiagnosticKind::CommandRejected(
+                    "destination acknowledgement was not requested".into(),
+                ));
+                return false;
+            }
+            return true;
+        }
+
+        let current = self.destinations.clone().expect("status requires snapshot");
+        if let Some(acknowledgement) = acknowledgement {
+            if self.pending_confirmation.as_ref()
+                == Some(&(
+                    acknowledgement.confirmation_id,
+                    acknowledgement.snapshot.clone(),
+                ))
+                && acknowledgement.snapshot == current
+            {
+                self.pending_confirmation = None;
+                return true;
+            }
+            self.emit_diagnostic(DiagnosticKind::CommandRejected(
+                "destination acknowledgement is stale or does not match".into(),
+            ));
+        }
+
+        let confirmation_id = match &self.pending_confirmation {
+            Some((confirmation_id, snapshot)) if *snapshot == current => *confirmation_id,
+            _ => {
+                let Some(confirmation_id) = self.next_confirmation_id.take() else {
+                    self.emit_diagnostic(DiagnosticKind::CommandRejected(
+                        "confirmation ID space exhausted".into(),
+                    ));
+                    return false;
+                };
+                self.next_confirmation_id = confirmation_id.checked_add(1);
+                self.pending_confirmation = Some((confirmation_id, current.clone()));
+                confirmation_id
+            }
+        };
+        let _ = self
+            .terminal
+            .send(TerminalEvent::DestinationConfirmationRequired {
+                revision: self.engine.revision(),
+                confirmation_id,
+                snapshot: current,
+            });
+        false
     }
 
     fn force_shutdown(&mut self) {
@@ -488,6 +762,84 @@ mod tests {
         }
     }
 
+    fn next_confirmation(terminal: &mpsc::Receiver<TerminalEvent>) -> (u64, DestinationSnapshot) {
+        loop {
+            if let TerminalEvent::DestinationConfirmationRequired {
+                confirmation_id,
+                snapshot,
+                ..
+            } = terminal.recv().unwrap()
+            {
+                return (confirmation_id, snapshot);
+            }
+        }
+    }
+
+    fn local_destinations(generation: u64) -> DestinationSnapshot {
+        DestinationSnapshot {
+            generation,
+            endpoint_generation: 1,
+            complete: true,
+            destinations: vec![Destination {
+                id: "headphones".into(),
+                label: "Headphones".into(),
+                kind: DestinationKind::LocalMonitor,
+            }],
+        }
+    }
+
+    fn non_local_destinations(generation: u64) -> DestinationSnapshot {
+        let mut snapshot = local_destinations(generation);
+        snapshot.destinations.push(Destination {
+            id: "voice-chat".into(),
+            label: "Voice Chat Mic".into(),
+            kind: DestinationKind::NonLocal,
+        });
+        snapshot
+    }
+
+    fn set_destinations(
+        core: &mut ProtocolCore<FakeAudioDriver>,
+        sequence: u64,
+        snapshot: DestinationSnapshot,
+    ) {
+        core.process(Command {
+            sequence,
+            kind: CommandKind::UpdateDestinations(snapshot),
+        });
+    }
+
+    fn prepare_ready(
+        core: &mut ProtocolCore<FakeAudioDriver>,
+        terminal: &mpsc::Receiver<TerminalEvent>,
+        destinations: DestinationSnapshot,
+    ) {
+        next_semantic(terminal);
+        set_destinations(core, 1, destinations);
+        next_semantic(terminal);
+        core.process(Command {
+            sequence: 2,
+            kind: CommandKind::ToggleRecord,
+        });
+        next_semantic(terminal);
+        core.accept_capture(&[0.2; MIN_COMMIT_FRAMES]);
+        next_semantic(terminal);
+        core.process(Command {
+            sequence: 3,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: None,
+            },
+        });
+        next_semantic(terminal);
+        core.process(Command {
+            sequence: 4,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: None,
+            },
+        });
+        next_semantic(terminal);
+    }
+
     #[test]
     fn command_queue_is_exactly_bounded_and_reports_busy() {
         let (sender, _receiver) = mpsc::sync_channel(COMMAND_CAPACITY);
@@ -584,7 +936,7 @@ mod tests {
             core.process(Command {
                 sequence,
                 kind: CommandKind::TogglePlay {
-                    destination_ack_generation: None,
+                    destination_acknowledgement: None,
                 },
             });
         }
@@ -601,24 +953,455 @@ mod tests {
     }
 
     #[test]
-    fn destination_generation_cannot_be_claimed_before_policy_is_bound() {
-        let (mut core, latest, terminal) = core();
-        let initial = next_semantic(&terminal);
+    fn unexpected_acknowledgement_cannot_authorize_local_only_playback() {
+        let (mut core, _, terminal) = core();
+        prepare_ready(&mut core, &terminal, local_destinations(1));
         core.process(Command {
-            sequence: 1,
+            sequence: 5,
             kind: CommandKind::TogglePlay {
-                destination_ack_generation: Some(4),
+                destination_acknowledgement: Some(DestinationAcknowledgement {
+                    confirmation_id: 4,
+                    snapshot: local_destinations(1),
+                }),
             },
         });
-        assert!(latest.take().is_none());
-        assert_eq!(core.engine.revision(), initial.revision);
+        assert!(matches!(core.engine.state(), PublicState::Ready { .. }));
         assert!(matches!(
             terminal.try_recv().unwrap(),
             TerminalEvent::Diagnostic {
-                kind: DiagnosticKind::PlaybackPolicyNotBound,
+                kind: DiagnosticKind::CommandRejected(_),
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn complete_local_only_snapshot_allows_play_without_confirmation() {
+        let (mut core, _, terminal) = core();
+        prepare_ready(&mut core, &terminal, local_destinations(1));
+        core.process(Command {
+            sequence: 5,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: None,
+            },
+        });
+        assert!(matches!(
+            next_semantic(&terminal).state,
+            PublicState::Playing { .. }
+        ));
+        assert!(terminal.try_recv().is_err());
+    }
+
+    #[test]
+    fn non_local_destinations_require_exact_one_time_confirmation() {
+        let (mut core, _, terminal) = core();
+        prepare_ready(&mut core, &terminal, local_destinations(1));
+        let destinations = non_local_destinations(2);
+        set_destinations(&mut core, 5, destinations.clone());
+        next_semantic(&terminal);
+        core.process(Command {
+            sequence: 6,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: None,
+            },
+        });
+        let (confirmation_id, required) = next_confirmation(&terminal);
+        assert_eq!(required, destinations);
+        let acknowledgement = DestinationAcknowledgement {
+            confirmation_id,
+            snapshot: required,
+        };
+        core.process(Command {
+            sequence: 7,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: Some(acknowledgement.clone()),
+            },
+        });
+        assert!(matches!(
+            next_semantic(&terminal).state,
+            PublicState::Playing { .. }
+        ));
+        core.process(Command {
+            sequence: 8,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: None,
+            },
+        });
+        next_semantic(&terminal);
+        core.process(Command {
+            sequence: 9,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: Some(acknowledgement),
+            },
+        });
+        assert!(matches!(core.engine.state(), PublicState::Ready { .. }));
+        assert!(matches!(
+            terminal.recv().unwrap(),
+            TerminalEvent::Diagnostic { .. }
+        ));
+        let (new_confirmation_id, _) = next_confirmation(&terminal);
+        assert_ne!(new_confirmation_id, confirmation_id);
+    }
+
+    #[test]
+    fn mismatched_and_stale_acknowledgements_fail_closed() {
+        let (mut core, _, terminal) = core();
+        prepare_ready(&mut core, &terminal, local_destinations(1));
+        let destinations = non_local_destinations(2);
+        set_destinations(&mut core, 5, destinations.clone());
+        next_semantic(&terminal);
+        core.process(Command {
+            sequence: 6,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: None,
+            },
+        });
+        let (confirmation_id, _) = next_confirmation(&terminal);
+        let mut mismatched = destinations.clone();
+        mismatched.destinations[1].label = "Changed label".into();
+        core.process(Command {
+            sequence: 7,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: Some(DestinationAcknowledgement {
+                    confirmation_id,
+                    snapshot: mismatched,
+                }),
+            },
+        });
+        assert!(matches!(core.engine.state(), PublicState::Ready { .. }));
+        assert!(matches!(
+            terminal.recv().unwrap(),
+            TerminalEvent::Diagnostic { .. }
+        ));
+        assert_eq!(next_confirmation(&terminal).0, confirmation_id);
+
+        let newer = non_local_destinations(3);
+        set_destinations(&mut core, 8, newer.clone());
+        next_semantic(&terminal);
+        core.process(Command {
+            sequence: 9,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: Some(DestinationAcknowledgement {
+                    confirmation_id,
+                    snapshot: destinations,
+                }),
+            },
+        });
+        assert!(matches!(
+            terminal.recv().unwrap(),
+            TerminalEvent::Diagnostic { .. }
+        ));
+        let (new_id, required) = next_confirmation(&terminal);
+        assert_ne!(new_id, confirmation_id);
+        assert_eq!(required, newer);
+    }
+
+    #[test]
+    fn incomplete_unknown_and_no_local_destination_sets_disable_play() {
+        for snapshot in [
+            DestinationSnapshot {
+                generation: 2,
+                endpoint_generation: 1,
+                complete: false,
+                destinations: local_destinations(1).destinations,
+            },
+            DestinationSnapshot {
+                generation: 2,
+                endpoint_generation: 1,
+                complete: true,
+                destinations: vec![Destination {
+                    id: "voice-chat".into(),
+                    label: "Voice Chat Mic".into(),
+                    kind: DestinationKind::NonLocal,
+                }],
+            },
+        ] {
+            let (mut core, _, terminal) = core();
+            prepare_ready(&mut core, &terminal, local_destinations(1));
+            set_destinations(&mut core, 5, snapshot);
+            let blocked = next_semantic(&terminal);
+            assert!(!blocked.controls.play_enabled);
+            assert!(
+                blocked
+                    .reason
+                    .unwrap()
+                    .starts_with("Comparison unavailable:")
+            );
+            core.process(Command {
+                sequence: 6,
+                kind: CommandKind::TogglePlay {
+                    destination_acknowledgement: None,
+                },
+            });
+            assert!(matches!(core.engine.state(), PublicState::Ready { .. }));
+            assert!(matches!(
+                terminal.recv().unwrap(),
+                TerminalEvent::Diagnostic { .. }
+            ));
+        }
+
+        let (mut core, _, terminal) = core();
+        prepare_ready(&mut core, &terminal, local_destinations(1));
+        core.destinations = None;
+        core.publish_semantic_snapshot();
+        assert!(!next_semantic(&terminal).controls.play_enabled);
+    }
+
+    #[test]
+    fn endpoint_or_destination_generation_change_stops_active_playback() {
+        let (mut core, _, terminal) = core();
+        prepare_ready(&mut core, &terminal, local_destinations(1));
+        core.process(Command {
+            sequence: 5,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: None,
+            },
+        });
+        next_semantic(&terminal);
+        let mut changed = local_destinations(2);
+        changed.endpoint_generation = 2;
+        set_destinations(&mut core, 6, changed);
+        assert!(matches!(
+            next_semantic(&terminal).state,
+            PublicState::Unavailable { .. }
+        ));
+        assert_eq!(core.engine.driver().active_stream_count(), 0);
+    }
+
+    #[test]
+    fn rapid_confirmation_commands_reuse_one_pending_id_without_starting_audio() {
+        let (mut core, _, terminal) = core();
+        prepare_ready(&mut core, &terminal, local_destinations(1));
+        set_destinations(&mut core, 5, non_local_destinations(2));
+        next_semantic(&terminal);
+        for sequence in 6..=7 {
+            core.process(Command {
+                sequence,
+                kind: CommandKind::TogglePlay {
+                    destination_acknowledgement: None,
+                },
+            });
+        }
+        let first = next_confirmation(&terminal).0;
+        let second = next_confirmation(&terminal).0;
+        assert_eq!(first, second);
+        assert!(matches!(core.engine.state(), PublicState::Ready { .. }));
+        assert_eq!(core.engine.driver().active_stream_count(), 0);
+    }
+
+    #[test]
+    fn max_confirmation_id_is_issued_once_then_exhaustion_is_sticky() {
+        let (mut core, _, terminal) = core();
+        prepare_ready(&mut core, &terminal, local_destinations(1));
+        let destinations = non_local_destinations(2);
+        set_destinations(&mut core, 5, destinations.clone());
+        next_semantic(&terminal);
+        core.next_confirmation_id = Some(u64::MAX);
+        core.process(Command {
+            sequence: 6,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: None,
+            },
+        });
+        let (confirmation_id, snapshot) = next_confirmation(&terminal);
+        assert_eq!(confirmation_id, u64::MAX);
+        let acknowledgement = DestinationAcknowledgement {
+            confirmation_id,
+            snapshot,
+        };
+        core.process(Command {
+            sequence: 7,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: Some(acknowledgement.clone()),
+            },
+        });
+        next_semantic(&terminal);
+        core.process(Command {
+            sequence: 8,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: None,
+            },
+        });
+        let blocked = next_semantic(&terminal);
+        assert!(!blocked.controls.play_enabled);
+        assert!(blocked.reason.unwrap().contains("ID space exhausted"));
+        core.process(Command {
+            sequence: 9,
+            kind: CommandKind::TogglePlay {
+                destination_acknowledgement: Some(acknowledgement),
+            },
+        });
+        assert!(matches!(
+            terminal.recv().unwrap(),
+            TerminalEvent::Diagnostic { .. }
+        ));
+        assert!(terminal.try_recv().is_err());
+        assert!(matches!(core.engine.state(), PublicState::Ready { .. }));
+    }
+
+    #[test]
+    fn endpoint_generation_regression_faults_inactive_and_active_sessions() {
+        for active in [false, true] {
+            let (mut core, _, terminal) = core();
+            prepare_ready(&mut core, &terminal, local_destinations(1));
+            let mut current = local_destinations(2);
+            current.endpoint_generation = 5;
+            set_destinations(&mut core, 5, current.clone());
+            next_semantic(&terminal);
+            let mut next_sequence = 6;
+            if active {
+                core.process(Command {
+                    sequence: next_sequence,
+                    kind: CommandKind::TogglePlay {
+                        destination_acknowledgement: None,
+                    },
+                });
+                next_semantic(&terminal);
+                next_sequence += 1;
+            }
+            let mut regressed = local_destinations(3);
+            regressed.endpoint_generation = 4;
+            set_destinations(&mut core, next_sequence, regressed);
+            let blocked = next_semantic(&terminal);
+            if active {
+                assert!(matches!(blocked.state, PublicState::Unavailable { .. }));
+                assert_eq!(core.engine.driver().active_stream_count(), 0);
+            } else {
+                assert!(matches!(blocked.state, PublicState::Ready { .. }));
+                assert!(!blocked.controls.play_enabled);
+            }
+            assert!(matches!(
+                terminal.recv().unwrap(),
+                TerminalEvent::Diagnostic { .. }
+            ));
+            assert_eq!(core.destinations.as_ref(), Some(&current));
+        }
+    }
+
+    #[test]
+    fn complete_snapshot_rejects_empty_and_ambiguous_duplicate_ids() {
+        let invalid_sets = [
+            Vec::new(),
+            vec![
+                Destination {
+                    id: "duplicate".into(),
+                    label: "Headphones A".into(),
+                    kind: DestinationKind::LocalMonitor,
+                },
+                Destination {
+                    id: "duplicate".into(),
+                    label: "Headphones B".into(),
+                    kind: DestinationKind::LocalMonitor,
+                },
+            ],
+            vec![
+                Destination {
+                    id: "ambiguous".into(),
+                    label: "Headphones".into(),
+                    kind: DestinationKind::LocalMonitor,
+                },
+                Destination {
+                    id: "ambiguous".into(),
+                    label: "Voice Chat".into(),
+                    kind: DestinationKind::NonLocal,
+                },
+            ],
+        ];
+        for destinations in invalid_sets {
+            let (mut core, _, terminal) = core();
+            prepare_ready(&mut core, &terminal, local_destinations(1));
+            set_destinations(
+                &mut core,
+                5,
+                DestinationSnapshot {
+                    generation: 2,
+                    endpoint_generation: 1,
+                    complete: true,
+                    destinations,
+                },
+            );
+            let blocked = next_semantic(&terminal);
+            assert!(!blocked.controls.play_enabled);
+            assert!(matches!(blocked.state, PublicState::Ready { .. }));
+            assert!(matches!(
+                terminal.recv().unwrap(),
+                TerminalEvent::Diagnostic { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn complete_snapshot_rejects_empty_and_whitespace_destination_ids() {
+        for id in ["", " \t\r\n"] {
+            let (mut core, _, terminal) = core();
+            prepare_ready(&mut core, &terminal, local_destinations(1));
+            set_destinations(
+                &mut core,
+                5,
+                DestinationSnapshot {
+                    generation: 2,
+                    endpoint_generation: 1,
+                    complete: true,
+                    destinations: vec![Destination {
+                        id: id.into(),
+                        label: "Headphones".into(),
+                        kind: DestinationKind::LocalMonitor,
+                    }],
+                },
+            );
+            let blocked = next_semantic(&terminal);
+            assert!(matches!(blocked.state, PublicState::Ready { .. }));
+            assert!(!blocked.controls.play_enabled);
+            assert!(blocked.reason.unwrap().contains("blank ID"));
+            assert!(matches!(
+                terminal.recv().unwrap(),
+                TerminalEvent::Diagnostic { .. }
+            ));
+            core.process(Command {
+                sequence: 6,
+                kind: CommandKind::TogglePlay {
+                    destination_acknowledgement: None,
+                },
+            });
+            assert!(matches!(core.engine.state(), PublicState::Ready { .. }));
+            assert_eq!(core.engine.driver().active_stream_count(), 0);
+        }
+    }
+
+    #[test]
+    fn same_generation_conflict_publishes_blocked_state_before_diagnostic() {
+        for active in [false, true] {
+            let (mut core, _, terminal) = core();
+            prepare_ready(&mut core, &terminal, local_destinations(1));
+            let mut next_sequence = 5;
+            if active {
+                core.process(Command {
+                    sequence: next_sequence,
+                    kind: CommandKind::TogglePlay {
+                        destination_acknowledgement: None,
+                    },
+                });
+                next_semantic(&terminal);
+                next_sequence += 1;
+            }
+            let mut conflicting = local_destinations(1);
+            conflicting.destinations[0].label = "Conflicting label".into();
+            set_destinations(&mut core, next_sequence, conflicting);
+            let blocked = terminal.recv().unwrap();
+            let TerminalEvent::Snapshot(blocked) = blocked else {
+                panic!("blocked snapshot must precede diagnostic")
+            };
+            if active {
+                assert!(matches!(blocked.state, PublicState::Unavailable { .. }));
+            } else {
+                assert!(!blocked.controls.play_enabled);
+                assert!(matches!(blocked.state, PublicState::Ready { .. }));
+            }
+            assert!(matches!(
+                terminal.recv().unwrap(),
+                TerminalEvent::Diagnostic { .. }
+            ));
+        }
     }
 
     #[test]
@@ -644,8 +1427,10 @@ mod tests {
         let empty = next_semantic(&terminal);
         assert!(empty.controls.record_enabled);
         assert!(!empty.controls.play_enabled);
+        set_destinations(&mut core, 1, local_destinations(1));
+        next_semantic(&terminal);
         core.process(Command {
-            sequence: 1,
+            sequence: 2,
             kind: CommandKind::ToggleRecord,
         });
         core.accept_capture(&[0.2; MIN_COMMIT_FRAMES]);
@@ -681,7 +1466,7 @@ mod tests {
             .try_send(Command {
                 sequence: 1,
                 kind: CommandKind::TogglePlay {
-                    destination_ack_generation: None,
+                    destination_acknowledgement: None,
                 },
             })
             .unwrap();
@@ -707,8 +1492,10 @@ mod tests {
     fn rejected_stop_failure_publishes_unavailable_before_diagnostic() {
         let (mut core, _, terminal) = core();
         next_semantic(&terminal);
+        set_destinations(&mut core, 1, local_destinations(1));
+        next_semantic(&terminal);
         core.process(Command {
-            sequence: 1,
+            sequence: 2,
             kind: CommandKind::ToggleRecord,
         });
         next_semantic(&terminal);
@@ -716,9 +1503,9 @@ mod tests {
         next_semantic(&terminal);
         core.engine.driver.fail_next(crate::DriverCall::StopStream);
         core.process(Command {
-            sequence: 2,
+            sequence: 3,
             kind: CommandKind::TogglePlay {
-                destination_ack_generation: None,
+                destination_acknowledgement: None,
             },
         });
         assert!(matches!(

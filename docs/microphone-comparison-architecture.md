@@ -324,9 +324,11 @@ fail-closed stream lifecycle handling, endpoint-generation rejection, and
 non-elidable sample scrubbing. A simulated-only worker now adds bounded commands,
 lossless semantic snapshots, coalesced frame-derived timers, and guaranteed
 owner teardown. It is not connected to the desktop UI or any audio backend.
-Production playback remains prohibited until a reviewed worker policy binds a
-read-only destination snapshot and its generation to every Play command. The
-feature therefore remains unavailable in normal builds.
+Its simulated policy now binds exact, one-time acknowledgements to complete
+destination snapshots and generations. Production playback remains prohibited
+until a reviewed production observer can supply that metadata from the real
+audio graph and the physically validated endpoints exist. The feature therefore
+remains unavailable in normal builds.
 
 ### Stage 1 — Windows-verifiable policy core
 

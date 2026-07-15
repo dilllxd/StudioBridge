@@ -1073,7 +1073,7 @@ fn main() -> Result<(), slint::PlatformError> {
         // before the first show; restore BEACN's measured default client size.
         window
             .window()
-            .set_size(slint::LogicalSize::new(1402.0, 778.0));
+            .set_size(slint::LogicalSize::new(944.0, 778.0));
     }
     let hotkey_runtime = Rc::new(RefCell::new(HotkeyRuntime::new(
         &preferences,
@@ -4575,25 +4575,28 @@ mod desktop_tests {
     }
 
     #[test]
-    fn profile_rail_reflow_contract_preserves_defaults_and_reclaims_space() {
+    fn official_default_reflow_contract_preserves_defaults_and_reclaims_space() {
         let ui = include_str!("../ui/app-window.slint");
+        let rust_source = include_str!("main.rs");
 
-        assert!(ui.contains("settings-content-width: root.profiles-drawer-open ? 684px : 865px;"));
-        assert!(ui.contains("settings-left-padding: root.profiles-drawer-open ? 44px : 55px;"));
-        assert!(ui.contains("padding-right: root.profiles-drawer-open ? 34px : 45px;"));
+        assert!(ui.contains("settings-content-width: 440px;"));
+        assert!(ui.contains("settings-left-padding: 29px;"));
+        assert!(ui.contains("padding-right: 25px;"));
         assert!(ui.contains("if root.active-page == 4: settings-scroll := ScrollView"));
         assert!(ui.contains("width: root.settings-content-width;"));
 
-        assert!(ui.contains("width: 897px;\n                    horizontal-stretch: 1;"));
+        assert!(ui.contains("width: 522px;\n                    horizontal-stretch: 1;"));
         assert!(ui.contains("x: 28px; y: 20px; width: parent.width - 33px;"));
         assert!(ui.contains("x: parent.width - 174px; y: 5px; width: 78px;"));
-        assert!(ui.contains("width: max(755px, parent.width - 290px);"));
-        assert!(ui.contains("x: parent.width - 229px; y: 95px;"));
+        assert!(ui.contains("width: min(488px, parent.width - 16px);"));
+        assert!(ui.contains("x: parent.width - 148px; y: 95px;"));
 
-        let conditional_stretch = "horizontal-stretch: root.profiles-drawer-open ? 0 : 1;";
-        assert!(ui.matches(conditional_stretch).count() >= 2);
-        assert!(ui.contains("min-width: 1120px;"));
-        assert!(ui.contains("init => { root.width = 1402px; root.height = 778px; }"));
+        assert!(ui.matches("width: 218px;").count() >= 3);
+        assert!(ui.contains("width: 220px;"));
+        assert!(ui.contains("min-width: 944px;"));
+        assert!(ui.contains("min-height: 778px;"));
+        assert!(ui.contains("init => { root.width = 944px; root.height = 778px; }"));
+        assert!(rust_source.contains("slint::LogicalSize::new(944.0, 778.0)"));
         assert!(ui.contains("root.save-profile-drawer(!root.profiles-drawer-open);"));
         assert!(ui.contains("popup-width: 232px;"));
 
@@ -4656,7 +4659,7 @@ mod desktop_tests {
         assert!(ui.contains("accessible-enabled: root.interactive;"));
         assert!(ui.contains("if !root.daemon-connected && root.active-page <= 1: TouchArea"));
         assert!(
-            ui.contains("width: parent.width - 72px - (root.profiles-drawer-open ? 285px : 0px);")
+            ui.contains("width: parent.width - 55px - (root.profiles-drawer-open ? 220px : 0px);")
         );
         assert!(ui.contains("interactive: root.connected;"));
         assert!(ui.contains("enabled: root.connected;"));

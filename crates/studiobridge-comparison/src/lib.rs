@@ -11,7 +11,8 @@ mod worker;
 
 pub use worker::{
     COMMAND_CAPACITY, Command, CommandKind, CommandSender, ComparisonMode, ComparisonWorker,
-    Controls, DiagnosticKind, SendCommandError, Snapshot, TerminalEvent,
+    Controls, Destination, DestinationAcknowledgement, DestinationKind, DestinationSnapshot,
+    DiagnosticKind, SendCommandError, Snapshot, TerminalEvent,
 };
 
 pub const SAMPLE_RATE: usize = 48_000;

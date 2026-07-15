@@ -233,3 +233,63 @@ test("rejects weakening comparison teardown, thread, or scrubbing boundaries", (
     expectFailure(sources, expected);
   }
 });
+
+test("rejects public comparison sample ingress and non-Fake worker constructors", () => {
+  for (const [addition, expected] of [
+    ["impl ComparisonWorker { pub fn inject_samples(&self, samples: &[f32]) {} }", "publicly exposes raw samples through inject_samples"],
+    ["impl ComparisonWorker { pub fn expose_samples(&self) -> Vec<f32> { vec![] } }", "publicly exposes raw samples through expose_samples"],
+    ["pub struct SampleCommand { pub samples: Vec<f32> }", "public type SampleCommand exposes raw samples"],
+    ["pub enum AddedCommand { Safe, Samples { values: Vec<f32> } }", "public type AddedCommand exposes raw samples"],
+    ["impl ComparisonWorker { pub fn spawn_linux(driver: LinuxDriver) -> Self { todo!() } }", "constructor spawn_linux accepts a non-Fake driver"],
+  ]) {
+    const sources = validSources();
+    sources["crates/studiobridge-comparison/src/worker.rs"] = sources["crates/studiobridge-comparison/src/worker.rs"].replace("#[cfg(test)]", `${addition}\n#[cfg(test)]`);
+    expectFailure(sources, expected);
+  }
+});
+
+test("rejects non-simulated comparison mode or label weakening", () => {
+  const mode = validSources();
+  mode["crates/studiobridge-comparison/src/worker.rs"] = mode["crates/studiobridge-comparison/src/worker.rs"].replace(
+    "pub enum ComparisonMode {\n    Simulated,",
+    "pub enum ComparisonMode {\n    Simulated,\n    Production,",
+  );
+  expectFailure(mode, "must not expose a non-simulated mode");
+
+  const label = validSources();
+  label["crates/studiobridge-comparison/src/worker.rs"] = label["crates/studiobridge-comparison/src/worker.rs"].replace(
+    'availability_label: "Simulated comparison"',
+    'availability_label: "Comparison available"',
+  );
+  expectFailure(label, "must retain the Simulated comparison label");
+});
+
+test("rejects bypassing destination-generation policy before playback dispatch", () => {
+  for (const [before, after, expected] of [
+    ["if !self.authorize_playback(destination_acknowledgement) {", "if false {", "must authorize destination generation before playback dispatch"],
+    ["if !snapshot.complete {", "if false {", "must fail closed on incomplete or inaudible snapshots"],
+    ["acknowledgement.snapshot == current", "true", "must reject stale destination generations and content"],
+    ["acknowledgement.confirmation_id,", "self.next_confirmation_id,", "must bind acknowledgements to a pending confirmation ID"],
+    ["TerminalEvent::DestinationConfirmationRequired", "TerminalEvent::Diagnostic", "must request confirmation without dispatching playback"],
+  ]) {
+    const sources = validSources();
+    sources["crates/studiobridge-comparison/src/worker.rs"] = sources["crates/studiobridge-comparison/src/worker.rs"].replace(before, after);
+    expectFailure(sources, expected);
+  }
+});
+
+test("rejects teardown and semantic snapshot regressions", () => {
+  for (const [before, after, expected] of [
+    ["let _ = self.owner_teardown.send(());", "let _ = &self.owner_teardown;", "must use the out-of-band teardown path"],
+    ["self.thread\n            .take()", "self.thread\n            .as_mut()", "must take and join the worker thread"],
+    ["handle.join().is_ok()", "true", "must take and join the worker thread"],
+    ["self.terminal.send(TerminalEvent::Snapshot(self.snapshot()))", "self.latest_timer.publish(self.snapshot())", "semantic snapshots must use the lossless terminal queue"],
+    ["if changed {\n            self.publish_semantic_snapshot();", "if changed {", "must publish authoritative snapshots after fail-closed transitions"],
+    ["self.engine.accept_capture(token, input);", "self.engine.accept_capture(token, input); return;", "capture completion must publish its semantic transition"],
+    ["self.engine.shutdown();", "self.engine.driver().active_stream_count();", "forced shutdown must scrub and deactivate"],
+  ]) {
+    const sources = validSources();
+    sources["crates/studiobridge-comparison/src/worker.rs"] = sources["crates/studiobridge-comparison/src/worker.rs"].replace(before, after);
+    expectFailure(sources, expected);
+  }
+});

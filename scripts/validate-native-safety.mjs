@@ -6,6 +6,7 @@ const REQUIRED_FILES = [
   "Cargo.toml",
   "crates/studiobridge-comparison/Cargo.toml",
   "crates/studiobridge-comparison/src/lib.rs",
+  "crates/studiobridge-comparison/src/worker.rs",
   "crates/studiobridge-beacn/src/lib.rs",
   "crates/studiobridge-daemon/src/main.rs",
   "crates/studiobridge-desktop/src/client.rs",
@@ -125,11 +126,41 @@ function dependencyNames(body) {
 // explanations may name forbidden integrations without creating false alarms.
 function rustCodeOnly(source) {
   return source
-    .replace(/r(#{0,16})"[\s\S]*?"\1/g, " ")
-    .replace(/"(?:\\.|[^"\\])*"/g, " ")
-    .replace(/'(?:\\.|[^'\\])'/g, " ")
     .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/\/\/[^\n]*/g, " ");
+    .replace(/\/\/[^\n]*/g, " ")
+    .replace(/(?<![A-Za-z0-9_])r(#{0,16})"[\s\S]*?"\1/g, " ")
+    .replace(/"(?:\\.|[^"\\])*"/g, " ")
+    .replace(/'(?:\\.|[^'\\])'/g, " ");
+}
+
+function rustNamedFunctionSection(source, name) {
+  const match = new RegExp(`\\b(?:pub(?:\\([^)]*\\))?\\s+)?(?:async\\s+)?fn\\s+${name}\\b`).exec(source);
+  if (!match) return "";
+  const bodyStart = source.indexOf("{", match.index + match[0].length);
+  const declarationEnd = source.indexOf(";", match.index + match[0].length);
+  if (bodyStart < 0 || (declarationEnd >= 0 && declarationEnd < bodyStart)) {
+    return source.slice(match.index, declarationEnd < 0 ? source.length : declarationEnd + 1);
+  }
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    else if (source[index] === "}" && --depth === 0) return source.slice(match.index, index + 1);
+  }
+  return source.slice(match.index);
+}
+
+function rustPublicItemSection(source, start) {
+  const bodyStart = source.indexOf("{", start);
+  const declarationEnd = source.indexOf(";", start);
+  if (bodyStart < 0 || (declarationEnd >= 0 && declarationEnd < bodyStart)) {
+    return source.slice(start, declarationEnd < 0 ? source.length : declarationEnd + 1);
+  }
+  let depth = 0;
+  for (let index = bodyStart; index < source.length; index += 1) {
+    if (source[index] === "{") depth += 1;
+    else if (source[index] === "}" && --depth === 0) return source.slice(start, index + 1);
+  }
+  return source.slice(start);
 }
 
 function rustFunctionSection(source, name) {
@@ -210,6 +241,60 @@ export function validateNativeSafety(files) {
   check(/pub\s+trait\s+AudioDriver\s*:\s*Send\s*\+\s*'static/.test(comparisonLib), "comparison AudioDriver must remain worker-thread safe");
   check(/fn\s+deactivate_all\s*\(\s*&mut\s+self\s*\)\s*;/.test(comparisonLib), "comparison AudioDriver must retain infallible ambiguous-stream teardown");
   check(/self\.samples\.zeroize\s*\(\s*\)/.test(comparisonLib), "comparison sample slots must use non-elidable zeroization");
+
+  const comparisonWorker = rustCodeOnly(read("crates/studiobridge-comparison/src/worker.rs"));
+  const productionWorker = comparisonWorker.split(/#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]/, 1)[0];
+  const publicWorkerFunctions = [...productionWorker.matchAll(/\bpub\s+fn\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^{};]*>)?\s*(\([^{};]*\)(?:\s*->\s*[^{};]+)?)/g)];
+  for (const [, name, signature] of publicWorkerFunctions) {
+    check(!/\bf32\b/.test(signature), `comparison worker publicly exposes raw samples through ${name}`);
+    if (/^(?:new|spawn|from|with)/.test(name)) {
+      check(/FakeAudioDriver/.test(signature), `comparison worker constructor ${name} accepts a non-Fake driver`);
+    }
+  }
+  for (const item of productionWorker.matchAll(/\bpub\s+(?:struct|enum|type)\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
+    check(!/\bf32\b/.test(rustPublicItemSection(productionWorker, item.index)), `comparison worker public type ${item[1]} exposes raw samples`);
+  }
+
+  const modeBody = comparisonWorker.match(/pub\s+enum\s+ComparisonMode\s*\{([^}]*)\}/)?.[1] ?? "";
+  const modeVariants = modeBody.match(/\b[A-Z][A-Za-z0-9_]*\b/g) ?? [];
+  check(modeVariants.length === 1 && modeVariants[0] === "Simulated", "comparison worker must not expose a non-simulated mode before production policy review");
+  const snapshotSection = rustNamedFunctionSection(comparisonWorker, "snapshot");
+  check(/mode\s*:\s*ComparisonMode\s*::\s*Simulated/.test(snapshotSection), "comparison snapshots must remain explicitly simulated");
+  check(/availability_label\s*:\s*"Simulated comparison"/.test(read("crates/studiobridge-comparison/src/worker.rs")), "comparison snapshots must retain the Simulated comparison label");
+
+  const processSection = rustNamedFunctionSection(comparisonWorker, "process");
+  const playbackAuthorization = processSection.indexOf("authorize_playback");
+  const authorizationRejection = processSection.indexOf("return false", playbackAuthorization);
+  const playbackDispatch = processSection.indexOf("Action::TogglePlay");
+  check(playbackAuthorization >= 0 && authorizationRejection > playbackAuthorization && playbackDispatch > authorizationRejection, "comparison worker must authorize destination generation before playback dispatch");
+  const destinationStatusSection = rustNamedFunctionSection(comparisonWorker, "destination_status");
+  check(/snapshot\.complete/.test(destinationStatusSection) && /DestinationKind\s*::\s*LocalMonitor/.test(destinationStatusSection), "comparison destination policy must fail closed on incomplete or inaudible snapshots");
+  const authorizePlaybackSection = rustNamedFunctionSection(comparisonWorker, "authorize_playback");
+  check(/destination_status\s*\(\s*\)/.test(authorizePlaybackSection), "comparison playback authorization must consult the current destination snapshot");
+  check(/pending_confirmation\.as_ref\s*\(\s*\)/.test(authorizePlaybackSection) && /acknowledgement\.confirmation_id/.test(authorizePlaybackSection), "comparison playback authorization must bind acknowledgements to a pending confirmation ID");
+  check(/acknowledgement\.snapshot\s*==\s*current/.test(authorizePlaybackSection), "comparison playback authorization must reject stale destination generations and content");
+  check(/DestinationConfirmationRequired/.test(authorizePlaybackSection) && /false\s*$/.test(authorizePlaybackSection.replace(/\}\s*$/, "").trim()), "comparison playback authorization must request confirmation without dispatching playback");
+
+  const semanticPublisher = rustNamedFunctionSection(comparisonWorker, "publish_semantic_snapshot");
+  const timerPublisher = rustNamedFunctionSection(comparisonWorker, "timer_tick");
+  check(/self\.terminal\.send\s*\(\s*TerminalEvent\s*::\s*Snapshot/.test(semanticPublisher), "comparison semantic snapshots must use the lossless terminal queue");
+  check(/latest_timer\.publish\s*\(/.test(timerPublisher), "comparison timer snapshots must use only the coalescing mailbox");
+  check(!/TerminalEvent\s*::\s*Snapshot/.test(timerPublisher), "comparison timer snapshots must not enter or overwrite the semantic queue");
+  check(/if\s+changed\s*\{\s*self\.publish_semantic_snapshot\s*\(\s*\)\s*;\s*\}/.test(processSection), "comparison worker must publish authoritative snapshots after fail-closed transitions");
+  const captureSection = rustNamedFunctionSection(comparisonWorker, "accept_capture");
+  const captureAccept = captureSection.indexOf("engine.accept_capture");
+  const capturePublish = captureSection.indexOf("publish_semantic_snapshot", captureAccept);
+  const captureEarlyReturn = captureSection.indexOf("return", captureAccept);
+  check(/semantic_signature/.test(captureSection) && captureAccept >= 0 && capturePublish > captureAccept && (captureEarlyReturn < 0 || captureEarlyReturn > capturePublish), "comparison capture completion must publish its semantic transition");
+
+  const shutdownSection = rustNamedFunctionSection(comparisonWorker, "shutdown");
+  const dropSection = rustNamedFunctionSection(comparisonWorker, "drop");
+  check(/owner_teardown\.send\s*\(/.test(shutdownSection), "comparison owner shutdown must use the out-of-band teardown path");
+  check(/thread\s*\.\s*take\s*\(\s*\)/.test(shutdownSection) && /join\s*\(\s*\)/.test(shutdownSection), "comparison owner shutdown must take and join the worker thread");
+  check(/self\.shutdown\s*\(/.test(dropSection), "comparison worker Drop must force owner teardown and join");
+  const forceShutdownSection = rustNamedFunctionSection(comparisonWorker, "force_shutdown");
+  check(/engine\.shutdown\s*\(\s*\)/.test(forceShutdownSection), "comparison forced shutdown must scrub and deactivate the engine");
+  check(/publish_semantic_snapshot/.test(forceShutdownSection) && /ShutdownComplete/.test(forceShutdownSection), "comparison forced shutdown must publish the terminal snapshot and acknowledgement");
 
   for (const [serviceName, expectedCommand] of BASELINE_SERVICE_COMMANDS) {
     const service = read(serviceName);

@@ -1234,29 +1234,29 @@ component EnhancementDial inherits Rectangle {
     in property <bool> enabled-state;
     in property <bool> interactive;
     callback changed(float);
-    width: 82px;
+    width: 56px;
     height: 88px;
     background: transparent;
     Rectangle {
-        x: 10px;
-        y: 1px;
-        width: 62px;
-        height: 62px;
-        border-radius: 31px;
+        x: 5px;
+        y: 4px;
+        width: 46px;
+        height: 46px;
+        border-radius: 23px;
         background: #171719;
-        border-width: 5px;
+        border-width: 4px;
         border-color: root.interactive && root.enabled-state ? Theme.teal : #4a494f;
         Rectangle {
-            x: 27px;
+            x: 19px;
             y: 3px;
             width: 4px;
-            height: 16px;
+            height: 12px;
             background: root.interactive && root.enabled-state ? Theme.teal : Theme.quiet;
             border-radius: 2px;
         }
     }
-    Text { x: 0px; y: 65px; width: parent.width; text: root.label; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; }
-    Text { x: 0px; y: 78px; width: parent.width; text: root.value-label; color: root.interactive && root.enabled-state ? Theme.teal : Theme.quiet; font-size: 8px; horizontal-alignment: center; }
+    Text { x: 0px; y: 54px; width: parent.width; text: root.label; color: Theme.text; font-size: 8px; font-weight: 700; horizontal-alignment: center; }
+    Text { x: 0px; y: 68px; width: parent.width; text: root.value-label; color: root.interactive && root.enabled-state ? Theme.teal : Theme.quiet; font-size: 8px; horizontal-alignment: center; }
     dial-focus := FocusScope {
         width: parent.width;
         height: parent.height;
@@ -1377,13 +1377,13 @@ component EqTypeButton inherits Rectangle {
     in property <bool> selected;
     in property <bool> interactive;
     callback clicked;
-    width: 38px;
-    height: 34px;
+    width: 24px;
+    height: 28px;
     border-radius: 3px;
     background: !root.interactive ? #202023 : root.selected ? Theme.teal : #18181b;
     border-width: 1px;
     border-color: !root.interactive ? #35353a : root.selected ? #78e5df : #2c2c31;
-    Text { text: root.glyph; color: !root.interactive ? #66666b : root.selected ? #ffffff : Theme.text; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
+    Text { text: root.glyph; color: !root.interactive ? #66666b : root.selected ? #ffffff : Theme.text; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; }
     type-focus := FocusScope {
         width: parent.width; height: parent.height;
         accessible-role: button;
@@ -1478,8 +1478,8 @@ component ProcessorValueRow inherits Rectangle {
     callback decrease;
     callback increase;
     height: 25px;
-    Text { x: 0px; width: 82px; text: root.label; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
-    Text { x: 82px; width: parent.width - 110px; text: root.value-label; color: root.interactive ? Theme.teal : #747479; font-size: 10px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
+    Text { x: 0px; width: 22px; text: root.label; color: Theme.quiet; font-size: 8px; vertical-alignment: center; }
+    Text { x: 22px; width: parent.width - 50px; text: root.value-label; color: root.interactive ? Theme.teal : #747479; font-size: 8px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
     Text {
         x: parent.width - 24px; width: 10px; text: "‹"; color: root.interactive ? Theme.text : #55555a; font-size: 15px; horizontal-alignment: center; vertical-alignment: center;
         decrease-focus := FocusScope {
@@ -1877,7 +1877,7 @@ component ProfileRail inherits Rectangle {
     callback select-profile(string);
     callback delete-profile(string);
     callback expansion-changed(bool, bool);
-    width: 285px;
+    width: 220px;
     background: #242427;
     border-width: 1px;
     border-color: Theme.border;
@@ -2002,14 +2002,14 @@ component AddSourceRow inherits Rectangle {
 export component MainWindow inherits Window {
     title: "StudioBridge";
     icon: @image-url("../assets/studiobridge.svg");
-    // BEACN's measured outer default is 1404x810 on Windows. Native window
+    // BEACN's measured outer default and minimum are 946x810 on Windows. Native window
     // decoration adds 2px horizontally and 32px vertically to this client.
-    preferred-width: 1402px;
+    preferred-width: 944px;
     preferred-height: 778px;
-    min-width: 1120px;
-    min-height: 700px;
+    min-width: 944px;
+    min-height: 778px;
     background: Theme.background;
-    init => { root.width = 1402px; root.height = 778px; }
+    init => { root.width = 944px; root.height = 778px; }
 
     in property <[SourceModel]> sources;
     in property <[RouteModel]> routes;
@@ -2121,8 +2121,8 @@ export component MainWindow inherits Window {
     in-out property <bool> studio-profiles-expanded: true;
     in-out property <bool> mixer-profiles-expanded: true;
     in-out property <bool> profiles-drawer-open: true;
-    out property <length> settings-content-width: root.profiles-drawer-open ? 684px : 865px;
-    out property <length> settings-left-padding: root.profiles-drawer-open ? 44px : 55px;
+    out property <length> settings-content-width: 440px;
+    out property <length> settings-left-padding: 29px;
     in-out property <bool> legal-dialog-open: false;
     in-out property <bool> profile-save-confirm-open: false;
     in-out property <string> pending-profile-save: "";
@@ -2212,7 +2212,7 @@ export component MainWindow inherits Window {
             spacing: 0px;
             vertical-stretch: 1;
             Rectangle {
-            width: 72px;
+            width: 55px;
             background: #171719;
             border-width: 1px;
             border-color: Theme.border;
@@ -2353,8 +2353,7 @@ export component MainWindow inherits Window {
                             // The native BEACN viewport ends after Personal and
                             // Audience. Extra StudioBridge buses remain reachable
                             // by scrolling this device region horizontally.
-                            width: 812px;
-                            horizontal-stretch: root.profiles-drawer-open ? 0 : 1;
+                            horizontal-stretch: 1;
                             height: parent.height;
                             viewport-width: root.targets.length * 403px + 12px;
                             viewport-height: parent.height;
@@ -2379,7 +2378,6 @@ export component MainWindow inherits Window {
                                 }
                             }
                         }
-                        Rectangle { horizontal-stretch: 1; background: transparent; }
                     }
                 }
 
@@ -2398,7 +2396,7 @@ export component MainWindow inherits Window {
                     spacing: 3px;
                     vertical-stretch: 1;
                     Rectangle {
-                        width: 250px;
+                        width: 218px;
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
                             padding: 8px; spacing: 2px;
@@ -2417,7 +2415,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     Rectangle {
-                        width: 250px;
+                        width: 218px;
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
                             padding: 8px; spacing: 2px;
@@ -2444,8 +2442,8 @@ export component MainWindow inherits Window {
                         }
                     }
                     Rectangle {
-                        width: 250px;
-                        horizontal-stretch: root.profiles-drawer-open ? 0 : 1;
+                        width: 218px;
+                        horizontal-stretch: 1;
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
                             padding: 9px; spacing: 2px;
@@ -2595,7 +2593,7 @@ export component MainWindow inherits Window {
                 width: parent.width; height: parent.height;
                 spacing: 0px;
                 VerticalLayout {
-                    width: 897px;
+                    width: 522px;
                     horizontal-stretch: 1;
                     spacing: 0px;
                     Rectangle {
@@ -2668,7 +2666,7 @@ export component MainWindow inherits Window {
                     height: 150px;
                     spacing: 3px;
                     Rectangle {
-                        width: 438px;
+                        width: 258px;
                         horizontal-stretch: 1;
                         background: Theme.panel;
                         border-width: 1px;
@@ -2677,7 +2675,7 @@ export component MainWindow inherits Window {
                             padding: 8px;
                             spacing: 8px;
                             VerticalLayout {
-                                width: 150px;
+                                width: 82px;
                                 spacing: 5px;
                                 HorizontalLayout {
                                     height: 25px; spacing: 4px;
@@ -2693,7 +2691,7 @@ export component MainWindow inherits Window {
                                 horizontal-stretch: 1;
                                 spacing: 5px;
                                 GridLayout {
-                                    width: 120px; spacing: 3px;
+                                    width: 78px; spacing: 3px;
                                     EqTypeButton { row: 0; col: 0; glyph: "⌒"; label: "Low-pass filter"; selected: root.eq-band-type == "low_pass"; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("low_pass"); } }
                                     EqTypeButton { row: 0; col: 1; glyph: "⌊"; label: "Low shelf"; selected: root.eq-band-type == "low_shelf"; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("low_shelf"); } }
                                     EqTypeButton { row: 0; col: 2; glyph: "⌁"; label: "Notch filter"; selected: root.eq-band-type == "notch"; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("notch"); } }
@@ -2721,7 +2719,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     Rectangle {
-                        width: 203px;
+                        width: 130px;
                         background: Theme.panel;
                         border-width: 1px;
                         border-color: root.dsp-selected-module == "enhancement_suite" ? Theme.teal : Theme.border;
@@ -2750,7 +2748,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     Rectangle {
-                        width: 201px;
+                        width: 128px;
                         background: Theme.panel;
                         border-width: 1px;
                         border-color: root.dsp-selected-module == "enhancement_suite" ? Theme.teal : Theme.border;
@@ -2779,7 +2777,7 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                         spacing: 0px;
                         ModuleTab { tab-width: 81px; label: "MIC SETUP"; module: "mic_setup"; selected: root.dsp-selected-module; interactive: root.daemon-connected; clicked(module) => { root.dsp-selected-module = module; } }
-                        ModuleTab { tab-width: 161px; label: "NOISE SUPPRESSION"; module: "noise_suppression"; selected: root.dsp-selected-module; interactive: root.daemon-connected; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
+                        ModuleTab { tab-width: 152px; label: "NOISE SUPPRESSION"; module: "noise_suppression"; selected: root.dsp-selected-module; interactive: root.daemon-connected; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
                         ModuleTab { tab-width: 80px; label: "EXPANDER"; module: "expander"; selected: root.dsp-selected-module; interactive: root.daemon-connected; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
                         ModuleTab { tab-width: 101px; label: "COMPRESSOR"; module: "compressor"; selected: root.dsp-selected-module; interactive: root.daemon-connected; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
                         ModuleTab { tab-width: 108px; label: "HEADPHONES"; module: "headphone_equalizer"; selected: root.dsp-selected-module; interactive: root.daemon-connected; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
@@ -3194,24 +3192,24 @@ export component MainWindow inherits Window {
                 Rectangle {
                     max-width: 1045px; height: 205px; background: transparent;
                     Rectangle {
-                        x: 13px; y: 4px; width: max(755px, parent.width - 290px); height: 185px;
+                        x: 8px; y: 4px; width: min(488px, parent.width - 16px); height: 185px;
                         background: #1f1f22; border-width: 1px; border-color: Theme.border;
-                        Image { x: 68px; y: 17px; width: 44px; height: 44px; source: @image-url("../assets/studiobridge.svg"); }
-                        Text { x: 158px; y: 25px; text: "Device Name:"; color: Theme.text; font-size: 10px; font-weight: 800; }
-                        Text { x: 158px; y: 43px; text: root.device-name; color: Theme.quiet; font-size: 9px; font-weight: 700; }
-                        Text { x: 110px; y: 79px; text: "Device Information"; color: Theme.text; font-size: 10px; font-weight: 800; }
-                        Text { x: 110px; y: 99px; text: "Serial Number:"; color: Theme.quiet; font-size: 9px; font-weight: 700; }
-                        Text { x: 285px; y: 99px; text: root.device-serial; color: Theme.text; font-size: 9px; font-weight: 700; }
-                        Text { x: 110px; y: 114px; text: "Firmware Version:"; color: Theme.quiet; font-size: 9px; font-weight: 700; }
-                        Text { x: 285px; y: 114px; text: root.device-firmware; color: Theme.text; font-size: 9px; font-weight: 700; }
+                        Image { x: 45px; y: 17px; width: 44px; height: 44px; source: @image-url("../assets/studiobridge.svg"); }
+                        Text { x: 103px; y: 25px; text: "Device Name:"; color: Theme.text; font-size: 10px; font-weight: 800; }
+                        Text { x: 103px; y: 43px; text: root.device-name; color: Theme.quiet; font-size: 9px; font-weight: 700; }
+                        Text { x: 72px; y: 79px; text: "Device Information"; color: Theme.text; font-size: 10px; font-weight: 800; }
+                        Text { x: 72px; y: 99px; text: "Serial Number:"; color: Theme.quiet; font-size: 9px; font-weight: 700; }
+                        Text { x: 182px; y: 99px; text: root.device-serial; color: Theme.text; font-size: 9px; font-weight: 700; }
+                        Text { x: 72px; y: 114px; text: "Firmware Version:"; color: Theme.quiet; font-size: 9px; font-weight: 700; }
+                        Text { x: 182px; y: 114px; text: root.device-firmware; color: Theme.text; font-size: 9px; font-weight: 700; }
                         Button {
-                            x: parent.width - 229px; y: 95px; width: 140px; height: 20px;
+                            x: parent.width - 148px; y: 95px; width: 90px; height: 20px;
                             text: "Legal and Regulatory";
                             clicked => { root.legal-dialog-open = true; }
                         }
-                        Text { x: 110px; y: 151px; text: "USB2 Driverless Mode"; color: Theme.quiet; font-size: 9px; font-weight: 700; }
-                        Text { x: parent.width - 250px; y: 151px; width: 105px; text: (root.driverless-mode ? "ON" : "OFF") + " · READ-ONLY"; color: Theme.amber; font-size: 8px; horizontal-alignment: right; }
-                        SettingCheckbox { x: parent.width - 135px; y: 148px; checked: root.driverless-mode; interactive: false; control-label: "USB2 Driverless Mode " + (root.driverless-mode ? "on" : "off") + ", read-only"; }
+                        Text { x: 72px; y: 151px; text: "USB2 Driverless Mode"; color: Theme.quiet; font-size: 9px; font-weight: 700; }
+                        Text { x: parent.width - 205px; y: 151px; width: 104px; text: (root.driverless-mode ? "ON" : "OFF") + " · READ-ONLY"; color: Theme.amber; font-size: 8px; horizontal-alignment: right; }
+                        SettingCheckbox { x: parent.width - 91px; y: 148px; checked: root.driverless-mode; interactive: false; control-label: "USB2 Driverless Mode " + (root.driverless-mode ? "on" : "off") + ", read-only"; }
                     }
                 }
                 Rectangle { vertical-stretch: 1; }
@@ -3224,7 +3222,7 @@ export component MainWindow inherits Window {
                     padding-top: 27px;
                     padding-bottom: 34px;
                     padding-left: root.settings-left-padding;
-                    padding-right: root.profiles-drawer-open ? 34px : 45px;
+                    padding-right: 25px;
                     spacing: 0px;
                     Text { height: 18px; text: "DEVICE POWER SETTINGS"; color: Theme.text; font-size: 10px; font-weight: 800; vertical-alignment: center; }
                     SettingRow { label: "Boot StudioBridge on System Startup"; checked: root.start-at-login; toggled(value) => { root.start-at-login = value; root.save-preferences(value, root.open-to-system-tray, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
@@ -3321,16 +3319,16 @@ export component MainWindow inherits Window {
     }
     if !root.daemon-connected && root.active-page <= 1: TouchArea {
         z: 89;
-        x: 72px;
+        x: 55px;
         y: 28px;
-        width: parent.width - 72px - (root.profiles-drawer-open ? 285px : 0px);
+        width: parent.width - 55px - (root.profiles-drawer-open ? 220px : 0px);
         height: parent.height - 52px;
         mouse-cursor: not-allowed;
     }
     if !root.daemon-connected: Rectangle {
         visible: root.active-page <= 1;
         z: 90;
-        x: 84px;
+        x: 67px;
         y: 42px;
         width: min(610px, parent.width - 108px);
         height: 104px;
