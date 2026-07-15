@@ -414,19 +414,27 @@ component MuteActionRow inherits Rectangle {
 
 component SelectorMenuRow inherits Rectangle {
     in property <string> label;
+    in property <bool> selected;
+    in property <bool> highlighted;
     callback activated;
     height: 24px;
-    background: row-touch.has-hover ? #3a393e : transparent;
+    background: root.highlighted || row-touch.has-hover ? #49474d : root.selected ? #343338 : transparent;
     row-focus := FocusScope {
         width: parent.width; height: parent.height;
         accessible-role: button;
-        accessible-label: root.label;
+        accessible-label: root.label + (root.selected ? ", selected" : "");
         key-pressed(event) => {
             if event.text == Key.Return || event.text == Key.Space {
                 root.activated();
                 return accept;
             }
             return reject;
+        }
+        Text {
+            x: 4px; width: 12px;
+            text: root.selected ? "✓" : "";
+            color: Theme.text; font-size: 10px; font-weight: 700;
+            horizontal-alignment: center; vertical-alignment: center;
         }
         Text {
             x: 20px; width: parent.width - 24px;
@@ -445,12 +453,13 @@ component BeacnSelector inherits Rectangle {
     in property <length> popup-width: root.width;
     in property <bool> selector-enabled: true;
     property <bool> current-valid: root.current-index >= 0 && root.current-index < root.model.length;
-    property <int> option-count: root.model.length - (root.current-valid ? 1 : 0);
+    property <int> option-count: root.model.length;
+    property <int> highlighted-index: root.current-valid ? root.current-index : 0;
     callback selected(int);
     height: 27px;
     background: root.selector-enabled ? #1b1b1e : #202023;
     border-width: 1px;
-    border-color: Theme.border;
+    border-color: selector-focus.has-focus ? Theme.teal : Theme.border;
 
     Text {
         x: 7px; width: parent.width - 34px;
@@ -461,7 +470,7 @@ component BeacnSelector inherits Rectangle {
         vertical-alignment: center; overflow: elide;
     }
     Rectangle { x: parent.width - 26px; width: 1px; height: parent.height; background: #303034; }
-    Text { x: parent.width - 25px; width: 25px; text: "v"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
+    Text { x: parent.width - 25px; width: 25px; text: selector-menu.is-open ? "^" : "v"; color: selector-focus.has-focus ? Theme.teal : Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
     selector-focus := FocusScope {
         width: parent.width; height: parent.height;
         enabled: root.selector-enabled;
@@ -472,19 +481,36 @@ component BeacnSelector inherits Rectangle {
             if event.text == Key.Return || event.text == Key.Space {
                 if selector-menu.is-open {
                     selector-menu.close();
+                    if root.highlighted-index >= 0 && root.highlighted-index < root.model.length && root.highlighted-index != root.current-index {
+                        root.selected(root.highlighted-index);
+                    }
                 } else if root.option-count > 0 {
+                    root.highlighted-index = root.current-valid ? root.current-index : 0;
                     selector-menu.show();
                 }
                 return accept;
             }
             if event.text == Key.DownArrow && root.model.length > 0 {
-                let next = root.current-index + 1 >= root.model.length ? 0 : root.current-index + 1;
-                root.selected(next);
+                if selector-menu.is-open {
+                    root.highlighted-index = root.highlighted-index + 1 >= root.model.length ? 0 : root.highlighted-index + 1;
+                } else {
+                    root.highlighted-index = root.current-valid ? root.current-index : 0;
+                    selector-menu.show();
+                }
                 return accept;
             }
             if event.text == Key.UpArrow && root.model.length > 0 {
-                let next = root.current-index <= 0 ? root.model.length - 1 : root.current-index - 1;
-                root.selected(next);
+                if selector-menu.is-open {
+                    root.highlighted-index = root.highlighted-index <= 0 ? root.model.length - 1 : root.highlighted-index - 1;
+                } else {
+                    root.highlighted-index = root.current-valid ? root.current-index : root.model.length - 1;
+                    selector-menu.show();
+                }
+                return accept;
+            }
+            if event.text == Key.Escape && selector-menu.is-open {
+                selector-menu.close();
+                root.highlighted-index = root.current-valid ? root.current-index : 0;
                 return accept;
             }
             return reject;
@@ -496,6 +522,7 @@ component BeacnSelector inherits Rectangle {
                 if selector-menu.is-open {
                     selector-menu.close();
                 } else if root.option-count > 0 {
+                    root.highlighted-index = root.current-valid ? root.current-index : 0;
                     selector-menu.show();
                 }
             }
@@ -511,9 +538,16 @@ component BeacnSelector inherits Rectangle {
             VerticalLayout {
                 padding: 2px; spacing: 0px;
                 for item[index] in root.model: SelectorMenuRow {
-                    visible: index != root.current-index;
                     label: item;
-                    activated => { selector-menu.close(); root.selected(index); }
+                    selected: index == root.current-index;
+                    highlighted: index == root.highlighted-index;
+                    activated => {
+                        selector-menu.close();
+                        root.highlighted-index = index;
+                        if index != root.current-index {
+                            root.selected(index);
+                        }
+                    }
                 }
             }
         }

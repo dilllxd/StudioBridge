@@ -3532,6 +3532,34 @@ mod desktop_tests {
     }
 
     #[test]
+    fn shared_selector_contract_keeps_selection_safe_until_commit() {
+        let ui = include_str!("../ui/app-window.slint");
+
+        assert!(ui.contains("property <int> option-count: root.model.length;"));
+        assert!(ui.contains("height: root.option-count * 24px + 4px;"));
+        assert!(ui.contains("text: root.selected ? \"✓\" : \"\";"));
+        assert!(ui.contains("selected: index == root.current-index;"));
+        assert!(ui.contains("if index != root.current-index {"));
+        assert!(ui.contains("if event.text == Key.Escape && selector-menu.is-open"));
+        assert!(
+            ui.contains("root.highlighted-index = root.current-valid ? root.current-index : 0;")
+        );
+
+        let selector_start = ui.find("component BeacnSelector").unwrap();
+        let selector_end = ui[selector_start..]
+            .find("component InputDeviceRow")
+            .map(|offset| selector_start + offset)
+            .unwrap();
+        let selector = &ui[selector_start..selector_end];
+        let first_selection_commit = selector.find("root.selected(").unwrap();
+        let down_arrow = selector.find("Key.DownArrow").unwrap();
+        let up_arrow = selector.find("Key.UpArrow").unwrap();
+        assert!(first_selection_commit < down_arrow);
+        assert!(first_selection_commit < up_arrow);
+        assert!(!selector[down_arrow..up_arrow].contains("root.selected("));
+    }
+
+    #[test]
     fn add_source_menu_disables_existing_names_case_insensitively() {
         let source_names = "Mic\nGame\nLink In";
         assert!(!source_name_available("Mic", source_names));

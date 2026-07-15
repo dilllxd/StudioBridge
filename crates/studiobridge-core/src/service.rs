@@ -215,8 +215,44 @@ impl StudioBridgeService {
 
     /// Applies a saved mixer-only profile without touching BEACN hardware.
     pub async fn apply_mixer_profile(&self, desired: &MixerSnapshot) -> BridgeResult<()> {
-        let current = backend_call("PipeWeaver", self.mixer.snapshot()).await?;
-        validate_mixer_profile(desired, &current)?;
+        let before = backend_call("PipeWeaver", self.mixer.snapshot()).await?;
+        validate_mixer_profile(desired, &before)?;
+
+        let primary_error = match self.apply_mixer_profile_once(desired, &before).await {
+            Ok(()) => match backend_call("PipeWeaver", self.mixer.snapshot()).await {
+                Ok(applied) => match verify_mixer_profile(desired, &applied) {
+                    Ok(()) => return Ok(()),
+                    Err(error) => error,
+                },
+                Err(error) => error,
+            },
+            Err(error) => error,
+        };
+
+        let rollback_result = self.rollback_mixer_profile(&before).await;
+        match rollback_result {
+            Ok(()) => Err(BridgeError::Backend(format!(
+                "profile apply failed; the previous mixer state was restored: {primary_error}"
+            ))),
+            Err(rollback_error) => Err(BridgeError::Backend(format!(
+                "profile apply failed and rollback could not restore the previous mixer state; apply error: {primary_error}; rollback error: {rollback_error}"
+            ))),
+        }
+    }
+
+    async fn rollback_mixer_profile(&self, before: &MixerSnapshot) -> BridgeResult<()> {
+        let partial = backend_call("PipeWeaver", self.mixer.snapshot()).await?;
+        validate_mixer_profile(before, &partial)?;
+        self.apply_mixer_profile_once(before, &partial).await?;
+        let restored = backend_call("PipeWeaver", self.mixer.snapshot()).await?;
+        verify_mixer_profile(before, &restored)
+    }
+
+    async fn apply_mixer_profile_once(
+        &self,
+        desired: &MixerSnapshot,
+        current: &MixerSnapshot,
+    ) -> BridgeResult<()> {
         // Remove sources which are not part of the desired profile before
         // renaming or creating sources, so stale names cannot block either.
         for channel in &current.channels {
@@ -260,25 +296,37 @@ impl StudioBridgeService {
                     ))
                 })?;
             self.set_source_order(&current_channel.id, position).await?;
-            self.set_source_colour(&current_channel.id, &channel.colour)
+            if !mixer_colours_match(&current_channel.colour, &channel.colour) {
+                self.set_source_colour(&current_channel.id, &channel.colour)
+                    .await?;
+            }
+            if current_channel.personal_volume != channel.personal_volume {
+                self.set_volume(
+                    &current_channel.id,
+                    MixBus::Personal,
+                    channel.personal_volume,
+                )
                 .await?;
-            self.set_volume(
-                &current_channel.id,
-                MixBus::Personal,
-                channel.personal_volume,
-            )
-            .await?;
-            self.set_volume(
-                &current_channel.id,
-                MixBus::Audience,
-                channel.audience_volume,
-            )
-            .await?;
-            self.set_volume_linked(&current_channel.id, channel.volumes_linked)
+            }
+            if current_channel.audience_volume != channel.audience_volume {
+                self.set_volume(
+                    &current_channel.id,
+                    MixBus::Audience,
+                    channel.audience_volume,
+                )
                 .await?;
-            self.set_mute(&current_channel.id, channel.mute_state)
-                .await?;
-            if channel.source_kind == crate::MixerSourceKind::Physical {
+            }
+            if current_channel.volumes_linked != channel.volumes_linked {
+                self.set_volume_linked(&current_channel.id, channel.volumes_linked)
+                    .await?;
+            }
+            if current_channel.mute_state != channel.mute_state {
+                self.set_mute(&current_channel.id, channel.mute_state)
+                    .await?;
+            }
+            if channel.source_kind == crate::MixerSourceKind::Physical
+                && !descriptors_match(&channel.attached_devices, &current_channel.attached_devices)
+            {
                 if channel.attached_devices.is_empty() {
                     self.set_source_device(&current_channel.id, None).await?;
                 } else {
@@ -295,9 +343,16 @@ impl StudioBridgeService {
             }
         }
         for target in &desired.targets {
-            if current.targets.iter().any(|item| item.id == target.id) {
-                self.set_target_volume(&target.id, target.volume).await?;
-                self.set_target_mute(&target.id, target.muted).await?;
+            if let Some(current_target) = current.targets.iter().find(|item| item.id == target.id) {
+                if current_target.volume != target.volume {
+                    self.set_target_volume(&target.id, target.volume).await?;
+                }
+                if current_target.muted != target.muted {
+                    self.set_target_mute(&target.id, target.muted).await?;
+                }
+                if descriptors_match(&target.attached_devices, &current_target.attached_devices) {
+                    continue;
+                }
                 if target.attached_devices.is_empty() {
                     self.set_target_device(&target.id, None).await?;
                 } else if let Some(output) = current.physical_outputs.iter().find(|output| {
@@ -320,27 +375,13 @@ impl StudioBridgeService {
                 }
             }
         }
+        let current = backend_call("PipeWeaver", self.mixer.snapshot()).await?;
         for link in &current.link_outputs {
-            let saved_link = desired
-                .link_outputs
-                .iter()
-                .find(|saved| saved.slot == link.slot);
-            let desired_target = match saved_link {
-                // An explicit unassigned slot must remain unassigned. The
-                // target-descriptor fallback is only for older profile files.
-                Some(saved) => saved.target_id.as_deref(),
-                None => desired.targets.iter().find_map(|target| {
-                    target
-                        .attached_devices
-                        .iter()
-                        .any(|attached| {
-                            crate::beacn_link_output_slot("", attached) == Some(link.slot)
-                        })
-                        .then_some(target.id.as_str())
-                }),
-            };
-            self.set_link_output_assignment(link.node_id, desired_target)
-                .await?;
+            let desired_target = desired_link_target(desired, link.slot);
+            if link.target_id.as_deref() != desired_target {
+                self.set_link_output_assignment(link.node_id, desired_target)
+                    .await?;
+            }
         }
 
         let current = backend_call("PipeWeaver", self.mixer.snapshot()).await?;
@@ -388,8 +429,14 @@ impl StudioBridgeService {
                     current_channel_for_desired(desired_channel, &current.channels)
                         .map(|channel| channel.id.as_str())
                 });
-            self.set_application_route(&application.process, &application.name, desired_channel)
+            if application.channel_id.as_deref() != desired_channel {
+                self.set_application_route(
+                    &application.process,
+                    &application.name,
+                    desired_channel,
+                )
                 .await?;
+            }
         }
         if let Some(default_input) = desired.default_input.as_deref()
             && current.default_input.as_deref() != Some(default_input)
@@ -403,6 +450,171 @@ impl StudioBridgeService {
         }
         Ok(())
     }
+}
+
+fn verify_mixer_profile(desired: &MixerSnapshot, actual: &MixerSnapshot) -> BridgeResult<()> {
+    if desired.channels.len() != actual.channels.len() {
+        return Err(profile_verification_error("source count did not match"));
+    }
+    for (position, desired_channel) in desired.channels.iter().enumerate() {
+        let Some(actual_channel) = actual.channels.get(position) else {
+            return Err(profile_verification_error("source order did not match"));
+        };
+        if !mixer_channels_match(desired_channel, actual_channel)
+            || desired_channel.name != actual_channel.name
+            || !mixer_colours_match(&desired_channel.colour, &actual_channel.colour)
+            || desired_channel.personal_volume != actual_channel.personal_volume
+            || desired_channel.audience_volume != actual_channel.audience_volume
+            || desired_channel.mute_state != actual_channel.mute_state
+            || desired_channel.volumes_linked != actual_channel.volumes_linked
+            || !descriptors_match(
+                &desired_channel.attached_devices,
+                &actual_channel.attached_devices,
+            )
+        {
+            return Err(profile_verification_error(format!(
+                "source did not match at position {position}: {}",
+                desired_channel.name
+            )));
+        }
+    }
+
+    for desired_target in &desired.targets {
+        let Some(actual_target) = actual
+            .targets
+            .iter()
+            .find(|target| target.id == desired_target.id)
+        else {
+            return Err(profile_verification_error(format!(
+                "target was missing: {}",
+                desired_target.id
+            )));
+        };
+        if desired_target.name != actual_target.name
+            || desired_target.mix != actual_target.mix
+            || desired_target.volume != actual_target.volume
+            || desired_target.muted != actual_target.muted
+            || !descriptors_match(
+                &desired_target.attached_devices,
+                &actual_target.attached_devices,
+            )
+        {
+            return Err(profile_verification_error(format!(
+                "target did not match: {}",
+                desired_target.name
+            )));
+        }
+    }
+
+    let desired_routes = desired
+        .routes
+        .iter()
+        .filter_map(|route| {
+            let desired_channel = desired
+                .channels
+                .iter()
+                .find(|channel| channel.id == route.source_id)?;
+            let actual_channel = current_channel_for_desired(desired_channel, &actual.channels)?;
+            Some((actual_channel.id.clone(), route.target_id.clone()))
+        })
+        .collect::<HashSet<_>>();
+    let actual_routes = actual
+        .routes
+        .iter()
+        .map(|route| (route.source_id.clone(), route.target_id.clone()))
+        .collect::<HashSet<_>>();
+    if desired_routes != actual_routes {
+        return Err(profile_verification_error("routing matrix did not match"));
+    }
+
+    for actual_application in &actual.applications {
+        let desired_channel_id = desired
+            .applications
+            .iter()
+            .find(|application| {
+                application.process == actual_application.process
+                    && application.name == actual_application.name
+            })
+            .and_then(|application| application.channel_id.as_deref())
+            .and_then(|channel_id| {
+                let desired_channel = desired
+                    .channels
+                    .iter()
+                    .find(|channel| channel.id == channel_id)?;
+                current_channel_for_desired(desired_channel, &actual.channels)
+                    .map(|channel| channel.id.as_str())
+            });
+        if desired_channel_id != actual_application.channel_id.as_deref() {
+            return Err(profile_verification_error(format!(
+                "application route did not match: {}/{}",
+                actual_application.process, actual_application.name
+            )));
+        }
+    }
+
+    if desired.default_input != actual.default_input {
+        return Err(profile_verification_error("default input did not match"));
+    }
+    if desired.default_output != actual.default_output {
+        return Err(profile_verification_error("default output did not match"));
+    }
+    for actual_link in &actual.link_outputs {
+        if desired_link_target(desired, actual_link.slot) != actual_link.target_id.as_deref() {
+            return Err(profile_verification_error(format!(
+                "Link output {} did not match",
+                actual_link.slot
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn desired_link_target(desired: &MixerSnapshot, slot: u8) -> Option<&str> {
+    match desired.link_outputs.iter().find(|link| link.slot == slot) {
+        Some(link) => link.target_id.as_deref(),
+        None => desired.targets.iter().find_map(|target| {
+            target
+                .attached_devices
+                .iter()
+                .any(|attached| crate::beacn_link_output_slot("", attached) == Some(slot))
+                .then_some(target.id.as_str())
+        }),
+    }
+}
+
+fn descriptors_match(
+    desired: &[crate::MixerPhysicalDeviceDescriptor],
+    actual: &[crate::MixerPhysicalDeviceDescriptor],
+) -> bool {
+    desired.len() == actual.len()
+        && desired.iter().all(|descriptor| {
+            actual
+                .iter()
+                .any(|item| physical_device_matches(descriptor, item))
+        })
+}
+
+fn mixer_colours_match(left: &str, right: &str) -> bool {
+    fn normalized(colour: &str) -> Option<String> {
+        let hex = colour.strip_prefix('#').unwrap_or(colour);
+        match hex.len() {
+            6 if hex.chars().all(|character| character.is_ascii_hexdigit()) => {
+                Some(hex.to_ascii_lowercase())
+            }
+            3 if hex.chars().all(|character| character.is_ascii_hexdigit()) => Some(
+                hex.chars()
+                    .flat_map(|character| [character, character])
+                    .collect::<String>()
+                    .to_ascii_lowercase(),
+            ),
+            _ => None,
+        }
+    }
+    normalized(left).is_some_and(|left| normalized(right).as_deref() == Some(left.as_str()))
+}
+
+fn profile_verification_error(message: impl Into<String>) -> BridgeError {
+    BridgeError::Backend(format!("profile verification failed: {}", message.into()))
 }
 
 fn validate_mixer_profile(desired: &MixerSnapshot, current: &MixerSnapshot) -> BridgeResult<()> {
@@ -488,6 +700,22 @@ fn validate_mixer_profile(desired: &MixerSnapshot, current: &MixerSnapshot) -> B
             )));
         }
     }
+    for current_physical in current
+        .channels
+        .iter()
+        .filter(|channel| channel.source_kind == crate::MixerSourceKind::Physical)
+    {
+        if !desired
+            .channels
+            .iter()
+            .any(|channel| mixer_channels_match(channel, current_physical))
+        {
+            return Err(BridgeError::InvalidValue(format!(
+                "profile omits required physical source: {}",
+                current_physical.name
+            )));
+        }
+    }
 
     let target_ids = current
         .targets
@@ -505,6 +733,17 @@ fn validate_mixer_profile(desired: &MixerSnapshot, current: &MixerSnapshot) -> B
         if !target_ids.contains(target.id.as_str()) {
             return Err(BridgeError::InvalidValue(format!(
                 "profile target is unavailable: {}",
+                target.id
+            )));
+        }
+        let current_target = current
+            .targets
+            .iter()
+            .find(|item| item.id == target.id)
+            .expect("target id was validated above");
+        if target.name != current_target.name || target.mix != current_target.mix {
+            return Err(BridgeError::InvalidValue(format!(
+                "profile attempts to change fixed target identity: {}",
                 target.id
             )));
         }
@@ -757,12 +996,332 @@ fn physical_device_matches(
 mod tests {
     use super::*;
     use crate::{MockMixerBackend, MockStudioBackend};
+    use std::sync::Mutex as StdMutex;
+
+    #[derive(Debug, Clone, Copy)]
+    enum FaultMode {
+        FailBefore,
+        FailAfter,
+        Ignore,
+    }
+
+    #[derive(Debug)]
+    struct FaultPlan {
+        operation: &'static str,
+        mode: FaultMode,
+        remaining: usize,
+    }
+
+    #[derive(Clone)]
+    struct FaultInjectingMixer {
+        inner: Arc<MockMixerBackend>,
+        plan: Arc<StdMutex<Option<FaultPlan>>>,
+    }
+
+    impl Default for FaultInjectingMixer {
+        fn default() -> Self {
+            Self {
+                inner: Arc::new(MockMixerBackend::default()),
+                plan: Arc::default(),
+            }
+        }
+    }
+
+    impl FaultInjectingMixer {
+        fn inject(&self, operation: &'static str, mode: FaultMode, remaining: usize) {
+            *self.plan.lock().unwrap() = Some(FaultPlan {
+                operation,
+                mode,
+                remaining,
+            });
+        }
+
+        fn take_fault(&self, operation: &str) -> Option<FaultMode> {
+            let mut plan = self.plan.lock().unwrap();
+            let current = plan.as_mut()?;
+            if current.operation != operation || current.remaining == 0 {
+                return None;
+            }
+            if current.remaining != usize::MAX {
+                current.remaining -= 1;
+            }
+            Some(current.mode)
+        }
+
+        async fn mutate(
+            &self,
+            operation: &'static str,
+            mutation: impl Future<Output = BridgeResult<()>>,
+        ) -> BridgeResult<()> {
+            match self.take_fault(operation) {
+                Some(FaultMode::FailBefore) => Err(injected_failure(operation)),
+                Some(FaultMode::Ignore) => Ok(()),
+                Some(FaultMode::FailAfter) => {
+                    mutation.await?;
+                    Err(injected_failure(operation))
+                }
+                None => mutation.await,
+            }
+        }
+    }
+
+    fn injected_failure(operation: &str) -> BridgeError {
+        BridgeError::Backend(format!("injected {operation} failure"))
+    }
+
+    #[async_trait::async_trait]
+    impl MixerBackend for FaultInjectingMixer {
+        async fn snapshot(&self) -> BridgeResult<MixerSnapshot> {
+            self.inner.snapshot().await
+        }
+
+        async fn set_volume(&self, channel_id: &str, mix: MixBus, volume: u8) -> BridgeResult<()> {
+            self.mutate("set_volume", self.inner.set_volume(channel_id, mix, volume))
+                .await
+        }
+
+        async fn set_target_volume(&self, target_id: &str, volume: u8) -> BridgeResult<()> {
+            self.mutate(
+                "set_target_volume",
+                self.inner.set_target_volume(target_id, volume),
+            )
+            .await
+        }
+
+        async fn set_target_mute(&self, target_id: &str, muted: bool) -> BridgeResult<()> {
+            self.mutate(
+                "set_target_mute",
+                self.inner.set_target_mute(target_id, muted),
+            )
+            .await
+        }
+
+        async fn set_target_device(
+            &self,
+            target_id: &str,
+            device_node_id: Option<u32>,
+        ) -> BridgeResult<()> {
+            self.mutate(
+                "set_target_device",
+                self.inner.set_target_device(target_id, device_node_id),
+            )
+            .await
+        }
+
+        async fn set_source_device(
+            &self,
+            channel_id: &str,
+            device_node_id: Option<u32>,
+        ) -> BridgeResult<()> {
+            self.mutate(
+                "set_source_device",
+                self.inner.set_source_device(channel_id, device_node_id),
+            )
+            .await
+        }
+
+        async fn set_link_output_assignment(
+            &self,
+            output_node_id: u32,
+            target_id: Option<&str>,
+        ) -> BridgeResult<()> {
+            self.mutate(
+                "set_link_output_assignment",
+                self.inner
+                    .set_link_output_assignment(output_node_id, target_id),
+            )
+            .await
+        }
+
+        async fn set_default_input(&self, device_id: &str) -> BridgeResult<()> {
+            self.mutate("set_default_input", self.inner.set_default_input(device_id))
+                .await
+        }
+
+        async fn set_default_output(&self, device_id: &str) -> BridgeResult<()> {
+            self.mutate(
+                "set_default_output",
+                self.inner.set_default_output(device_id),
+            )
+            .await
+        }
+
+        async fn set_volume_linked(&self, channel_id: &str, linked: bool) -> BridgeResult<()> {
+            self.mutate(
+                "set_volume_linked",
+                self.inner.set_volume_linked(channel_id, linked),
+            )
+            .await
+        }
+
+        async fn set_mute(&self, channel_id: &str, state: MuteState) -> BridgeResult<()> {
+            self.mutate("set_mute", self.inner.set_mute(channel_id, state))
+                .await
+        }
+
+        async fn set_route(
+            &self,
+            source_id: &str,
+            target_id: &str,
+            enabled: bool,
+        ) -> BridgeResult<()> {
+            self.mutate(
+                "set_route",
+                self.inner.set_route(source_id, target_id, enabled),
+            )
+            .await
+        }
+
+        async fn create_source(&self, name: &str) -> BridgeResult<()> {
+            self.mutate("create_source", self.inner.create_source(name))
+                .await
+        }
+
+        async fn set_source_name(&self, source_id: &str, name: &str) -> BridgeResult<()> {
+            self.mutate(
+                "set_source_name",
+                self.inner.set_source_name(source_id, name),
+            )
+            .await
+        }
+
+        async fn set_source_colour(&self, source_id: &str, colour: &str) -> BridgeResult<()> {
+            self.mutate(
+                "set_source_colour",
+                self.inner.set_source_colour(source_id, colour),
+            )
+            .await
+        }
+
+        async fn remove_source(&self, source_id: &str) -> BridgeResult<()> {
+            self.mutate("remove_source", self.inner.remove_source(source_id))
+                .await
+        }
+
+        async fn set_source_order(&self, source_id: &str, position: usize) -> BridgeResult<()> {
+            self.mutate(
+                "set_source_order",
+                self.inner.set_source_order(source_id, position),
+            )
+            .await
+        }
+
+        async fn set_application_route(
+            &self,
+            process: &str,
+            application: &str,
+            channel_id: Option<&str>,
+        ) -> BridgeResult<()> {
+            self.mutate(
+                "set_application_route",
+                self.inner
+                    .set_application_route(process, application, channel_id),
+            )
+            .await
+        }
+    }
 
     fn service() -> StudioBridgeService {
         StudioBridgeService::new(
             Arc::new(MockStudioBackend::default()),
             Arc::new(MockMixerBackend::default()),
         )
+    }
+
+    fn fault_service() -> (StudioBridgeService, FaultInjectingMixer) {
+        let mixer = FaultInjectingMixer::default();
+        (
+            StudioBridgeService::new(
+                Arc::new(MockStudioBackend::default()),
+                Arc::new(mixer.clone()),
+            ),
+            mixer,
+        )
+    }
+
+    fn changed_profile(mut profile: MixerSnapshot) -> MixerSnapshot {
+        let game_position = profile
+            .channels
+            .iter()
+            .position(|channel| channel.id == "game")
+            .unwrap();
+        let mut game = profile.channels.remove(game_position);
+        game.name = "Games".into();
+        game.colour = "#123456".into();
+        game.personal_volume = 19;
+        game.audience_volume = 23;
+        game.volumes_linked = false;
+        game.mute_state = MuteState::MutedPersonal;
+        profile.channels.insert(0, game);
+
+        let replacement_input = profile
+            .physical_inputs
+            .iter()
+            .find(|device| device.node_id == 202)
+            .unwrap()
+            .descriptor
+            .clone();
+        profile
+            .channels
+            .iter_mut()
+            .find(|channel| channel.id == "microphone")
+            .unwrap()
+            .attached_devices = vec![replacement_input];
+
+        let replacement_output = profile
+            .physical_outputs
+            .iter()
+            .find(|device| device.node_id == 103)
+            .unwrap()
+            .descriptor
+            .clone();
+        let link_two_output = profile
+            .physical_outputs
+            .iter()
+            .find(|device| device.node_id == 104)
+            .unwrap()
+            .descriptor
+            .clone();
+        let headphones = profile
+            .targets
+            .iter_mut()
+            .find(|target| target.id == "headphones")
+            .unwrap();
+        headphones.volume = 17;
+        headphones.muted = true;
+        headphones.attached_devices = vec![replacement_output];
+        profile
+            .targets
+            .iter_mut()
+            .find(|target| target.id == "audience-mix")
+            .unwrap()
+            .attached_devices = vec![link_two_output];
+        profile
+            .link_outputs
+            .iter_mut()
+            .find(|link| link.slot == 2)
+            .unwrap()
+            .target_id = Some("audience-mix".into());
+
+        profile.routes = vec![
+            crate::MixerRoute {
+                source_id: "chat".into(),
+                target_id: "vod-track".into(),
+            },
+            crate::MixerRoute {
+                source_id: "system".into(),
+                target_id: "headphones".into(),
+            },
+        ];
+        profile
+            .applications
+            .iter_mut()
+            .find(|application| application.process == "discord")
+            .unwrap()
+            .channel_id = Some("system".into());
+        profile.default_input = Some("vod-track".into());
+        profile.default_output = Some("system".into());
+        profile
     }
 
     #[tokio::test]
@@ -989,6 +1548,119 @@ mod tests {
         let error = service.apply_mixer_profile(&invalid).await.unwrap_err();
         assert!(error.to_string().contains("physical input is unavailable"));
         assert_eq!(service.snapshot().await.unwrap().mixer, before);
+    }
+
+    #[tokio::test]
+    async fn profile_failures_at_multiple_phases_restore_the_previous_state() {
+        for (operation, mode) in [
+            ("set_source_name", FaultMode::FailAfter),
+            ("set_source_device", FaultMode::FailAfter),
+            ("set_target_device", FaultMode::FailBefore),
+            ("set_link_output_assignment", FaultMode::FailAfter),
+            ("set_route", FaultMode::FailAfter),
+            ("set_application_route", FaultMode::FailAfter),
+            ("set_default_output", FaultMode::FailAfter),
+        ] {
+            let (service, mixer) = fault_service();
+            let before = service.snapshot().await.unwrap().mixer;
+            let desired = changed_profile(before.clone());
+            mixer.inject(operation, mode, 1);
+
+            let error = service.apply_mixer_profile(&desired).await.unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("previous mixer state was restored"),
+                "unexpected error for {operation}: {error}"
+            );
+            let restored = service.snapshot().await.unwrap().mixer;
+            verify_mixer_profile(&before, &restored)
+                .unwrap_or_else(|error| panic!("rollback after {operation} failed: {error}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_but_ignored_mutation_is_detected_and_rolled_back() {
+        let (service, mixer) = fault_service();
+        let before = service.snapshot().await.unwrap().mixer;
+        let desired = changed_profile(before.clone());
+        mixer.inject("set_target_volume", FaultMode::Ignore, 1);
+
+        let error = service.apply_mixer_profile(&desired).await.unwrap_err();
+        assert!(error.to_string().contains("profile verification failed"));
+        assert!(
+            error
+                .to_string()
+                .contains("previous mixer state was restored")
+        );
+        verify_mixer_profile(&before, &service.snapshot().await.unwrap().mixer).unwrap();
+    }
+
+    #[tokio::test]
+    async fn source_reconciliation_failures_restore_the_previous_source_set() {
+        let (service, mixer) = fault_service();
+        let before = service.snapshot().await.unwrap().mixer;
+        let mut with_aux = before.clone();
+        let mut aux = with_aux
+            .channels
+            .iter()
+            .find(|channel| channel.id == "system")
+            .unwrap()
+            .clone();
+        aux.id = "aux-1".into();
+        aux.meter_id = "mock-source-aux-1".into();
+        aux.name = "Aux 1".into();
+        aux.applications.clear();
+        with_aux.channels.push(aux);
+        mixer.inject("create_source", FaultMode::FailAfter, 1);
+
+        let error = service.apply_mixer_profile(&with_aux).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("previous mixer state was restored")
+        );
+        verify_mixer_profile(&before, &service.snapshot().await.unwrap().mixer).unwrap();
+
+        let (service, mixer) = fault_service();
+        let before = service.snapshot().await.unwrap().mixer;
+        let mut without_music = before.clone();
+        without_music
+            .channels
+            .retain(|channel| channel.id != "music");
+        without_music
+            .routes
+            .retain(|route| route.source_id != "music");
+        without_music
+            .applications
+            .iter_mut()
+            .filter(|application| application.channel_id.as_deref() == Some("music"))
+            .for_each(|application| application.channel_id = None);
+        mixer.inject("remove_source", FaultMode::FailAfter, 1);
+
+        let error = service
+            .apply_mixer_profile(&without_music)
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("previous mixer state was restored")
+        );
+        verify_mixer_profile(&before, &service.snapshot().await.unwrap().mixer).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rollback_failure_is_never_reported_as_a_clean_restore() {
+        let (service, mixer) = fault_service();
+        let before = service.snapshot().await.unwrap().mixer;
+        let desired = changed_profile(before);
+        mixer.inject("set_volume", FaultMode::FailAfter, usize::MAX);
+
+        let error = service.apply_mixer_profile(&desired).await.unwrap_err();
+        assert!(error.to_string().contains("rollback could not restore"));
+        assert!(error.to_string().contains("apply error"));
+        assert!(error.to_string().contains("rollback error"));
     }
 
     #[tokio::test]
