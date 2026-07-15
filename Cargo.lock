@@ -5527,6 +5527,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "studiobridge-comparison"
+version = "0.1.0"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
 name = "studiobridge-core"
 version = "0.1.0"
 dependencies = [

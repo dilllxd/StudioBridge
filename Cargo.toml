@@ -6,6 +6,7 @@ members = [
     "crates/studiobridge-beacn",
     "crates/studiobridge-pipeweaver",
     "crates/studiobridge-desktop",
+    "crates/studiobridge-comparison",
 ]
 
 [workspace.package]
@@ -25,3 +26,4 @@ tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal", "s
 tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zeroize = "1.8"

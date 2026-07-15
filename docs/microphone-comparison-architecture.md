@@ -318,6 +318,14 @@ the hardware DSP.
 
 ## Staged implementation and test seams
 
+Current status: `studiobridge-comparison` now implements the dependency-light
+policy foundation for Stage 1 with fixed sample slots, deterministic fake audio,
+fail-closed stream lifecycle handling, endpoint-generation rejection, and
+non-elidable sample scrubbing. It is not connected to the desktop UI or any
+audio backend. Production playback remains prohibited until the worker layer
+binds a read-only destination snapshot and its generation to every Play command.
+The feature therefore remains unavailable in normal builds.
+
 ### Stage 1 — Windows-verifiable policy core
 
 1. Add the cross-platform state/buffer crate and deterministic fake driver.

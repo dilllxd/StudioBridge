@@ -36,6 +36,18 @@ test("rejects version drift in distribution metadata", () => {
   assert(result.failures.some((failure) => failure.includes("RPM version")));
 });
 
+test("rejects distribution sources that are not pinned to their version tags", () => {
+  const sources = validSources();
+  sources["packaging/arch/PKGBUILD"] = sources["packaging/arch/PKGBUILD"].replace("#tag=v$pkgver", "#branch=main");
+  sources["packaging/rpm/studiobridge.spec"] = sources["packaging/rpm/studiobridge.spec"].replace(
+    "/refs/tags/v%{version}/StudioBridge-%{version}.tar.gz",
+    "/refs/heads/main/StudioBridge-main.tar.gz",
+  );
+  const result = validatePackaging(sources);
+  assert(result.failures.some((failure) => failure.includes("Arch source must be pinned")));
+  assert(result.failures.some((failure) => failure.includes("RPM source must be pinned")));
+});
+
 test("rejects an incomplete staged package manifest", () => {
   const sources = validSources();
   sources["scripts/stage-package-root.sh"] = sources["scripts/stage-package-root.sh"].replace("/usr/share/metainfo/io.github.dilllxd.StudioBridge.metainfo.xml", "/usr/share/metainfo/missing.xml");
@@ -63,4 +75,41 @@ test("rejects a package hook that starts the user service", () => {
   sources["packaging/debian/postinst"] += "\nsystemctl --user enable --now studiobridge.service\n";
   const result = validatePackaging(sources);
   assert(result.failures.some((failure) => failure.includes("must not start a per-user service")));
+});
+
+test("rejects unsafe flags or service activation in distribution recipes", () => {
+  for (const name of ["packaging/arch/PKGBUILD", "packaging/rpm/studiobridge.spec"]) {
+    const unsafe = validSources();
+    unsafe[name] += "\nstudiobridge-daemon --allow-hardware-writes\n";
+    assert(validatePackaging(unsafe).failures.some((failure) => failure.includes(`${name} contains forbidden argument`)));
+
+    const activating = validSources();
+    activating[name] += "\nsystemctl --user enable --now studiobridge.service\n";
+    assert(validatePackaging(activating).failures.some((failure) => failure.includes(`${name} must not start or enable`)));
+  }
+});
+
+test("rejects CI artifact upload that bypasses the verified staging directory", () => {
+  const sources = validSources();
+  sources[".github/workflows/verify.yml"] = sources[".github/workflows/verify.yml"].replace(
+    "path: verified-artifacts/*",
+    "path: dist/*",
+  );
+  const result = validatePackaging(sources);
+  assert(result.failures.some((failure) => failure.includes("upload only files emitted into verified-artifacts")));
+});
+
+test("rejects mismatched desktop and AppStream identities", () => {
+  const sources = validSources();
+  sources["packaging/desktop/studiobridge.desktop"] = sources["packaging/desktop/studiobridge.desktop"].replace(
+    "Icon=studiobridge",
+    "Icon=unrelated-app",
+  );
+  sources["packaging/metainfo/io.github.dilllxd.StudioBridge.metainfo.xml"] = sources["packaging/metainfo/io.github.dilllxd.StudioBridge.metainfo.xml"].replace(
+    "studiobridge.desktop</launchable>",
+    "unrelated.desktop</launchable>",
+  );
+  const result = validatePackaging(sources);
+  assert(result.failures.some((failure) => failure.includes("icon must match")));
+  assert(result.failures.some((failure) => failure.includes("staged desktop launcher")));
 });

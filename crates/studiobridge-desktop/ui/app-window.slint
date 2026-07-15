@@ -1652,9 +1652,9 @@ component SettingCheckbox inherits Rectangle {
     in property <bool> interactive: true;
     in property <string> control-label: "Toggle setting";
     callback toggled(bool);
-    width: 18px;
-    height: 18px;
-    border-radius: 4px;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
     border-width: 1px;
     border-color: !root.interactive ? #47474c : root.checked ? #52ceca : #717177;
     background: !root.interactive ? #242427 : root.checked ? #31bcb9 : #2b2b2e;
@@ -1689,13 +1689,13 @@ component SettingRow inherits Rectangle {
     in property <bool> interactive: true;
     in-out property <bool> checked;
     callback toggled(bool);
-    height: 40px;
+    height: root.detail == "" ? 22px : 32px;
     background: transparent;
     Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: #2f2f33; }
-    Text { x: 4px; y: root.detail == "" ? 0px : 4px; height: root.detail == "" ? parent.height : 16px; width: parent.width - 158px; text: root.label; color: root.interactive ? Theme.quiet : #85858b; font-size: 11px; font-weight: 700; vertical-alignment: center; overflow: elide; }
-    if root.detail != "": Text { x: 4px; y: 21px; height: 14px; width: parent.width - 158px; text: root.detail; color: #77777d; font-size: 8px; vertical-alignment: center; overflow: elide; }
-    if !root.interactive: Text { x: parent.width - 142px; y: 0px; width: 104px; height: parent.height; text: "UNAVAILABLE"; color: Theme.amber; font-size: 8px; font-weight: 800; horizontal-alignment: right; vertical-alignment: center; }
-    SettingCheckbox { x: parent.width - 26px; y: 11px; checked: root.checked; interactive: root.interactive; control-label: root.interactive ? root.label : root.label + ", unavailable. " + root.detail; toggled(value) => { root.checked = value; root.toggled(value); } }
+    Text { x: 2px; y: root.detail == "" ? 0px : 2px; height: root.detail == "" ? parent.height : 15px; width: parent.width - 144px; text: root.label; color: root.interactive ? Theme.quiet : #85858b; font-size: 9px; font-weight: 700; vertical-alignment: center; overflow: elide; }
+    if root.detail != "": Text { x: 2px; y: 16px; height: 12px; width: parent.width - 144px; text: root.detail; color: #77777d; font-size: 8px; vertical-alignment: center; overflow: elide; }
+    if !root.interactive: Text { x: parent.width - 126px; y: 0px; width: 96px; height: parent.height; text: "UNAVAILABLE"; color: Theme.amber; font-size: 8px; font-weight: 800; horizontal-alignment: right; vertical-alignment: center; }
+    SettingCheckbox { x: parent.width - 20px; y: (parent.height - self.height) / 2; checked: root.checked; interactive: root.interactive; control-label: root.interactive ? root.label : root.label + ", unavailable. " + root.detail; toggled(value) => { root.checked = value; root.toggled(value); } }
 }
 
 component ModuleTab inherits Rectangle {
@@ -3221,25 +3221,25 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     x: 0px;
                     width: root.settings-content-width;
-                    padding-top: 34px;
+                    padding-top: 27px;
                     padding-bottom: 34px;
                     padding-left: root.settings-left-padding;
                     padding-right: root.profiles-drawer-open ? 34px : 45px;
-                    spacing: 4px;
-                    Text { text: "DEVICE POWER SETTINGS"; color: Theme.text; font-size: 12px; font-weight: 800; }
+                    spacing: 0px;
+                    Text { height: 18px; text: "DEVICE POWER SETTINGS"; color: Theme.text; font-size: 10px; font-weight: 800; vertical-alignment: center; }
                     SettingRow { label: "Boot StudioBridge on System Startup"; checked: root.start-at-login; toggled(value) => { root.start-at-login = value; root.save-preferences(value, root.open-to-system-tray, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
                     SettingRow { label: "Open StudioBridge to System Tray"; checked: root.open-to-system-tray; toggled(value) => { root.open-to-system-tray = value; root.save-preferences(root.start-at-login, value, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
-                    Text { text: "STUDIOBRIDGE APP SETTINGS"; color: Theme.text; font-size: 12px; font-weight: 800; }
+                    Text { height: 18px; text: "STUDIOBRIDGE APP SETTINGS"; color: Theme.text; font-size: 10px; font-weight: 800; vertical-alignment: center; }
                     SettingRow { label: "Show Save Confirmation Window"; checked: root.save-confirmation; toggled(value) => { root.save-confirmation = value; root.save-preferences(root.start-at-login, root.open-to-system-tray, value, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
-                    Text { text: "STUDIOBRIDGE BETA OPT-IN"; color: Theme.text; font-size: 12px; font-weight: 800; }
+                    Text { height: 18px; text: "STUDIOBRIDGE BETA OPT-IN"; color: Theme.text; font-size: 10px; font-weight: 800; vertical-alignment: center; }
                     SettingRow { label: "Opt-In to StudioBridge Public Beta Releases"; detail: "Update channels are not implemented in this build."; interactive: false; checked: root.beta-opt-in; }
-                    Text { text: "STUDIOBRIDGE MIXING SUITE"; color: Theme.text; font-size: 12px; font-weight: 800; }
+                    Text { height: 18px; text: "STUDIOBRIDGE MIXING SUITE"; color: Theme.text; font-size: 10px; font-weight: 800; vertical-alignment: center; }
                     SettingRow { label: "StudioBridge Mixing Suite Enabled"; detail: "This compatibility preference has no runtime consumer yet."; interactive: false; checked: root.mixing-suite-enabled; }
-                    Text { text: "LINUX AUDIO SETTINGS"; color: Theme.text; font-size: 12px; font-weight: 800; }
+                    Text { height: 18px; text: "LINUX AUDIO SETTINGS"; color: Theme.text; font-size: 10px; font-weight: 800; vertical-alignment: center; }
                     SettingRow { label: "Automatic Linux Default Device Reset"; checked: root.automatic-default-reset; toggled(value) => { root.automatic-default-reset = value; root.save-preferences(root.start-at-login, root.open-to-system-tray, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, value, root.meter-crossfade); } }
-                    Text { text: "MIXER SETTINGS"; color: Theme.text; font-size: 12px; font-weight: 800; }
+                    Text { height: 18px; text: "MIXER SETTINGS"; color: Theme.text; font-size: 10px; font-weight: 800; vertical-alignment: center; }
                     SettingRow { label: "Enable Crossfade on Profile Switching"; detail: "Profile-switch crossfade is not implemented."; interactive: false; checked: root.meter-crossfade; }
-                    Text { text: "HOTKEY ASSIGNMENTS"; color: Theme.text; font-size: 12px; font-weight: 800; }
+                    Text { height: 22px; text: "HOTKEY ASSIGNMENTS"; color: Theme.text; font-size: 10px; font-weight: 800; vertical-alignment: center; }
                     for hotkey in root.hotkeys: VerticalLayout {
                         spacing: 1px;
                         if hotkey.section != "": Text { height: 18px; text: hotkey.section; color: Theme.text; font-size: 10px; font-weight: 800; }

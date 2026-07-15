@@ -3,10 +3,12 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REQUIRED_FILES = [
+  ".github/workflows/verify.yml",
   "Cargo.toml",
   "web/package.json",
   "scripts/package-linux.sh",
   "scripts/stage-package-root.sh",
+  "scripts/verify.sh",
   "packaging/arch/PKGBUILD",
   "packaging/arch/studiobridge.install",
   "packaging/debian/control.in",
@@ -78,12 +80,23 @@ export function validatePackaging(files) {
   const rpmVersion = field(read("packaging/rpm/studiobridge.spec"), "Version");
   check(archVersion === workspaceVersion, `Arch version ${archVersion ?? "(missing)"} does not match workspace ${workspaceVersion ?? "(missing)"}`);
   check(rpmVersion === workspaceVersion, `RPM version ${rpmVersion ?? "(missing)"} does not match workspace ${workspaceVersion ?? "(missing)"}`);
+  check(read("packaging/arch/PKGBUILD").includes('#tag=v$pkgver'), "Arch source must be pinned to the package version tag");
+  check(read("packaging/rpm/studiobridge.spec").includes("/refs/tags/v%{version}/StudioBridge-%{version}.tar.gz"), "RPM source must be pinned to the package version tag");
+  check(read("packaging/rpm/studiobridge.spec").includes("%autosetup -n StudioBridge-%{version}"), "RPM setup directory must match the tagged GitHub source archive");
   check(read("packaging/debian/control.in").includes("Version: @VERSION@"), "Debian control must receive the workspace version placeholder");
   check(read("packaging/debian/control.in").includes("Architecture: @ARCH@"), "Debian control must receive the detected architecture placeholder");
 
   const packageScript = read("scripts/package-linux.sh");
   check(packageScript.includes("workspace\\.package"), "package-linux.sh must read the workspace package version");
   check(!/version=[^\n]*0\.1\.0/.test(packageScript), "package-linux.sh must not silently fall back to a hard-coded version");
+
+  const workflow = read(".github/workflows/verify.yml");
+  check(workflow.includes("STUDIOBRIDGE_VERIFIED_ARTIFACT_DIR: ${{ github.workspace }}/verified-artifacts"), "Linux CI must stage only verified package artifacts in the reviewed directory");
+  check(workflow.includes("run: bash scripts/verify.sh"), "Linux CI must run the complete verifier before artifact upload");
+  check(/path:\s*verified-artifacts\/\*/.test(workflow), "Linux CI must upload only files emitted into verified-artifacts");
+  check(/if-no-files-found:\s*error/.test(workflow), "Linux CI must fail when package verification emits no artifacts");
+  const verifyScript = read("scripts/verify.sh");
+  check(verifyScript.includes('cp -- "${tar_packages[0]}" "${deb_packages[0]}" "$STUDIOBRIDGE_VERIFIED_ARTIFACT_DIR/"'), "the verifier must publish only its checked tar and Debian packages");
 
   const stageScript = read("scripts/stage-package-root.sh");
   for (const installedPath of STAGED_PATHS) {
@@ -123,6 +136,11 @@ export function validatePackaging(files) {
   for (const argument of FORBIDDEN_SERVICE_ARGUMENTS) {
     check(!desktop.includes(argument) && !autostart.includes(argument), `desktop metadata contains forbidden daemon argument ${argument}`);
   }
+  check(/^Icon=studiobridge$/m.test(desktop), "desktop launcher icon must match the staged studiobridge icon");
+  const metainfo = read("packaging/metainfo/io.github.dilllxd.StudioBridge.metainfo.xml");
+  check(metainfo.includes("<id>io.github.dilllxd.StudioBridge</id>"), "AppStream metadata must retain the stable application ID");
+  check(metainfo.includes('<launchable type="desktop-id">studiobridge.desktop</launchable>'), "AppStream metadata must point to the staged desktop launcher");
+  check(metainfo.includes("<binary>studiobridge-desktop</binary>"), "AppStream metadata must identify the staged desktop binary");
 
   for (const hookName of ["packaging/debian/postinst", "packaging/debian/postrm"]) {
     const hook = read(hookName);
@@ -141,6 +159,11 @@ export function validatePackaging(files) {
 
   for (const definition of ["packaging/arch/PKGBUILD", "packaging/rpm/studiobridge.spec"]) {
     check(read(definition).includes("scripts/stage-package-root.sh"), `${definition} must use the shared package staging script`);
+    check(read(definition).includes("cargo build --workspace --release --locked"), `${definition} must build the locked Rust workspace`);
+    for (const argument of FORBIDDEN_SERVICE_ARGUMENTS) {
+      check(!read(definition).includes(argument), `${definition} contains forbidden argument ${argument}`);
+    }
+    check(!/^\s*systemctl[^\n]*(?:enable|start)/m.test(read(definition)), `${definition} must not start or enable the user service from a root package transaction`);
   }
 
   return { failures, version: workspaceVersion, stagedPaths: STAGED_PATHS };
