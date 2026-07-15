@@ -4588,7 +4588,7 @@ mod desktop_tests {
         assert!(ui.contains("x: 28px; y: 20px; width: parent.width - 33px;"));
         assert!(ui.contains("x: parent.width - 174px; y: 5px; width: 78px;"));
         assert!(ui.contains("width: max(755px, parent.width - 290px);"));
-        assert!(ui.contains("x: parent.width - 229px; y: 145px;"));
+        assert!(ui.contains("x: parent.width - 229px; y: 95px;"));
 
         let conditional_stretch = "horizontal-stretch: root.profiles-drawer-open ? 0 : 1;";
         assert!(ui.matches(conditional_stretch).count() >= 2);

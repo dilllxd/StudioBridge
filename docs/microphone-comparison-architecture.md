@@ -321,10 +321,12 @@ the hardware DSP.
 Current status: `studiobridge-comparison` now implements the dependency-light
 policy foundation for Stage 1 with fixed sample slots, deterministic fake audio,
 fail-closed stream lifecycle handling, endpoint-generation rejection, and
-non-elidable sample scrubbing. It is not connected to the desktop UI or any
-audio backend. Production playback remains prohibited until the worker layer
-binds a read-only destination snapshot and its generation to every Play command.
-The feature therefore remains unavailable in normal builds.
+non-elidable sample scrubbing. A simulated-only worker now adds bounded commands,
+lossless semantic snapshots, coalesced frame-derived timers, and guaranteed
+owner teardown. It is not connected to the desktop UI or any audio backend.
+Production playback remains prohibited until a reviewed worker policy binds a
+read-only destination snapshot and its generation to every Play command. The
+feature therefore remains unavailable in normal builds.
 
 ### Stage 1 — Windows-verifiable policy core
 

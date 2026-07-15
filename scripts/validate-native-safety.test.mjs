@@ -168,3 +168,68 @@ test("does not ban explanatory labels, comments, or read-back properties", () =>
   const result = validateNativeSafety(sources);
   assert.deepEqual(result.failures, []);
 });
+
+test("rejects real comparison integration dependencies without banning test dependencies", () => {
+  for (const dependency of ["pipewire", "studiobridge-beacn", "reqwest"]) {
+    const sources = validSources();
+    const name = "crates/studiobridge-comparison/Cargo.toml";
+    sources[name] = sources[name].replace("[dependencies]", `[dependencies]\n${dependency} = "1"`);
+    expectFailure(sources, `forbidden runtime dependency ${dependency}`);
+  }
+
+  const testOnly = validSources();
+  testOnly["crates/studiobridge-comparison/Cargo.toml"] += "\n[dev-dependencies]\nproptest = \"1\"\n";
+  assert.deepEqual(validateNativeSafety(testOnly).failures, []);
+
+  const realDeviceTest = validSources();
+  realDeviceTest["crates/studiobridge-comparison/Cargo.toml"] += "\n[dev-dependencies]\npipewire = \"0.9\"\n";
+  expectFailure(realDeviceTest, "forbidden integration test dependency pipewire");
+
+  const targetSpecific = validSources();
+  targetSpecific["crates/studiobridge-comparison/Cargo.toml"] += "\n[target.'cfg(target_os = \"linux\")'.dependencies]\npipewire = \"0.9\"\n";
+  expectFailure(targetSpecific, "forbidden target.'cfg(target_os = \"linux\")'.dependencies dependency pipewire");
+});
+
+test("rejects production audio drivers and risky standard-library integration paths", () => {
+  for (const [code, expected] of [
+    ["struct LinuxDriver; impl AudioDriver for LinuxDriver {}", "production AudioDriver implementation LinuxDriver"],
+    ["struct QualifiedDriver; impl crate::AudioDriver for QualifiedDriver {}", "production AudioDriver implementation QualifiedDriver"],
+    ["fn probe() { let _ = std::fs::read(\"/proc/asound/cards\"); }", "filesystem, network, process, environment, or I/O API"],
+    ["fn open() { pipewire::init(); }", "device, audio, control, or network crate path"],
+    ["unsafe { open_audio_device(); }", "unsafe integration code"],
+  ]) {
+    const sources = validSources();
+    sources["crates/studiobridge-comparison/src/linux.rs"] = code;
+    expectFailure(sources, expected);
+  }
+});
+
+test("allows comparison safety prose, fake drivers, and mutation-test strings", () => {
+  const sources = validSources();
+  sources["crates/studiobridge-comparison/src/fake_test_support.rs"] = `
+    // pipewire::Stream and std::fs are forbidden in production.
+    const EXPLANATION: &str = "reqwest and BEACN Link/DSP are intentionally absent";
+    struct TestAudioDriver;
+    impl AudioDriver for TestAudioDriver {}
+  `;
+  assert.deepEqual(validateNativeSafety(sources).failures, []);
+});
+
+test("rejects comparison production consumption before destination policy review", () => {
+  const sources = validSources();
+  sources["crates/studiobridge-desktop/Cargo.toml"] += '\nstudiobridge-comparison = { path = "../studiobridge-comparison" }\n';
+  expectFailure(sources, "wires the comparison core into production before destination-generation policy review");
+});
+
+test("rejects weakening comparison teardown, thread, or scrubbing boundaries", () => {
+  for (const [before, after, expected] of [
+    ["pub trait AudioDriver: Send + 'static", "pub trait AudioDriver", "worker-thread safe"],
+    ["fn deactivate_all(&mut self);", "fn deactivate_all(&mut self) -> Result<(), AudioError>;", "infallible ambiguous-stream teardown"],
+    ["self.samples.zeroize();", "self.samples.fill(0.0);", "non-elidable zeroization"],
+  ]) {
+    const sources = validSources();
+    const name = "crates/studiobridge-comparison/src/lib.rs";
+    sources[name] = sources[name].replace(before, after);
+    expectFailure(sources, expected);
+  }
+});

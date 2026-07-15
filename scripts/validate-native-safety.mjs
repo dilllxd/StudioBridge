@@ -3,6 +3,9 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const REQUIRED_FILES = [
+  "Cargo.toml",
+  "crates/studiobridge-comparison/Cargo.toml",
+  "crates/studiobridge-comparison/src/lib.rs",
   "crates/studiobridge-beacn/src/lib.rs",
   "crates/studiobridge-daemon/src/main.rs",
   "crates/studiobridge-desktop/src/client.rs",
@@ -40,6 +43,17 @@ const ALLOWED_DAEMON_STUDIO_ENDPOINTS = new Set([
   "/api/studio/microphone",
 ]);
 
+const COMPARISON_ALLOWED_RUNTIME_DEPENDENCIES = new Set(["zeroize"]);
+const COMPARISON_FORBIDDEN_INTEGRATION_DEPENDENCY = /^(?:pipewire|libspa|spa-sys|alsa|cpal|rodio|jack|beacn-lib|studiobridge-beacn|studiobridge-pipeweaver|reqwest|axum|hyper|ureq|tungstenite|tokio-tungstenite|libusb|rusb|hidapi|windows|windows-sys)$/;
+const COMPARISON_FORBIDDEN_INTEGRATION_PATHS = [
+  [/(?:^|\W)(?:pipewire|libspa|spa_sys|alsa|cpal|rodio|jack|beacn_lib|studiobridge_beacn|studiobridge_pipeweaver|reqwest|axum|hyper|ureq|tungstenite|tokio_tungstenite)\s*::/, "device, audio, control, or network crate path"],
+  [/\bstd\s*::\s*(?:fs|net|path|process|env|io)\b/, "filesystem, network, process, environment, or I/O API"],
+  [/\buse\s+std\s*::\s*\{[^}]*\b(?:fs|net|path|process|env|io)\b/, "filesystem, network, process, environment, or I/O import"],
+  [/\bextern\s+"C"\b|#\s*\[\s*link\b/, "foreign device or audio API"],
+  [/#\s*\[\s*path\s*=|\b(?:include|include_bytes|include_str)!\s*\(/, "unreviewed external source or data inclusion"],
+  [/\bunsafe\s*\{/, "unsafe integration code"],
+];
+
 function normalizeIdentifier(value) {
   return value.toLowerCase().replaceAll("-", "_");
 }
@@ -73,6 +87,49 @@ function endpointReason(endpoint) {
 
 function allMatches(source, pattern, group = 1) {
   return [...source.matchAll(pattern)].map((match) => match[group]);
+}
+
+function tomlSection(source, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const header = new RegExp(`^\\[${escaped}\\]\\s*$`, "m").exec(source);
+  if (!header) return "";
+  const bodyStart = header.index + header[0].length;
+  const nextHeader = /^\[[^\]]+\]\s*$/m.exec(source.slice(bodyStart));
+  return source.slice(bodyStart, nextHeader ? bodyStart + nextHeader.index : source.length);
+}
+
+function tomlDependencySections(source) {
+  const headers = [...source.matchAll(/^\[([^\]]*dependencies)\]\s*$/gm)];
+  return headers.map((header, index) => {
+    const bodyStart = header.index + header[0].length;
+    const bodyEnd = headers[index + 1]?.index ?? source.length;
+    const nextAnyHeader = /^\[[^\]]+\]\s*$/m.exec(source.slice(bodyStart, bodyEnd));
+    return {
+      name: header[1],
+      body: source.slice(bodyStart, nextAnyHeader ? bodyStart + nextAnyHeader.index : bodyEnd),
+    };
+  });
+}
+
+function dependencyNames(body) {
+  return body
+    .split(/\r?\n/)
+    .map((line) => line.replace(/#.*/, "").trim())
+    .filter(Boolean)
+    .map((line) => line.match(/^([A-Za-z0-9_-]+)(?:\.workspace)?\s*=/)?.[1])
+    .filter(Boolean);
+}
+
+// Safety checks inspect code tokens, not prose. This deliberately removes
+// comments and string/character literals so documentation and mutation-test
+// explanations may name forbidden integrations without creating false alarms.
+function rustCodeOnly(source) {
+  return source
+    .replace(/r(#{0,16})"[\s\S]*?"\1/g, " ")
+    .replace(/"(?:\\.|[^"\\])*"/g, " ")
+    .replace(/'(?:\\.|[^'\\])'/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/\/\/[^\n]*/g, " ");
 }
 
 function rustFunctionSection(source, name) {
@@ -114,6 +171,45 @@ export function validateNativeSafety(files) {
   };
 
   for (const name of REQUIRED_FILES) read(name);
+
+  const comparisonManifest = read("crates/studiobridge-comparison/Cargo.toml");
+  const runtimeDependencies = dependencyNames(tomlSection(comparisonManifest, "dependencies"));
+  for (const dependency of runtimeDependencies) {
+    check(COMPARISON_ALLOWED_RUNTIME_DEPENDENCIES.has(dependency), `comparison policy core has forbidden runtime dependency ${dependency}`);
+  }
+  for (const section of tomlDependencySections(comparisonManifest)) {
+    for (const dependency of dependencyNames(section.body)) {
+      if (section.name.endsWith("dev-dependencies")) {
+        check(!COMPARISON_FORBIDDEN_INTEGRATION_DEPENDENCY.test(dependency), `comparison policy core has forbidden integration test dependency ${dependency}`);
+      } else {
+        check(COMPARISON_ALLOWED_RUNTIME_DEPENDENCIES.has(dependency), `comparison policy core has forbidden ${section.name} dependency ${dependency}`);
+      }
+    }
+  }
+  check(runtimeDependencies.includes("zeroize"), "comparison policy core must retain non-elidable sample scrubbing");
+  for (const [name, source] of Object.entries(files)) {
+    if (name !== "Cargo.toml" && name.endsWith("Cargo.toml") && !name.startsWith("crates/studiobridge-comparison/")) {
+      check(!source.includes("studiobridge-comparison"), `${name} wires the comparison core into production before destination-generation policy review`);
+    }
+  }
+
+  const comparisonRustSources = Object.entries(files).filter(([name]) =>
+    name.startsWith("crates/studiobridge-comparison/") && name.endsWith(".rs")
+  );
+  check(comparisonRustSources.length > 0, "comparison policy core has no reviewed Rust source");
+  for (const [name, source] of comparisonRustSources) {
+    const code = rustCodeOnly(source);
+    for (const [pattern, description] of COMPARISON_FORBIDDEN_INTEGRATION_PATHS) {
+      check(!pattern.test(code), `${name} contains forbidden ${description}`);
+    }
+    for (const implementation of allMatches(code, /\bimpl(?:\s*<[^>{}]*>)?\s+(?:(?:crate|self|super|studiobridge_comparison)\s*::\s*)?AudioDriver\s+for\s+([A-Za-z_][A-Za-z0-9_]*)/g)) {
+      check(/(?:Fake|Mock|Test)/.test(implementation), `${name} adds production AudioDriver implementation ${implementation} before destination-generation policy review`);
+    }
+  }
+  const comparisonLib = rustCodeOnly(read("crates/studiobridge-comparison/src/lib.rs"));
+  check(/pub\s+trait\s+AudioDriver\s*:\s*Send\s*\+\s*'static/.test(comparisonLib), "comparison AudioDriver must remain worker-thread safe");
+  check(/fn\s+deactivate_all\s*\(\s*&mut\s+self\s*\)\s*;/.test(comparisonLib), "comparison AudioDriver must retain infallible ambiguous-stream teardown");
+  check(/self\.samples\.zeroize\s*\(\s*\)/.test(comparisonLib), "comparison sample slots must use non-elidable zeroization");
 
   for (const [serviceName, expectedCommand] of BASELINE_SERVICE_COMMANDS) {
     const service = read(serviceName);
@@ -213,7 +309,17 @@ export function validateNativeSafety(files) {
 }
 
 export function readNativeSafetySources(root) {
-  return Object.fromEntries(REQUIRED_FILES.map((name) => [name, fs.readFileSync(path.join(root, name), "utf8")]));
+  const names = new Set(REQUIRED_FILES);
+  const collect = (directory, include) => {
+    for (const entry of fs.readdirSync(path.join(root, directory), { withFileTypes: true })) {
+      const relative = path.posix.join(directory.replaceAll("\\", "/"), entry.name);
+      if (entry.isDirectory()) collect(relative, include);
+      else if (include(relative)) names.add(relative);
+    }
+  };
+  collect("crates", (name) => name.endsWith("/Cargo.toml"));
+  collect("crates/studiobridge-comparison", (name) => name.endsWith(".rs"));
+  return Object.fromEntries([...names].map((name) => [name, fs.readFileSync(path.join(root, name), "utf8")]));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

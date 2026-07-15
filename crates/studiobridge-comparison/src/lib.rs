@@ -7,6 +7,13 @@
 use std::fmt;
 use zeroize::Zeroize;
 
+mod worker;
+
+pub use worker::{
+    COMMAND_CAPACITY, Command, CommandKind, CommandSender, ComparisonMode, ComparisonWorker,
+    Controls, DiagnosticKind, SendCommandError, Snapshot, TerminalEvent,
+};
+
 pub const SAMPLE_RATE: usize = 48_000;
 pub const MAX_FRAMES: usize = 480_000;
 pub const MIN_COMMIT_FRAMES: usize = 960;
@@ -318,6 +325,16 @@ impl<D: AudioDriver> ComparisonEngine<D> {
             .iter()
             .map(|slot| slot.samples.len() * size_of::<f32>())
             .sum()
+    }
+
+    pub(crate) fn active_token(&self) -> Option<StreamToken> {
+        self.active_token
+    }
+
+    pub(crate) fn buffers_are_scrubbed(&self) -> bool {
+        self.slots
+            .iter()
+            .all(|slot| slot.frames == 0 && slot.samples.iter().all(|sample| *sample == 0.0))
     }
 
     pub fn handle(&mut self, sequence: u64, action: Action) -> ActionResult {

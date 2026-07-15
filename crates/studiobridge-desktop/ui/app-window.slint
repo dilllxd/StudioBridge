@@ -3190,28 +3190,28 @@ export component MainWindow inherits Window {
 
             if root.active-page == 3: VerticalLayout {
                 spacing: 0px;
-                Rectangle { height: 42px; background: #1b1b1e; Text { x: 5px; text: "DEVICE SETTINGS"; color: Theme.text; font-size: 13px; font-weight: 800; vertical-alignment: center; } }
+                Rectangle { height: 31px; background: #1b1b1e; Text { x: 5px; text: "DEVICE SETTINGS"; color: Theme.text; font-size: 10px; font-weight: 800; vertical-alignment: center; } }
                 Rectangle {
-                    height: 305px; background: transparent;
+                    max-width: 1045px; height: 205px; background: transparent;
                     Rectangle {
-                        x: 13px; y: 10px; width: max(755px, parent.width - 290px); height: 285px;
+                        x: 13px; y: 4px; width: max(755px, parent.width - 290px); height: 185px;
                         background: #1f1f22; border-width: 1px; border-color: Theme.border;
-                        Image { x: 68px; y: 28px; width: 70px; height: 70px; source: @image-url("../assets/studiobridge.svg"); }
-                        Text { x: 158px; y: 42px; text: "Device Name:"; color: Theme.text; font-size: 13px; font-weight: 800; }
-                        Text { x: 158px; y: 64px; text: root.device-name; color: Theme.quiet; font-size: 12px; font-weight: 700; }
-                        Text { x: 110px; y: 124px; text: "Device Information"; color: Theme.text; font-size: 13px; font-weight: 800; }
-                        Text { x: 110px; y: 150px; text: "Serial Number:"; color: Theme.quiet; font-size: 11px; font-weight: 700; }
-                        Text { x: 285px; y: 150px; text: root.device-serial; color: Theme.text; font-size: 11px; font-weight: 700; }
-                        Text { x: 110px; y: 169px; text: "Firmware Version:"; color: Theme.quiet; font-size: 11px; font-weight: 700; }
-                        Text { x: 285px; y: 169px; text: root.device-firmware; color: Theme.text; font-size: 11px; font-weight: 700; }
+                        Image { x: 68px; y: 17px; width: 44px; height: 44px; source: @image-url("../assets/studiobridge.svg"); }
+                        Text { x: 158px; y: 25px; text: "Device Name:"; color: Theme.text; font-size: 10px; font-weight: 800; }
+                        Text { x: 158px; y: 43px; text: root.device-name; color: Theme.quiet; font-size: 9px; font-weight: 700; }
+                        Text { x: 110px; y: 79px; text: "Device Information"; color: Theme.text; font-size: 10px; font-weight: 800; }
+                        Text { x: 110px; y: 99px; text: "Serial Number:"; color: Theme.quiet; font-size: 9px; font-weight: 700; }
+                        Text { x: 285px; y: 99px; text: root.device-serial; color: Theme.text; font-size: 9px; font-weight: 700; }
+                        Text { x: 110px; y: 114px; text: "Firmware Version:"; color: Theme.quiet; font-size: 9px; font-weight: 700; }
+                        Text { x: 285px; y: 114px; text: root.device-firmware; color: Theme.text; font-size: 9px; font-weight: 700; }
                         Button {
-                            x: parent.width - 229px; y: 145px; width: 140px; height: 28px;
+                            x: parent.width - 229px; y: 95px; width: 140px; height: 20px;
                             text: "Legal and Regulatory";
                             clicked => { root.legal-dialog-open = true; }
                         }
-                        Text { x: 110px; y: 242px; text: "USB2 Driverless Mode"; color: Theme.quiet; font-size: 11px; font-weight: 700; }
-                        ToggleSwitch { x: parent.width - 141px; y: 239px; checked: root.driverless-mode; interactive: false; control-label: "USB2 Driverless Mode " + (root.driverless-mode ? "on" : "off") + ", read-only"; }
-                        Text { x: parent.width - 305px; y: 244px; text: (root.driverless-mode ? "ON" : "OFF") + " · read-only"; color: Theme.amber; font-size: 9px; }
+                        Text { x: 110px; y: 151px; text: "USB2 Driverless Mode"; color: Theme.quiet; font-size: 9px; font-weight: 700; }
+                        Text { x: parent.width - 250px; y: 151px; width: 105px; text: (root.driverless-mode ? "ON" : "OFF") + " · READ-ONLY"; color: Theme.amber; font-size: 8px; horizontal-alignment: right; }
+                        SettingCheckbox { x: parent.width - 135px; y: 148px; checked: root.driverless-mode; interactive: false; control-label: "USB2 Driverless Mode " + (root.driverless-mode ? "on" : "off") + ", read-only"; }
                     }
                 }
                 Rectangle { vertical-stretch: 1; }
