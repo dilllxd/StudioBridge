@@ -2017,6 +2017,7 @@ export component MainWindow inherits Window {
     in-out property <float> dsp-value-b: 0;
     in-out property <float> dsp-value-c: 0;
     in-out property <float> dsp-value-d: 0;
+    in-out property <float> dsp-value-e: 0;
     in property <float> dsp-min-a: -12;
     in property <float> dsp-max-a: 12;
     in property <float> dsp-min-b: -12;
@@ -2025,6 +2026,8 @@ export component MainWindow inherits Window {
     in property <float> dsp-max-c: 12;
     in property <float> dsp-min-d: 0;
     in property <float> dsp-max-d: 1;
+    in property <float> dsp-min-e: 0;
+    in property <float> dsp-max-e: 1;
     in property <string> status-text: "Connecting to StudioBridge daemon";
     in property <string> device-name: "BEACN Studio";
     in property <string> device-serial: "Unavailable";
@@ -2115,7 +2118,7 @@ export component MainWindow inherits Window {
     callback load-dsp;
     callback arm-dsp;
     callback disarm-dsp;
-    callback apply-dsp(float, float, float, float);
+    callback apply-dsp(float, float, float, float, float);
     callback revert-dsp;
     callback save-preferences(bool, bool, bool, bool, bool, bool, bool);
     callback save-profile-expansion(bool, bool);
@@ -2808,7 +2811,7 @@ export component MainWindow inherits Window {
                                     Text { height: 16px; text: "Amount"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
                                     HorizontalLayout { height: 26px; spacing: 5px; Text { width: 34px; text: round(root.dsp-value-a) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { accessible-label: "Noise Suppression amount"; horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } } }
                                     Text { height: 16px; text: "Sensitivity"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
-                                    HorizontalLayout { height: 26px; spacing: 5px; Text { width: 34px; text: round(root.dsp-value-b) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { accessible-label: "Noise Suppression sensitivity"; horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } } }
+                                    HorizontalLayout { height: 26px; spacing: 5px; Text { width: 42px; text: round(root.dsp-value-b) + "dB"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { accessible-label: "Noise Suppression sensitivity in decibels"; horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } } }
                                     Rectangle { vertical-stretch: 1; }
                                 }
                             }
@@ -2875,9 +2878,15 @@ export component MainWindow inherits Window {
                                         ProcessorModeButton { horizontal-stretch: 1; label: "Simple"; selected: !root.dsp-advanced; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(false); } }
                                         ProcessorModeButton { horizontal-stretch: 1; label: "Advanced"; selected: root.dsp-advanced; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(true); } }
                                     }
-                                    Rectangle { height: 8px; }
-                                    Text { height: 16px; text: root.dsp-advanced ? "Ratio / Attack / Release" : "Compress Amount"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
-                                    HorizontalLayout { height: 28px; spacing: 6px; Text { width: 36px; text: round(root.dsp-value-b) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { accessible-label: "Compressor amount"; horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } } }
+                                    Rectangle { height: 5px; }
+                                    if root.dsp-advanced: ProcessorValueRow { label: "Ratio"; value-label: round(root.dsp-value-b * 10) / 10 + ":1"; interactive: root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-b = root.dsp-value-b - 0.1 < root.dsp-min-b ? root.dsp-min-b : root.dsp-value-b - 0.1; } increase => { root.dsp-value-b = root.dsp-value-b + 0.1 > root.dsp-max-b ? root.dsp-max-b : root.dsp-value-b + 0.1; } }
+                                    if root.dsp-advanced: ProcessorValueRow { label: "Attack"; value-label: round(root.dsp-value-c * 10) / 10 + "ms"; interactive: root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-c = root.dsp-value-c - 1 < root.dsp-min-c ? root.dsp-min-c : root.dsp-value-c - 1; } increase => { root.dsp-value-c = root.dsp-value-c + 1 > root.dsp-max-c ? root.dsp-max-c : root.dsp-value-c + 1; } }
+                                    if root.dsp-advanced: ProcessorValueRow { label: "Release"; value-label: round(root.dsp-value-d * 10) / 10 + "ms"; interactive: root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-d = root.dsp-value-d - 1 < root.dsp-min-d ? root.dsp-min-d : root.dsp-value-d - 1; } increase => { root.dsp-value-d = root.dsp-value-d + 1 > root.dsp-max-d ? root.dsp-max-d : root.dsp-value-d + 1; } }
+                                    if !root.dsp-advanced: VerticalLayout {
+                                        height: 48px; spacing: 2px;
+                                        Text { height: 16px; text: "Compress Amount"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
+                                        Text { height: 26px; text: "Unavailable — no verified amount mapping"; color: Theme.amber; font-size: 8px; vertical-alignment: center; wrap: word-wrap; }
+                                    }
                                     Rectangle { vertical-stretch: 1; }
                                 }
                             }
@@ -2889,8 +2898,8 @@ export component MainWindow inherits Window {
                                 VerticalLayout {
                                     x: 428px; y: 5px; width: 78px; height: parent.height - 9px; spacing: 3px;
                                     Text { height: 18px; text: "MAKE-UP GAIN"; color: Theme.quiet; font-size: 8px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: (root.dsp-value-c - root.dsp-min-c) / (root.dsp-max-c - root.dsp-min-c) * 100; control-label: "Compressor make-up gain"; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-c = root.dsp-min-c + value / 100 * (root.dsp-max-c - root.dsp-min-c); } } Rectangle { horizontal-stretch: 1; } }
-                                    Text { height: 18px; text: round(root.dsp-value-c * 10) / 10 + "dB"; color: Theme.text; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
+                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: (root.dsp-value-e - root.dsp-min-e) / (root.dsp-max-e - root.dsp-min-e) * 100; control-label: "Compressor make-up gain"; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-e = root.dsp-min-e + value / 100 * (root.dsp-max-e - root.dsp-min-e); } } Rectangle { horizontal-stretch: 1; } }
+                                    Text { height: 18px; text: round(root.dsp-value-e * 10) / 10 + "dB"; color: Theme.text; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
                             }
                         }
@@ -2947,7 +2956,7 @@ export component MainWindow inherits Window {
                         HorizontalLayout {
                             height: 27px; padding-left: 8px; padding-right: 8px; spacing: 7px;
                             Button { text: "Reload read-back"; clicked => { root.load-dsp(); } }
-                            if root.dsp-active-module == root.dsp-selected-module: Button { text: "Apply + verify"; clicked => { root.apply-dsp(root.dsp-value-a, root.dsp-value-b, root.dsp-value-c, root.dsp-value-d); } }
+                            if root.dsp-active-module == root.dsp-selected-module: Button { text: "Apply + verify"; clicked => { root.apply-dsp(root.dsp-value-a, root.dsp-value-b, root.dsp-value-c, root.dsp-value-d, root.dsp-value-e); } }
                             if root.dsp-active-module == root.dsp-selected-module: Button { text: "Revert captured"; clicked => { root.revert-dsp(); } }
                             if root.dsp-active-module != root.dsp-selected-module && !root.arm-confirm-pending: Button { text: "Enable editing for 5 minutes"; clicked => { root.arm-confirm-pending = true; } }
                             if root.dsp-active-module != root.dsp-selected-module && root.arm-confirm-pending: Button { text: "Confirm: this changes audio"; clicked => { root.arm-dsp(); } }

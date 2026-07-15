@@ -33,8 +33,8 @@ not unfinished UI work.
 
 | Status | Gap | Evidence and exact next action | Priority |
 | --- | --- | --- | --- |
-| Partial | Compressor Simple/Advanced semantics | Official Simple exposes Compress Amount; Advanced exposes separate Ratio, Attack, and Release values. StudioBridge labels the model's ratio as a percent and presents one combined “Ratio / Attack / Release” slider. Its Rust model already carries `ratio`, `attack_ms`, and `release_ms`. Give Advanced three independent step controls, give Simple an explicitly mapped amount control, and preserve the existing lease/apply/verify gate. | P0 |
-| Partial | Noise Suppression sensitivity units | Official displays a normalized percentage (90% in the observed state). StudioBridge reads `sensitivity_db` (-85 dB in the mock), then renders the raw number with a `%` suffix. Add a tested dB-to-display-percent mapping and its inverse, or label the field honestly in dB until the official mapping is known. Never send the display percentage directly as dB. | P0 |
+| Partial | Compressor Simple amount mapping | Advanced now exposes independent Ratio, Attack, and Release controls with honest `:1`/`ms` units and validated protocol ranges. Official Simple exposes Compress Amount, but its mapping to the current model is unknown; StudioBridge keeps that amount unavailable instead of guessing while Threshold and Makeup Gain remain editable. Capture and test the exact mapping before enabling it. | P1 |
+| Intentional deviation | Noise Suppression sensitivity display | Official displays a normalized percentage (90% in the observed state), but the percentage-to-dB conversion is unknown. StudioBridge now displays the actual `sensitivity_db` read-back in dB and edits only the validated -120…-60 dB protocol range. Add a percentage only after a reversible mapping is captured and tested. | P2 |
 | Partial | Equalizer presets | Official menu contains No EQ, Low Broadcast Voice, High Broadcast Voice, and Sub Bass Rolloff. StudioBridge displays only “Custom / read-back.” Implement selection only after the exact staged EQ payload for every preset is captured and tested; keep Custom for non-preset read-back. | P1 |
 | Missing | Microphone comparison recorder/player | Official Mic Output has a 10-second record/play comparison control. StudioBridge draws the time, record dot, and play glyph as inert text. Implement a local-only capture/playback state machine with elapsed time, enabled states, cancellation, and no device writes. | P1 |
 | Partial | Voice Chat Mic copy target affordance | Official Voice Chat Mic row exposes a small disclosure affordance and a “Copy Chat Mic Output To” prompt. StudioBridge draws a chevron but has no interaction. Add a target selector backed by explicit PipeWeaver routing, without guessing or replacing unrelated routes. | P1 |
@@ -97,9 +97,9 @@ not unfinished UI work.
 | Mic Setup | Mic Gain, history graph, peak/speaking areas, and Phantom Power. | Read-back values and graph are displayed; gain and phantom are non-interactive. | Required safety deviation. Continue to make read-only state explicit without dominating the layout. | Intentional deviation / P3 |
 | Noise style | On/Off and Adaptive/Snapshot controls. | Equivalent enabled/style controls are staged behind the module lease. | Validate curve changes and snapshot acquisition behavior with hardware. | Partial / P1 |
 | Noise amount | Percentage slider. | Percentage is read and written as `amount_percent`. | Verify observed range and rounding. | Matched / P2 |
-| Noise sensitivity | Official percentage display. | Raw dB model value is rendered with `%`. | Add a reversible mapping or honest dB fallback; see high-impact gap. | Partial / P0 |
+| Noise sensitivity | Official percentage display. | Actual model value is rendered and edited honestly in dB across the validated -120…-60 dB range. | Capture a reversible official percentage mapping before attempting closer display parity. | Intentional deviation / P2 |
 | Expander | On, threshold, Simple/Advanced, and Advanced Ratio/Attack/Release; transfer graph. | Separate values and correct units are wired for Advanced; Simple uses amount label; graph is simplified. | Validate Simple amount mapping and replace static-looking curve with a state-driven transfer display. | Partial / P2 |
-| Compressor | On, threshold, Simple Compress Amount, Advanced Ratio/Attack/Release, three meters, and Makeup Gain. | Three meters and Makeup Gain exist, but ratio is percent-labeled and attack/release are neither loaded nor editable. | Split modes and controls; see high-impact gap. | Partial / P0 |
+| Compressor | On, threshold, Simple Compress Amount, Advanced Ratio/Attack/Release, three meters, and Makeup Gain. | Advanced independently stages Ratio, Attack, Release, and Makeup Gain with honest units and validated ranges. Simple Threshold/Makeup Gain remain editable, while Compress Amount is explicitly unavailable because its protocol mapping is unverified. | Capture and test the exact Simple Amount mapping; do not infer it from the stored ratio. | Partial / P1 |
 | Headphones level/amp | Mic Monitor, Headphones, link, and four amp-power choices. | Values and choices are shown as read-only. | Required safety deviation. Do not add write callbacks. | Intentional deviation / P3 |
 | Headphone EQ/subwoofer | Bass/Mids/Treble and Subwoofer controls. | Three playback-EQ controls and bounded subwoofer edit are guarded; StudioBridge also shows an overall EQ toggle. | Confirm whether the official app has an implicit/hidden enable state; avoid presenting an invented global toggle if it changes all bands. | Unverified / P1 |
 
@@ -133,14 +133,12 @@ not unfinished UI work.
 
 ## Safe next implementation order
 
-1. Fix the Noise Suppression display/write mapping and Compressor mode/value
-   model in unit-tested Rust helpers, then bind the corrected controls in Slint.
-2. Make inert or persist-only surfaces honest: recorder/player, copy-output,
+1. Make inert or persist-only surfaces honest: recorder/player, copy-output,
    beta, mixing-suite, and crossfade controls must either work or visibly state
    that they are unavailable.
-3. Add EQ presets only after exact payload capture; do not infer DSP values from
+2. Add EQ presets only after exact payload capture; do not infer DSP values from
    labels or screenshots.
-4. Make all workspace widths respond to profile-rail collapse and resized
+3. Make all workspace widths respond to profile-rail collapse and resized
    windows, then do the typography/icon/pixel pass.
-5. Complete keyboard, accessibility, offline, and failure-rollback audits before
+4. Complete keyboard, accessibility, offline, and failure-rollback audits before
    hardware-in-loop Linux validation.

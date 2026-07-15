@@ -79,7 +79,9 @@ jobs:
         shell: bash
         run: |
           node --test scripts/validate-packaging.test.mjs
+          node --test scripts/validate-native-safety.test.mjs
           node scripts/validate-packaging.mjs
+          node scripts/validate-native-safety.mjs
           bash -n \
             scripts/install-linux.sh \
             scripts/stage-package-root.sh \

@@ -1745,12 +1745,12 @@ fn main() -> Result<(), slint::PlatformError> {
     let apply_window = window.as_weak();
     let apply_client = client.clone();
     let apply_session = dsp_session.clone();
-    window.on_apply_dsp(move |a, b, c, d| {
+    window.on_apply_dsp(move |a, b, c, d, e| {
         apply_dsp(
             apply_window.clone(),
             apply_client.clone(),
             apply_session.clone(),
-            (a, b, c, d),
+            (a, b, c, d, e),
             false,
         )
     });
@@ -1763,7 +1763,7 @@ fn main() -> Result<(), slint::PlatformError> {
             revert_window.clone(),
             revert_client.clone(),
             revert_session.clone(),
-            (0.0, 0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0, 0.0, 0.0),
             true,
         )
     });
@@ -2460,7 +2460,7 @@ fn apply_dsp(
     window: Weak<MainWindow>,
     client: DaemonClient,
     session: Arc<Mutex<DspSession>>,
-    values: (f32, f32, f32, f32),
+    values: (f32, f32, f32, f32, f32),
     revert: bool,
 ) {
     thread::spawn(move || {
@@ -2485,7 +2485,9 @@ fn apply_dsp(
         let update = if revert {
             update_from_snapshot(selected, &base)
         } else {
-            update_from_values(selected, base, values.0, values.1, values.2, values.3)
+            update_from_values(
+                selected, base, values.0, values.1, values.2, values.3, values.4,
+            )
         };
         match client.set_microphone_dsp(&update) {
             Ok(result) if result.verified => {
@@ -2538,17 +2540,23 @@ fn update_from_values(
     b: f32,
     c: f32,
     d: f32,
+    e: f32,
 ) -> MicrophoneDspUpdate {
     match selected {
         DspSelection::Equalizer => MicrophoneDspUpdate::Equalizer(snapshot.equalizer),
         DspSelection::Compressor => {
+            let advanced = snapshot.compressor.active_mode == DspMode::Advanced;
             let profile = match snapshot.compressor.active_mode {
                 DspMode::Simple => &mut snapshot.compressor.simple,
                 DspMode::Advanced => &mut snapshot.compressor.advanced,
             };
             profile.threshold_db = a;
-            profile.ratio = b;
-            profile.makeup_gain_db = c;
+            if advanced {
+                profile.ratio = b;
+                profile.attack_ms = c;
+                profile.release_ms = d;
+            }
+            profile.makeup_gain_db = e;
             MicrophoneDspUpdate::Compressor(snapshot.compressor)
         }
         DspSelection::Expander => {
@@ -2839,6 +2847,7 @@ fn show_dsp_snapshot_inner(
         window.set_dsp_value_b(values.1);
         window.set_dsp_value_c(values.2);
         window.set_dsp_value_d(values.3);
+        window.set_dsp_value_e(values.4);
         window.set_dsp_advanced(advanced);
         window.set_dsp_enabled(enabled);
         window.set_noise_snapshot(noise_snapshot);
@@ -2869,6 +2878,8 @@ fn show_dsp_snapshot_inner(
         window.set_dsp_max_c(ranges.2.1);
         window.set_dsp_min_d(ranges.3.0);
         window.set_dsp_max_d(ranges.3.1);
+        window.set_dsp_min_e(ranges.4.0);
+        window.set_dsp_max_e(ranges.4.1);
     });
 }
 
@@ -2925,9 +2936,15 @@ fn set_selected_dsp_enabled(
 
 type DspDisplay = (
     &'static str,
-    (&'static str, &'static str, &'static str, &'static str),
-    (f32, f32, f32, f32),
-    ((f32, f32), (f32, f32), (f32, f32), (f32, f32)),
+    (
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+        &'static str,
+    ),
+    (f32, f32, f32, f32, f32),
+    ((f32, f32), (f32, f32), (f32, f32), (f32, f32), (f32, f32)),
 );
 
 fn dsp_display(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> DspDisplay {
@@ -2940,9 +2957,15 @@ fn dsp_display(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> DspD
             let value = |index: usize| profile.bands.get(index).map_or(0.0, |band| band.gain_db);
             (
                 "VOICE EQUALIZER",
-                ("Band 1 gain", "Band 2 gain", "Band 3 gain", ""),
-                (value(0), value(1), value(2), 0.0),
-                ((-12.0, 12.0), (-12.0, 12.0), (-12.0, 12.0), (0.0, 1.0)),
+                ("Band 1 gain", "Band 2 gain", "Band 3 gain", "", ""),
+                (value(0), value(1), value(2), 0.0, 0.0),
+                (
+                    (-12.0, 12.0),
+                    (-12.0, 12.0),
+                    (-12.0, 12.0),
+                    (0.0, 1.0),
+                    (0.0, 1.0),
+                ),
             )
         }
         DspSelection::Compressor => {
@@ -2952,9 +2975,27 @@ fn dsp_display(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> DspD
             };
             (
                 "COMPRESSOR",
-                ("Threshold dB", "Ratio", "Makeup gain dB", ""),
-                (p.threshold_db, p.ratio, p.makeup_gain_db, 0.0),
-                ((-60.0, 0.0), (1.0, 20.0), (0.0, 24.0), (0.0, 1.0)),
+                (
+                    "Threshold dB",
+                    "Ratio",
+                    "Attack ms",
+                    "Release ms",
+                    "Makeup gain dB",
+                ),
+                (
+                    p.threshold_db,
+                    p.ratio,
+                    p.attack_ms,
+                    p.release_ms,
+                    p.makeup_gain_db,
+                ),
+                (
+                    (-50.0, 0.0),
+                    (1.0, 16.0),
+                    (1.0, 2_000.0),
+                    (1.0, 2_000.0),
+                    (0.0, 12.0),
+                ),
             )
         }
         DspSelection::Expander => {
@@ -2964,32 +3005,52 @@ fn dsp_display(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> DspD
             };
             (
                 "EXPANDER / GATE",
-                ("Threshold dB", "Ratio", "Attack ms", "Release ms"),
-                (p.threshold_db, p.ratio, p.attack_ms, p.release_ms),
-                ((-90.0, 0.0), (1.0, 20.0), (1.0, 2000.0), (1.0, 2000.0)),
+                ("Threshold dB", "Ratio", "Attack ms", "Release ms", ""),
+                (p.threshold_db, p.ratio, p.attack_ms, p.release_ms, 0.0),
+                (
+                    (-90.0, 0.0),
+                    (1.0, 10.0),
+                    (1.0, 2000.0),
+                    (1.0, 2000.0),
+                    (0.0, 1.0),
+                ),
             )
         }
         DspSelection::NoiseSuppression => (
             "NOISE SUPPRESSION",
-            ("Amount %", "Sensitivity dB", "Adapt time ms", ""),
+            ("Amount %", "Sensitivity dB", "Adapt time ms", "", ""),
             (
                 snapshot.noise_suppression.amount_percent,
                 snapshot.noise_suppression.sensitivity_db,
                 snapshot.noise_suppression.adapt_time_ms,
                 0.0,
+                0.0,
             ),
-            ((0.0, 100.0), (-90.0, 0.0), (10.0, 5000.0), (0.0, 1.0)),
+            (
+                (0.0, 100.0),
+                (-120.0, -60.0),
+                (100.0, 5000.0),
+                (0.0, 1.0),
+                (0.0, 1.0),
+            ),
         ),
         DspSelection::EnhancementSuite => (
             "ENHANCEMENT SUITE",
-            ("Bass amount", "De-esser %", "Exciter %", ""),
+            ("Bass amount", "De-esser %", "Exciter %", "", ""),
             (
                 snapshot.enhancement_suite.bass.amount,
                 snapshot.enhancement_suite.de_esser.amount_percent,
                 snapshot.enhancement_suite.exciter.amount_percent,
                 0.0,
+                0.0,
             ),
-            ((0.0, 10.0), (0.0, 100.0), (0.0, 100.0), (0.0, 5_000.0)),
+            (
+                (0.0, 10.0),
+                (0.0, 100.0),
+                (0.0, 100.0),
+                (0.0, 5_000.0),
+                (0.0, 1.0),
+            ),
         ),
         DspSelection::HeadphoneEqualizer => {
             let value = |index: usize| {
@@ -3001,9 +3062,15 @@ fn dsp_display(snapshot: &MicrophoneDspSnapshot, selected: DspSelection) -> DspD
             };
             (
                 "HEADPHONE EQUALIZER",
-                ("Bass dB", "Mids dB", "Treble dB", ""),
-                (value(0), value(1), value(2), 0.0),
-                ((-12.0, 12.0), (-12.0, 12.0), (-12.0, 12.0), (0.0, 1.0)),
+                ("Bass dB", "Mids dB", "Treble dB", "", ""),
+                (value(0), value(1), value(2), 0.0, 0.0),
+                (
+                    (-12.0, 12.0),
+                    (-12.0, 12.0),
+                    (-12.0, 12.0),
+                    (0.0, 1.0),
+                    (0.0, 1.0),
+                ),
             )
         }
     }
@@ -3249,13 +3316,13 @@ fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
 mod desktop_tests {
     use super::{
         AppPreferences, DspSelection, active_eq_profile, add_eq_band, adjust_eq_band_value,
-        application_chip_text_width, channel_detail, external_link_url, hotkey_key_name,
-        link_channel_for_source, link_channel_label, mock_meter_level, mute_state_with_target,
-        normalize_captured_hotkey, normalize_mute_action, preferred_default_repair, remove_eq_band,
-        selected_dsp_enabled, set_enhancement_preset, set_enhancement_value,
-        set_eq_band_type_value, set_eq_band_value, set_headphone_eq_band_value,
-        set_headphone_subwoofer_value, set_selected_dsp_enabled, should_start_in_background,
-        source_name_available, update_from_values,
+        application_chip_text_width, channel_detail, dsp_display, external_link_url,
+        hotkey_key_name, link_channel_for_source, link_channel_label, mock_meter_level,
+        mute_state_with_target, normalize_captured_hotkey, normalize_mute_action,
+        preferred_default_repair, remove_eq_band, selected_dsp_enabled, set_enhancement_preset,
+        set_enhancement_value, set_eq_band_type_value, set_eq_band_value,
+        set_headphone_eq_band_value, set_headphone_subwoofer_value, set_selected_dsp_enabled,
+        should_start_in_background, source_name_available, update_from_values,
     };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
@@ -3651,6 +3718,7 @@ mod desktop_tests {
             -12.0,
             9.0,
             0.0,
+            0.0,
         );
         let MicrophoneDspUpdate::Equalizer(equalizer) = update else {
             panic!("expected an equalizer update")
@@ -3700,6 +3768,7 @@ mod desktop_tests {
             100.0,
             100.0,
             0.0,
+            0.0,
         );
         let MicrophoneDspUpdate::EnhancementSuite(staged) = update else {
             panic!("expected an enhancement update")
@@ -3743,6 +3812,7 @@ mod desktop_tests {
             12.0,
             -12.0,
             0.0,
+            0.0,
         );
         let MicrophoneDspUpdate::HeadphoneEqualizer(staged) = update else {
             panic!("expected a headphone equalizer update")
@@ -3767,5 +3837,101 @@ mod desktop_tests {
         set_headphone_subwoofer_value(&mut snapshot, 99.0).unwrap();
         assert_eq!(snapshot.headphone_equalizer.bands[2].amount_db, 12.0);
         assert_eq!(snapshot.headphone_equalizer.subwoofer.amount, 10);
+    }
+
+    #[test]
+    fn noise_sensitivity_uses_honest_db_units_and_protocol_range() {
+        let snapshot = dsp_snapshot();
+        let (_, labels, values, ranges) = dsp_display(&snapshot, DspSelection::NoiseSuppression);
+        assert_eq!(labels.1, "Sensitivity dB");
+        assert_eq!(values.1, -85.0);
+        assert_eq!(ranges.1, (-120.0, -60.0));
+
+        let ui = include_str!("../ui/app-window.slint");
+        let start = ui
+            .find("if root.dsp-selected-module == \"noise_suppression\"")
+            .unwrap();
+        let end = ui[start..]
+            .find("if root.dsp-selected-module == \"expander\"")
+            .map(|offset| start + offset)
+            .unwrap();
+        let noise_editor = &ui[start..end];
+        assert!(noise_editor.contains("round(root.dsp-value-b) + \"dB\""));
+        assert!(noise_editor.contains("sensitivity in decibels"));
+        assert!(!noise_editor.contains("round(root.dsp-value-b) + \"%\""));
+    }
+
+    #[test]
+    fn compressor_advanced_stages_ratio_attack_release_and_makeup_independently() {
+        let mut snapshot = dsp_snapshot();
+        snapshot.compressor.active_mode = DspMode::Advanced;
+        let simple_before = snapshot.compressor.simple.clone();
+
+        let update = update_from_values(
+            DspSelection::Compressor,
+            snapshot,
+            -24.0,
+            4.2,
+            25.0,
+            350.0,
+            5.5,
+        );
+        let MicrophoneDspUpdate::Compressor(compressor) = update else {
+            panic!("expected a compressor update")
+        };
+        assert_eq!(compressor.simple, simple_before);
+        assert_eq!(compressor.advanced.threshold_db, -24.0);
+        assert_eq!(compressor.advanced.ratio, 4.2);
+        assert_eq!(compressor.advanced.attack_ms, 25.0);
+        assert_eq!(compressor.advanced.release_ms, 350.0);
+        assert_eq!(compressor.advanced.makeup_gain_db, 5.5);
+
+        let snapshot = dsp_snapshot();
+        let (_, labels, _, ranges) = dsp_display(&snapshot, DspSelection::Compressor);
+        assert_eq!(
+            labels,
+            (
+                "Threshold dB",
+                "Ratio",
+                "Attack ms",
+                "Release ms",
+                "Makeup gain dB"
+            )
+        );
+        assert_eq!(ranges.0, (-50.0, 0.0));
+        assert_eq!(ranges.1, (1.0, 16.0));
+        assert_eq!(ranges.2, (1.0, 2_000.0));
+        assert_eq!(ranges.3, (1.0, 2_000.0));
+        assert_eq!(ranges.4, (0.0, 12.0));
+    }
+
+    #[test]
+    fn compressor_simple_never_guesses_amount_to_ratio_mapping() {
+        let snapshot = dsp_snapshot();
+        let original = snapshot.compressor.simple.clone();
+        let update = update_from_values(
+            DspSelection::Compressor,
+            snapshot,
+            -22.0,
+            15.0,
+            999.0,
+            1_999.0,
+            4.5,
+        );
+        let MicrophoneDspUpdate::Compressor(compressor) = update else {
+            panic!("expected a compressor update")
+        };
+        assert_eq!(compressor.simple.threshold_db, -22.0);
+        assert_eq!(compressor.simple.makeup_gain_db, 4.5);
+        assert_eq!(compressor.simple.ratio, original.ratio);
+        assert_eq!(compressor.simple.attack_ms, original.attack_ms);
+        assert_eq!(compressor.simple.release_ms, original.release_ms);
+
+        let ui = include_str!("../ui/app-window.slint");
+        assert!(ui.contains("Unavailable — no verified amount mapping"));
+        assert!(ui.contains("label: \"Ratio\"; value-label:"));
+        assert!(ui.contains("label: \"Attack\"; value-label:"));
+        assert!(ui.contains("label: \"Release\"; value-label:"));
+        assert!(ui.contains("root.apply-dsp(root.dsp-value-a, root.dsp-value-b, root.dsp-value-c, root.dsp-value-d, root.dsp-value-e)"));
     }
 }

@@ -18,11 +18,16 @@ const DSP_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct StudioBridgeService {
     studio: Arc<dyn StudioBackend>,
     mixer: Arc<dyn MixerBackend>,
+    profile_apply: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl StudioBridgeService {
     pub fn new(studio: Arc<dyn StudioBackend>, mixer: Arc<dyn MixerBackend>) -> Self {
-        Self { studio, mixer }
+        Self {
+            studio,
+            mixer,
+            profile_apply: Arc::new(tokio::sync::Mutex::new(())),
+        }
     }
 
     pub async fn snapshot(&self) -> BridgeResult<AppSnapshot> {
@@ -215,6 +220,23 @@ impl StudioBridgeService {
 
     /// Applies a saved mixer-only profile without touching BEACN hardware.
     pub async fn apply_mixer_profile(&self, desired: &MixerSnapshot) -> BridgeResult<()> {
+        // Cancellation while waiting for the lock removes this request from the
+        // queue. Once acquired, transfer the owned guard into a shielded task so
+        // cancellation cannot abandon a transaction which may have mutated state.
+        let transaction = self.profile_apply.clone().lock_owned().await;
+        let service = self.clone();
+        let desired = desired.clone();
+        tokio::spawn(async move {
+            let _transaction = transaction;
+            service.apply_mixer_profile_transaction(&desired).await
+        })
+        .await
+        .map_err(|error| {
+            BridgeError::Backend(format!("profile transaction task failed: {error}"))
+        })?
+    }
+
+    async fn apply_mixer_profile_transaction(&self, desired: &MixerSnapshot) -> BridgeResult<()> {
         let before = backend_call("PipeWeaver", self.mixer.snapshot()).await?;
         validate_mixer_profile(desired, &before)?;
 
@@ -1016,6 +1038,9 @@ mod tests {
     struct FaultInjectingMixer {
         inner: Arc<MockMixerBackend>,
         plan: Arc<StdMutex<Option<FaultPlan>>>,
+        pause_operation: Arc<StdMutex<Option<&'static str>>>,
+        pause_entered: Arc<tokio::sync::Semaphore>,
+        pause_release: Arc<tokio::sync::Semaphore>,
     }
 
     impl Default for FaultInjectingMixer {
@@ -1023,6 +1048,9 @@ mod tests {
             Self {
                 inner: Arc::new(MockMixerBackend::default()),
                 plan: Arc::default(),
+                pause_operation: Arc::default(),
+                pause_entered: Arc::new(tokio::sync::Semaphore::new(0)),
+                pause_release: Arc::new(tokio::sync::Semaphore::new(0)),
             }
         }
     }
@@ -1048,11 +1076,36 @@ mod tests {
             Some(current.mode)
         }
 
+        fn pause_once(&self, operation: &'static str) {
+            *self.pause_operation.lock().unwrap() = Some(operation);
+        }
+
+        async fn wait_until_paused(&self) {
+            self.pause_entered.acquire().await.unwrap().forget();
+        }
+
+        fn release_pause(&self) {
+            self.pause_release.add_permits(1);
+        }
+
         async fn mutate(
             &self,
             operation: &'static str,
             mutation: impl Future<Output = BridgeResult<()>>,
         ) -> BridgeResult<()> {
+            let should_pause = {
+                let mut paused = self.pause_operation.lock().unwrap();
+                if paused.as_deref() == Some(operation) {
+                    paused.take();
+                    true
+                } else {
+                    false
+                }
+            };
+            if should_pause {
+                self.pause_entered.add_permits(1);
+                self.pause_release.acquire().await.unwrap().forget();
+            }
             match self.take_fault(operation) {
                 Some(FaultMode::FailBefore) => Err(injected_failure(operation)),
                 Some(FaultMode::Ignore) => Ok(()),
@@ -1661,6 +1714,171 @@ mod tests {
         assert!(error.to_string().contains("rollback could not restore"));
         assert!(error.to_string().contains("apply error"));
         assert!(error.to_string().contains("rollback error"));
+    }
+
+    #[tokio::test]
+    async fn overlapping_profile_applies_are_serialized_without_blocking_direct_controls() {
+        let (service, mixer) = fault_service();
+        let before = service.snapshot().await.unwrap().mixer;
+        let first_profile = changed_profile(before.clone());
+        let mut second_profile = changed_profile(before);
+        second_profile
+            .channels
+            .iter_mut()
+            .find(|channel| channel.id == "game")
+            .unwrap()
+            .personal_volume = 47;
+        second_profile
+            .targets
+            .iter_mut()
+            .find(|target| target.id == "headphones")
+            .unwrap()
+            .volume = 31;
+        mixer.pause_once("set_source_name");
+
+        let first_service = service.clone();
+        let first =
+            tokio::spawn(async move { first_service.apply_mixer_profile(&first_profile).await });
+        mixer.wait_until_paused().await;
+
+        let second_service = service.clone();
+        let expected = second_profile.clone();
+        let second =
+            tokio::spawn(async move { second_service.apply_mixer_profile(&second_profile).await });
+        tokio::task::yield_now().await;
+        assert!(
+            !second.is_finished(),
+            "second profile bypassed transaction lock"
+        );
+
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            service.set_volume("chat", MixBus::Personal, 72),
+        )
+        .await
+        .expect("ordinary mixer control was blocked by profile lock")
+        .unwrap();
+        assert_eq!(
+            service
+                .snapshot()
+                .await
+                .unwrap()
+                .mixer
+                .channels
+                .iter()
+                .find(|channel| channel.id == "game")
+                .unwrap()
+                .name,
+            "Game",
+            "waiting profile mutated state before the active transaction resumed"
+        );
+
+        mixer.release_pause();
+        first.await.unwrap().unwrap();
+        second.await.unwrap().unwrap();
+        verify_mixer_profile(&expected, &service.snapshot().await.unwrap().mixer).unwrap();
+    }
+
+    #[tokio::test]
+    async fn caller_timeout_does_not_abandon_or_unlock_a_partial_profile_transaction() {
+        let (service, mixer) = fault_service();
+        let before = service.snapshot().await.unwrap().mixer;
+        let first_profile = changed_profile(before.clone());
+        let mut second_profile = changed_profile(before);
+        second_profile
+            .channels
+            .iter_mut()
+            .find(|channel| channel.id == "game")
+            .unwrap()
+            .audience_volume = 49;
+        let expected = second_profile.clone();
+        mixer.pause_once("set_source_name");
+
+        let timed_service = service.clone();
+        let timed = tokio::spawn(async move {
+            tokio::time::timeout(
+                Duration::from_millis(100),
+                timed_service.apply_mixer_profile(&first_profile),
+            )
+            .await
+        });
+        mixer.wait_until_paused().await;
+        assert!(timed.await.unwrap().is_err(), "caller did not time out");
+
+        let second_service = service.clone();
+        let second =
+            tokio::spawn(async move { second_service.apply_mixer_profile(&second_profile).await });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(
+            !second.is_finished(),
+            "caller cancellation released a still-active transaction lock"
+        );
+
+        mixer.release_pause();
+        tokio::time::timeout(Duration::from_secs(2), second)
+            .await
+            .expect("transaction lock was not released after detached apply completed")
+            .unwrap()
+            .unwrap();
+        verify_mixer_profile(&expected, &service.snapshot().await.unwrap().mixer).unwrap();
+    }
+
+    #[tokio::test]
+    async fn canceled_profile_waiter_is_removed_without_applying_later() {
+        let (service, mixer) = fault_service();
+        let before = service.snapshot().await.unwrap().mixer;
+        let active_profile = changed_profile(before.clone());
+        let expected = active_profile.clone();
+        let mut canceled_profile = changed_profile(before);
+        canceled_profile
+            .channels
+            .iter_mut()
+            .find(|channel| channel.id == "game")
+            .unwrap()
+            .personal_volume = 58;
+        mixer.pause_once("set_source_name");
+
+        let active_service = service.clone();
+        let active =
+            tokio::spawn(async move { active_service.apply_mixer_profile(&active_profile).await });
+        mixer.wait_until_paused().await;
+
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(30),
+                service.apply_mixer_profile(&canceled_profile),
+            )
+            .await
+            .is_err(),
+            "queued profile unexpectedly acquired the transaction lock"
+        );
+
+        mixer.release_pause();
+        active.await.unwrap().unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        verify_mixer_profile(&expected, &service.snapshot().await.unwrap().mixer).unwrap();
+    }
+
+    #[tokio::test]
+    async fn profile_transaction_lock_is_released_after_verified_error_rollback() {
+        let (service, mixer) = fault_service();
+        let before = service.snapshot().await.unwrap().mixer;
+        let desired = changed_profile(before);
+        mixer.inject("set_target_device", FaultMode::FailBefore, 1);
+
+        let error = service.apply_mixer_profile(&desired).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("previous mixer state was restored")
+        );
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            service.apply_mixer_profile(&desired),
+        )
+        .await
+        .expect("profile lock was not released after error rollback")
+        .unwrap();
     }
 
     #[tokio::test]

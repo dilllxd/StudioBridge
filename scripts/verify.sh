@@ -16,7 +16,9 @@ npm --prefix web audit --omit=dev
 node --test scripts/validate-readonly.test.mjs
 node --test scripts/validate-microphone-dsp.test.mjs
 node --test scripts/validate-packaging.test.mjs
+node --test scripts/validate-native-safety.test.mjs
 node scripts/validate-packaging.mjs
+node scripts/validate-native-safety.mjs
 
 bash -n scripts/preflight-linux.sh
 bash -n scripts/bootstrap-linux-live.sh
