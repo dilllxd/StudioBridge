@@ -2,7 +2,8 @@
 
 This inventory records a non-mutating comparison made on 2026-07-15 between
 the installed BEACN app V1.2.62 and the StudioBridge native Windows mock
-runtime. Both were inspected at a 1404-by-810 outer window size. “Observed”
+runtime. Both were inspected at a 1404-by-810 outer window size, and the
+official app was also inspected at its observed 946-by-810 minimum. “Observed”
 means the control was seen in the running app; “code-inspected” means its
 StudioBridge behavior was also traced to the Slint/Rust callback. No official
 screenshots, logos, device identifiers, or long-form proprietary text are
@@ -39,21 +40,42 @@ not unfinished UI work.
 | Missing | Microphone comparison recorder/player | Official Mic Output has a 10-second record/play comparison control. StudioBridge draws the time, record dot, and play glyph as inert text. Implement a local-only capture/playback state machine with elapsed time, enabled states, cancellation, and no device writes. | P1 |
 | Partial | Voice Chat Mic copy target affordance | Official Voice Chat Mic row exposes a small disclosure affordance and a “Copy Chat Mic Output To” prompt. StudioBridge draws a chevron but has no interaction. Add a target selector backed by explicit PipeWeaver routing, without guessing or replacing unrelated routes. | P1 |
 | Partial | Global settings with no runtime effect | `beta_opt_in`, `mixing_suite_enabled`, and `meter_crossfade` are persisted and reflected in the UI but have no code-inspected consumer. Implement the behavior or mark/disable the controls until it exists; profile crossfade is the most user-visible. | P1 |
-| Partial | Profile-rail collapse reflow | Both apps hide the complete 285-pixel rail and reclaim the main area. Official settings reflow across the newly available width; StudioBridge keeps a fixed 684-pixel settings column and leaves a large blank region. Make workspace widths responsive while retaining the measured default geometry. | P1 |
+| Partial | Profile-rail collapse reflow | Official keeps the outer window fixed and reallocates the complete 285-pixel rail to the workspace. In the debug runtime captured during this audit, StudioBridge instead shrank the outer window from 1404 to 1122 pixels when the rail was hidden; reopening reported success but left the rail clipped beyond the right edge. That binary predated concurrent source edits, so rebuild and reverify the invariant below before closing this gap. | P1 |
 | Partial | Native window chrome | Default outer geometry matches, but StudioBridge shows a native Windows title bar plus its own compact header while official chrome reads as one integrated header. Decide on a Slint custom-titlebar implementation and preserve native move, resize, minimize, maximize, close, focus, and accessibility behavior. | P2 |
 
 ## Window, navigation, and profiles
 
 | Area or control | Official observed behavior | StudioBridge current state | Exact gap or acceptance check | Status / priority |
 | --- | --- | --- | --- | --- |
-| Default window | Outer window measured 1404x810; content starts at y=58. | Preferred client size accounts for Windows decoration and produces the same outer size; content starts at y=58. | Re-check at 100%, 125%, and 150% scaling; default 100% geometry is matched. | Matched / P2 |
-| Minimum/resized window | Not exhaustively measured. | Minimum is 1120x700 and major workspaces can scroll. | Measure official minimum size and verify no clipped menus at StudioBridge minimum. | Unverified / P2 |
+| Default window | Outer window measured 1404x810; content starts at y=58. | Preferred client size accounts for Windows decoration and produces the same outer size; content starts at y=58. | Current logical-pixel geometry is matched. Windows 100%, 125%, and 150% scaling were not changed or independently verified. | Matched / P2 |
+| Minimum/resized window | The outer window stopped shrinking at 946x810 in repeated bottom-right resize attempts. With profiles open, some lower Mic controls clip with no horizontal recovery. | Source declares a 1120x700 client minimum; the running debug binary reached 1122x810 after the profile-toggle regression, but a clean user-resize minimum was not captured before the binary was closed for rebuild. | Choose and document the StudioBridge minimum. At that minimum, every actionable control must remain reachable by reflow or scroll; do not reproduce the official app's unreachable clipping merely for parity. | Partial / P1 |
 | Header | Help link, two external-link icons, and profile toggle at right. | Equivalent project/support affordances and profile toggle are wired. | Keep Linux-appropriate destinations; do not copy official artwork. | Matched / P3 |
 | Left navigation | Mixer; BEACN Studio parent; Mic Chain, Lighting, Device Settings; Global Settings at bottom. | Same information architecture with StudioBridge naming. | Tighten icon shapes, indentation, selected-state dimensions, and vertical spacing using original assets only. | Partial / P2 |
-| Profile toggle | Hides the full 285px rail and expands the main workspace. | Toggle is persisted and hides/reclaims the full rail. | Fix per-workspace reflow, especially Global Settings. | Partial / P1 |
+| Profile toggle | At 1404x810, hides the full 285px rail without resizing the outer window and expands the Mic editor from 897px to 1182px while Mic Output stays 150px. | The audited debug runtime matched the open geometry, but hiding profiles shrank the outer window to 1122x810 instead of expanding the editor. Reopening left the rail clipped. | Toggling must preserve outer/client size, keep Mic Output at 150px, and change editor width by exactly the removed/reintroduced rail width after transition settles. | Partial / P1 |
 | Profile groups | Studio-device and Mixer Profiles groups have independent disclosure and section-level add affordances. | Independent disclosure is persisted; mixer add is wired; on-device creation remains unavailable. | On-device creation is intentionally unavailable; its disabled state needs a concise explanation. | Intentional deviation / P3 |
 | Mixer profile rows | Selected row is raised; hover reveals Load/Save/Duplicate/Delete actions; create generates the next numbered profile. | Rust/Slint callbacks and daemon endpoints exist for create, load, save, duplicate, and delete; hover actions and keyboard focus are present. | Destructive paths were not exercised in this audit; retain save confirmation preference and add undo/error feedback tests. | Unverified / P1 |
 | Profile save confirmation | Optional blocking overwrite confirmation. | Preference controls a functional save-confirm modal. | Verify Enter, Escape/Cancel, focus trap, and restored focus. | Matched / P2 |
+
+## Responsive-layout evidence (2026-07-15)
+
+Measurements below are logical pixels from settled window captures; profile
+transitions were allowed to finish before boundaries were recorded. The
+StudioBridge executable used for this runtime pass was built before concurrent
+source edits made later in the audit. These rows therefore preserve observed
+evidence, not a claim about an unbuilt working tree.
+
+| Surface and state | Observed geometry and overflow | Acceptance criterion |
+| --- | --- | --- |
+| Official Mic, 1404x810, profiles open | Navigation 72px; editor 897px; Mic Output 150px; profile rail 285px. EQ graph content was about 865px wide. No clipping or workspace scrollbar was visible. | StudioBridge default open boundaries remain within 1px of these measurements after a clean rebuild. |
+| Official Mic, 1404x810, profiles closed | Navigation 72px; editor 1182px; Mic Output 150px. The editor and graph gain the removed rail width; lower controls spread horizontally without clipping. | Profile toggle preserves outer size and transfers the full rail width to/from the editor; no blank reserved rail or transient end-state clipping. |
+| Official Global Settings, 1404x810, profiles open | Main region 1047px and profile rail 285px. Settings rows span about 605px after a 44px inset. Current content fits vertically with no visible scrollbar. | Open-state settings width and inset track the measured geometry; all current rows remain reachable. |
+| Official Global Settings, 1404x810, profiles closed | Main region grows to 1332px. Settings rows expand to about 752px and a far-right vertical scrollbar appears because the scaled/reflowed content becomes taller. | Closed state uses the reclaimed width, exposes vertical overflow at the workspace edge, and never strands lower rows below an unscrollable viewport. |
+| Official Mic, minimum 946x810, profiles closed | Navigation about 55px; editor about 739px; Mic Output about 152px. All major controls remained visible and no horizontal scrollbar was seen. | A documented StudioBridge minimum may differ, but its closed state must keep every action reachable and must not introduce horizontal clipping. |
+| Official Mic, minimum 946x810, profiles open | Navigation about 55px; editor 521px; Mic Output 150px; profile rail about 220px. Lower compressor content visibly clipped (including the leading edge of Simple and the amount value), the preset label ellipsized, and no horizontal recovery was visible. | Treat this as an observed upstream defect, not a target. StudioBridge must reflow, vertically scroll, or enforce a larger minimum before any actionable content becomes unreachable. |
+| Official Global Settings, minimum 946x810 | With profiles open, main/rail widths were about 671/220px and rows about 384px. With profiles closed, rows were about 507px. All current rows fit and no scrollbar was visible in either state. | Reflow should remain monotonic and usable across the supported range; scrollbar presence may change with content height, but every row must remain reachable. |
+| StudioBridge Mic, 1404x810, profiles open | Navigation 72px; editor about 898px; Mic Output 150px; profile rail about 284px. Default boundaries closely matched official. | Preserve this open-state match while fixing the toggle invariant. |
+| StudioBridge audited debug runtime, profile toggle | Hide Profiles changed the outer window from 1404x810 to 1122x810 while editor/output widths stayed about 898/152px. Show Profiles then reported success without enlarging the window; the rail remained outside the visible bounds. | P1 regression gate: hide/show must never resize the host window, and the visual rail, accessible expanded state, persisted preference, and allocated width must agree after each settled transition. Reverify on the rebuilt binary because the captured executable predates current source edits. |
+| Display scaling | No OS scaling setting was changed. Captures establish current logical-pixel geometry only; independent 100%, 125%, and 150% runs were not performed. | At each supported scale, verify default and minimum size, open/closed profiles, Global Settings overflow, Mic tabs, menus, and modal bounds with no unreachable content. Record both logical and physical pixel dimensions. |
 
 ## Mixer strips and source interactions
 
@@ -86,7 +108,7 @@ not unfinished UI work.
 
 | Area or control | Official observed behavior | StudioBridge current state | Exact gap or acceptance check | Status / priority |
 | --- | --- | --- | --- | --- |
-| Workspace geometry | EQ graph and controls above; persistent module tabs and lower editor; 150px Mic Output column; profiles at right. | Major boundaries and tab arrangement closely match at default size. | Make graph/editor scale coherently when profile rail is closed or window is resized. | Partial / P2 |
+| Workspace geometry | EQ graph and controls above; persistent module tabs and lower editor; 150px Mic Output column; profiles at right. | Major open-state boundaries closely match at default size; the audited debug runtime failed the closed-state host-window invariant. | Preserve the measured default geometry, keep Mic Output fixed at 150px, and reflow/scroll the graph and lower editor coherently when profiles close or the window resizes. | Partial / P1 |
 | Persistent state | Switching modules retains the microphone workspace and current state. | Selected module, staged snapshot, lease status, and read-back remain in one persistent workspace. | Add automated tab-switch tests that prove no staged values leak between modules. | Matched / P1 |
 | Write safety | Official controls write directly. | Only the selected DSP module can be armed for five minutes; Apply verifies read-back; Revert restores captured state. | Intentional extra controls must remain visible and must never be removed for visual parity. | Intentional deviation / P3 |
 | EQ graph/bands | Active bands appear as colored graph points; add/remove, filter type, frequency, gain, and Q controls edit the selected band. | Eight-band model, enabled-band selection, add/remove, six filter types, frequency/gain/Q, staged apply, and verify are wired. | Improve filter glyph recognizability and ensure disabled bands do not appear as active mock points. | Partial / P1 |
@@ -138,7 +160,9 @@ not unfinished UI work.
    that they are unavailable.
 2. Add EQ presets only after exact payload capture; do not infer DSP values from
    labels or screenshots.
-3. Make all workspace widths respond to profile-rail collapse and resized
-   windows, then do the typography/icon/pixel pass.
+3. Enforce the profile-toggle host-window invariant, then make every workspace
+   respond to the reclaimed rail width and supported minimum size without
+   unreachable clipping. Reverify Global Settings overflow and Mic lower-panel
+   scrolling before the typography/icon/pixel pass.
 4. Complete keyboard, accessibility, offline, and failure-rollback audits before
    hardware-in-loop Linux validation.

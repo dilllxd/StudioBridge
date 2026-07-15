@@ -758,6 +758,10 @@ impl DspSelection {
     }
 }
 
+const fn should_preserve_drawer_window_size(maximized: bool, fullscreen: bool) -> bool {
+    !maximized && !fullscreen
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let preferences = load_preferences();
     let start_in_background = should_start_in_background(
@@ -784,6 +788,13 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_studio_profiles_expanded(preferences.studio_profiles_expanded);
     window.set_mixer_profiles_expanded(preferences.mixer_profiles_expanded);
     window.set_profiles_drawer_open(preferences.profiles_drawer_open);
+    if !preferences.profiles_drawer_open {
+        // Applying a persisted collapsed layout changes Slint's preferred width
+        // before the first show; restore BEACN's measured default client size.
+        window
+            .window()
+            .set_size(slint::LogicalSize::new(1402.0, 778.0));
+    }
     let hotkey_runtime = Rc::new(RefCell::new(HotkeyRuntime::new(
         &preferences,
         client.clone(),
@@ -884,6 +895,28 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let profile_drawer_window = window.as_weak();
     window.on_save_profile_drawer(move |open| {
+        if let Some(window) = profile_drawer_window.upgrade() {
+            let size = window.window().size();
+            let preserve_size = should_preserve_drawer_window_size(
+                window.window().is_maximized(),
+                window.window().is_fullscreen(),
+            );
+            window.set_profiles_drawer_open(open);
+            if preserve_size {
+                window.window().set_size(size);
+                let restore_window = profile_drawer_window.clone();
+                slint::Timer::single_shot(Duration::ZERO, move || {
+                    if let Some(window) = restore_window.upgrade().filter(|window| {
+                        should_preserve_drawer_window_size(
+                            window.window().is_maximized(),
+                            window.window().is_fullscreen(),
+                        )
+                    }) {
+                        window.window().set_size(size);
+                    }
+                });
+            }
+        }
         let mut preferences = load_preferences();
         preferences.profiles_drawer_open = open;
         match save_preferences(&preferences) {
@@ -3322,7 +3355,8 @@ mod desktop_tests {
         preferred_default_repair, remove_eq_band, selected_dsp_enabled, set_enhancement_preset,
         set_enhancement_value, set_eq_band_type_value, set_eq_band_value,
         set_headphone_eq_band_value, set_headphone_subwoofer_value, set_selected_dsp_enabled,
-        should_start_in_background, source_name_available, update_from_values,
+        should_preserve_drawer_window_size, should_start_in_background, source_name_available,
+        update_from_values,
     };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
@@ -3933,5 +3967,33 @@ mod desktop_tests {
         assert!(ui.contains("label: \"Attack\"; value-label:"));
         assert!(ui.contains("label: \"Release\"; value-label:"));
         assert!(ui.contains("root.apply-dsp(root.dsp-value-a, root.dsp-value-b, root.dsp-value-c, root.dsp-value-d, root.dsp-value-e)"));
+    }
+
+    #[test]
+    fn profile_rail_reflow_contract_preserves_defaults_and_reclaims_space() {
+        let ui = include_str!("../ui/app-window.slint");
+
+        assert!(ui.contains("settings-content-width: root.profiles-drawer-open ? 684px : 865px;"));
+        assert!(ui.contains("settings-left-padding: root.profiles-drawer-open ? 44px : 55px;"));
+        assert!(ui.contains("padding-right: root.profiles-drawer-open ? 34px : 45px;"));
+        assert!(ui.contains("if root.active-page == 4: settings-scroll := ScrollView"));
+        assert!(ui.contains("width: root.settings-content-width;"));
+
+        assert!(ui.contains("width: 897px;\n                    horizontal-stretch: 1;"));
+        assert!(ui.contains("x: 28px; y: 20px; width: parent.width - 33px;"));
+        assert!(ui.contains("x: parent.width - 174px; y: 5px; width: 78px;"));
+        assert!(ui.contains("width: max(755px, parent.width - 290px);"));
+        assert!(ui.contains("x: parent.width - 229px; y: 145px;"));
+
+        let conditional_stretch = "horizontal-stretch: root.profiles-drawer-open ? 0 : 1;";
+        assert!(ui.matches(conditional_stretch).count() >= 2);
+        assert!(ui.contains("min-width: 1120px;"));
+        assert!(ui.contains("init => { root.width = 1402px; root.height = 778px; }"));
+        assert!(ui.contains("root.save-profile-drawer(!root.profiles-drawer-open);"));
+        assert!(ui.contains("popup-width: 232px;"));
+
+        assert!(should_preserve_drawer_window_size(false, false));
+        assert!(!should_preserve_drawer_window_size(true, false));
+        assert!(!should_preserve_drawer_window_size(false, true));
     }
 }
