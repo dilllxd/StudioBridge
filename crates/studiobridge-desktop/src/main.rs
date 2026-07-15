@@ -2,12 +2,15 @@ use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey:
 use serde::{Deserialize, Serialize};
 use slint::{Color, Model, ModelRc, SharedString, VecModel, Weak};
 #[cfg(target_os = "linux")]
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -40,13 +43,151 @@ use studiobridge_core::{
 };
 
 mod client;
-use client::DaemonClient;
+use client::{DaemonClient, DaemonClientError, DaemonErrorKind};
 
 slint::include_modules!();
 
 const METER_URL: &str = "ws://127.0.0.1:14565/api/websocket/meter";
 const PROJECT_URL: &str = "https://github.com/dilllxd/StudioBridge";
 const SUPPORT_URL: &str = "https://github.com/dilllxd/StudioBridge/issues";
+static DAEMON_READY: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DaemonStatusPresentation {
+    kind: &'static str,
+    title: &'static str,
+    detail: String,
+    status: String,
+}
+
+#[derive(Debug, Clone)]
+struct RefreshStatus {
+    status: String,
+    alert: bool,
+    failure_context: String,
+    requires_profile_readback: bool,
+    preferred_default: Option<(bool, String)>,
+}
+
+fn daemon_status_for_kind(kind: DaemonErrorKind, context: &str) -> DaemonStatusPresentation {
+    let (kind, title, reason, detail) = match kind {
+        DaemonErrorKind::Offline => (
+            "offline",
+            "STUDIOBRIDGE DAEMON IS OFFLINE",
+            "daemon offline",
+            "StudioBridge cannot reach the local daemon at 127.0.0.1:17840. Start or restart the daemon, then retry.",
+        ),
+        DaemonErrorKind::Timeout => (
+            "timeout",
+            "STUDIOBRIDGE DAEMON DID NOT RESPOND",
+            "request timed out",
+            "The local daemon did not answer within the bounded timeout. No change is assumed to have completed.",
+        ),
+        DaemonErrorKind::HttpStatus(status) => {
+            return DaemonStatusPresentation {
+                kind: "http",
+                title: "STUDIOBRIDGE DAEMON REJECTED THE REQUEST",
+                detail: format!(
+                    "The local daemon returned HTTP {status}. Existing read-only data remains available; retry after checking the daemon status."
+                ),
+                status: format!("{context}: daemon returned HTTP {status}"),
+            };
+        }
+        DaemonErrorKind::InvalidResponse => (
+            "invalid_response",
+            "STUDIOBRIDGE DAEMON RESPONSE IS INVALID",
+            "invalid daemon response",
+            "The daemon replied, but StudioBridge could not safely decode its response. Controls remain unconfirmed until a valid refresh succeeds.",
+        ),
+        DaemonErrorKind::Transport => (
+            "transport",
+            "STUDIOBRIDGE DAEMON CONNECTION FAILED",
+            "daemon transport failed",
+            "The localhost connection failed outside the normal offline or timeout cases. No change is assumed to have completed.",
+        ),
+    };
+    DaemonStatusPresentation {
+        kind,
+        title,
+        detail: detail.into(),
+        status: format!("{context}: {reason}"),
+    }
+}
+
+fn daemon_status_for_error(error: &DaemonClientError, context: &str) -> DaemonStatusPresentation {
+    daemon_status_for_kind(error.kind(), context)
+}
+
+fn daemon_not_ready_status(context: &str) -> DaemonStatusPresentation {
+    DaemonStatusPresentation {
+        kind: "not_ready",
+        title: "STUDIOBRIDGE DAEMON IS NOT READY",
+        detail: "The local daemon answered but reported that its audio runtime is not ready. Read-only navigation remains available.".into(),
+        status: format!("{context}: daemon reported not ready"),
+    }
+}
+
+fn default_readback_matches(snapshot: &AppSnapshot, input: bool, requested_id: &str) -> bool {
+    if input {
+        default_selection_matches(snapshot.mixer.default_input.as_deref(), requested_id)
+    } else {
+        default_selection_matches(snapshot.mixer.default_output.as_deref(), requested_id)
+    }
+}
+
+fn default_selection_matches(actual: Option<&str>, requested_id: &str) -> bool {
+    actual == Some(requested_id)
+}
+
+fn mutation_refresh_status(action: &str, result: &Result<(), DaemonClientError>) -> RefreshStatus {
+    let failure_context = format!("{action} was not confirmed");
+    match result {
+        Ok(()) => RefreshStatus {
+            status: format!("{action} request accepted; current state reloaded"),
+            alert: false,
+            failure_context,
+            requires_profile_readback: false,
+            preferred_default: None,
+        },
+        Err(error) => {
+            let presentation = daemon_status_for_error(error, &failure_context);
+            let ambiguity = if error.kind() == DaemonErrorKind::Timeout {
+                "; result was ambiguous, so current state was reloaded"
+            } else {
+                "; current state was reloaded"
+            };
+            RefreshStatus {
+                status: format!("{}{ambiguity}", presentation.status),
+                alert: true,
+                failure_context,
+                requires_profile_readback: false,
+                preferred_default: None,
+            }
+        }
+    }
+}
+
+fn profile_mutation_refresh_status(
+    action: &str,
+    result: &Result<(), DaemonClientError>,
+) -> RefreshStatus {
+    let mut status = mutation_refresh_status(action, result);
+    status.requires_profile_readback = true;
+    status
+}
+
+fn default_mutation_refresh_status(
+    action: &str,
+    result: &Result<(), DaemonClientError>,
+    input: bool,
+    requested_id: &str,
+) -> RefreshStatus {
+    let mut status = mutation_refresh_status(action, result);
+    if result.is_ok() {
+        status.preferred_default = Some((input, requested_id.into()));
+    }
+    status
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -629,28 +770,57 @@ fn using_wayland() -> bool {
 
 fn execute_hotkey_action(action: String, client: DaemonClient, window: Weak<MainWindow>) {
     thread::spawn(move || {
-        if let Some(profile) = action.strip_prefix("profile:") {
-            match client.load_mixer_profile(profile) {
-                Ok(()) => set_status(window.clone(), format!("Loaded mixer profile {profile}")),
-                Err(error) => set_status(window.clone(), format!("Hotkey failed: {error}")),
+        match client.health() {
+            Ok(health) if health.ok => {}
+            Ok(_) => {
+                set_daemon_failure(
+                    window,
+                    daemon_not_ready_status("Hotkey action was not attempted"),
+                );
+                return;
             }
+            Err(error) => {
+                set_daemon_failure(
+                    window,
+                    daemon_status_for_error(&error, "Hotkey action was not attempted"),
+                );
+                return;
+            }
+        }
+        let mut terminal_status = None;
+        if let Some(profile) = action.strip_prefix("profile:") {
+            let result = client.load_mixer_profile(profile);
+            terminal_status = Some(profile_mutation_refresh_status("Profile hotkey", &result));
         } else if let Some(channel_id) = action.strip_prefix("mute:") {
-            let current = client.snapshot().ok().and_then(|snapshot| {
-                snapshot
+            let current = match client.snapshot() {
+                Ok(snapshot) => snapshot
                     .mixer
                     .channels
                     .into_iter()
-                    .find(|channel| channel.id == channel_id)
-            });
+                    .find(|channel| channel.id == channel_id),
+                Err(error) => {
+                    refresh_after_mutation(window, client, Err(error), "Mute hotkey");
+                    return;
+                }
+            };
             if let Some(current) = current {
                 let next = if current.mute_state == MuteState::Unmuted {
                     MuteState::MutedAll
                 } else {
                     MuteState::Unmuted
                 };
-                if let Err(error) = client.set_mute(channel_id, next) {
-                    set_status(window.clone(), format!("Hotkey failed: {error}"));
-                }
+                let result = client.set_mute(channel_id, next);
+                terminal_status = Some(mutation_refresh_status("Mute hotkey", &result));
+            } else {
+                terminal_status = Some(RefreshStatus {
+                    status:
+                        "Mute hotkey was not attempted: source is absent from the current read-back"
+                            .into(),
+                    alert: true,
+                    failure_context: "Mute hotkey was not confirmed".into(),
+                    requires_profile_readback: false,
+                    preferred_default: None,
+                });
             }
         } else if action == "mix:toggle-personal-device" {
             match client.snapshot() {
@@ -669,30 +839,36 @@ fn execute_hotkey_action(action: String, client: DaemonClient, window: Weak<Main
                         .unwrap_or(0);
                     let next = &snapshot.mixer.default_outputs
                         [(current + 1) % snapshot.mixer.default_outputs.len()];
-                    match client.set_default_output(&next.id) {
-                        Ok(()) => match remember_preferred_default(false, &next.id) {
-                            Ok(()) => set_status(
-                                window.clone(),
-                                format!("Personal Mix device: {}", next.name),
-                            ),
-                            Err(error) => set_status(
-                                window.clone(),
-                                format!(
-                                    "Personal Mix device updated; automatic reset save failed: {error}"
-                                ),
-                            ),
-                        },
-                        Err(error) => set_status(window.clone(), format!("Hotkey failed: {error}")),
-                    }
+                    let result = client.set_default_output(&next.id);
+                    let status = default_mutation_refresh_status(
+                        "Personal Mix device hotkey",
+                        &result,
+                        false,
+                        &next.id,
+                    );
+                    terminal_status = Some(status);
                 }
-                Ok(_) => set_status(
-                    window.clone(),
-                    "Personal Mix device cycling needs at least two outputs".into(),
-                ),
-                Err(error) => set_status(window.clone(), format!("Hotkey failed: {error}")),
+                Ok(_) => {
+                    terminal_status = Some(RefreshStatus {
+                        status: "Personal Mix device cycling needs at least two outputs".into(),
+                        alert: true,
+                        failure_context: "Personal Mix device hotkey was not confirmed".into(),
+                        requires_profile_readback: false,
+                        preferred_default: None,
+                    });
+                }
+                Err(error) => {
+                    refresh_after_mutation(
+                        window,
+                        client,
+                        Err(error),
+                        "Personal Mix device hotkey",
+                    );
+                    return;
+                }
             }
         }
-        refresh_all(window, client);
+        refresh_all_with_status(window, client, terminal_status);
     });
 }
 
@@ -997,6 +1173,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let volume_client = client.clone();
     window.on_set_volume(move |channel_id, mix, value| {
         let window = volume_window.clone();
+        if !daemon_write_allowed(&window, "Volume update") {
+            return;
+        }
         let client = volume_client.clone();
         let channel_id = channel_id.to_string();
         let mix = if mix == "personal" {
@@ -1006,10 +1185,8 @@ fn main() -> Result<(), slint::PlatformError> {
         };
         thread::spawn(move || {
             let volume = value.round().clamp(0.0, 100.0) as u8;
-            if let Err(error) = client.set_volume(&channel_id, mix, volume) {
-                set_status(window.clone(), format!("Volume update failed: {error}"));
-            }
-            refresh_all(window, client);
+            let result = client.set_volume(&channel_id, mix, volume);
+            refresh_after_mutation(window, client, result, "Volume update");
         });
     });
 
@@ -1017,17 +1194,15 @@ fn main() -> Result<(), slint::PlatformError> {
     let target_volume_client = client.clone();
     window.on_set_target_volume(move |target_id, value| {
         let window = target_volume_window.clone();
+        if !daemon_write_allowed(&window, "Output volume update") {
+            return;
+        }
         let client = target_volume_client.clone();
         let target_id = target_id.to_string();
         thread::spawn(move || {
             let volume = value.round().clamp(0.0, 100.0) as u8;
-            if let Err(error) = client.set_target_volume(&target_id, volume) {
-                set_status(
-                    window.clone(),
-                    format!("Output volume update failed: {error}"),
-                );
-            }
-            refresh_all(window, client);
+            let result = client.set_target_volume(&target_id, volume);
+            refresh_after_mutation(window, client, result, "Output volume update");
         });
     });
 
@@ -1035,16 +1210,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let target_mute_client = client.clone();
     window.on_set_target_mute(move |target_id, muted| {
         let window = target_mute_window.clone();
+        if !daemon_write_allowed(&window, "Output mute update") {
+            return;
+        }
         let client = target_mute_client.clone();
         let target_id = target_id.to_string();
         thread::spawn(move || {
-            if let Err(error) = client.set_target_mute(&target_id, muted) {
-                set_status(
-                    window.clone(),
-                    format!("Output mute update failed: {error}"),
-                );
-            }
-            refresh_all(window, client);
+            let result = client.set_target_mute(&target_id, muted);
+            refresh_after_mutation(window, client, result, "Output mute update");
         });
     });
 
@@ -1052,6 +1225,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let target_device_client = client.clone();
     window.on_set_target_device(move |target_id, device_node_id| {
         let window = target_device_window.clone();
+        if !daemon_write_allowed(&window, "Output device update") {
+            return;
+        }
         let client = target_device_client.clone();
         let target_id = target_id.to_string();
         let device_node_id = device_node_id.to_string();
@@ -1070,14 +1246,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                 }
             };
-            match client.set_target_device(&target_id, node_id) {
-                Ok(()) => set_status(window.clone(), format!("{target_id} output device updated")),
-                Err(error) => set_status(
-                    window.clone(),
-                    format!("Output device update failed: {error}"),
-                ),
-            }
-            refresh_all(window, client);
+            let result = client.set_target_device(&target_id, node_id);
+            refresh_after_mutation(window, client, result, "Output device update");
         });
     });
 
@@ -1085,6 +1255,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let source_device_client = client.clone();
     window.on_set_source_device(move |channel_id, device_node_id| {
         let window = source_device_window.clone();
+        if !daemon_write_allowed(&window, "Input device update") {
+            return;
+        }
         let client = source_device_client.clone();
         let channel_id = channel_id.to_string();
         let device_node_id = device_node_id.to_string();
@@ -1103,14 +1276,8 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                 }
             };
-            match client.set_source_device(&channel_id, node_id) {
-                Ok(()) => set_status(window.clone(), format!("{channel_id} input device updated")),
-                Err(error) => set_status(
-                    window.clone(),
-                    format!("Input device update failed: {error}"),
-                ),
-            }
-            refresh_all(window, client);
+            let result = client.set_source_device(&channel_id, node_id);
+            refresh_after_mutation(window, client, result, "Input device update");
         });
     });
 
@@ -1118,6 +1285,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let link_output_client = client.clone();
     window.on_set_link_output_assignment(move |output_node_id, target_id| {
         let window = link_output_window.clone();
+        if !daemon_write_allowed(&window, "Outgoing Studio Link update") {
+            return;
+        }
         let client = link_output_client.clone();
         let output_node_id = output_node_id.to_string();
         let target_id = target_id.to_string();
@@ -1130,14 +1300,8 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             };
             let target_id = (!target_id.is_empty()).then_some(target_id);
-            match client.set_link_output_assignment(node_id, target_id.as_deref()) {
-                Ok(()) => set_status(window.clone(), "Outgoing Studio Link updated".into()),
-                Err(error) => set_status(
-                    window.clone(),
-                    format!("Outgoing Studio Link update failed: {error}"),
-                ),
-            }
-            refresh_all(window, client);
+            let result = client.set_link_output_assignment(node_id, target_id.as_deref());
+            refresh_after_mutation(window, client, result, "Outgoing Studio Link update");
         });
     });
 
@@ -1145,25 +1309,20 @@ fn main() -> Result<(), slint::PlatformError> {
     let default_input_client = client.clone();
     window.on_set_default_input(move |device_id| {
         let window = default_input_window.clone();
+        if !daemon_write_allowed(&window, "Default recording device update") {
+            return;
+        }
         let client = default_input_client.clone();
         let device_id = device_id.to_string();
         thread::spawn(move || {
-            match client.set_default_input(&device_id) {
-                Ok(()) => match remember_preferred_default(true, &device_id) {
-                    Ok(()) => set_status(window.clone(), "Default recording device updated".into()),
-                    Err(error) => set_status(
-                        window.clone(),
-                        format!(
-                            "Default recording device updated; automatic reset save failed: {error}"
-                        ),
-                    ),
-                },
-                Err(error) => set_status(
-                    window.clone(),
-                    format!("Default recording device failed: {error}"),
-                ),
-            }
-            refresh_all(window, client);
+            let result = client.set_default_input(&device_id);
+            let status = default_mutation_refresh_status(
+                "Default recording device update",
+                &result,
+                true,
+                &device_id,
+            );
+            refresh_all_with_status(window, client, Some(status));
         });
     });
 
@@ -1171,25 +1330,20 @@ fn main() -> Result<(), slint::PlatformError> {
     let default_output_client = client.clone();
     window.on_set_default_output(move |device_id| {
         let window = default_output_window.clone();
+        if !daemon_write_allowed(&window, "Default playback device update") {
+            return;
+        }
         let client = default_output_client.clone();
         let device_id = device_id.to_string();
         thread::spawn(move || {
-            match client.set_default_output(&device_id) {
-                Ok(()) => match remember_preferred_default(false, &device_id) {
-                    Ok(()) => set_status(window.clone(), "Default playback device updated".into()),
-                    Err(error) => set_status(
-                        window.clone(),
-                        format!(
-                            "Default playback device updated; automatic reset save failed: {error}"
-                        ),
-                    ),
-                },
-                Err(error) => set_status(
-                    window.clone(),
-                    format!("Default playback device failed: {error}"),
-                ),
-            }
-            refresh_all(window, client);
+            let result = client.set_default_output(&device_id);
+            let status = default_mutation_refresh_status(
+                "Default playback device update",
+                &result,
+                false,
+                &device_id,
+            );
+            refresh_all_with_status(window, client, Some(status));
         });
     });
 
@@ -1197,26 +1351,39 @@ fn main() -> Result<(), slint::PlatformError> {
     let mute_client = client.clone();
     window.on_set_source_mute(move |channel_id, mix, muted| {
         let window = mute_window.clone();
+        if !daemon_write_allowed(&window, "Mute update") { return; }
         let client = mute_client.clone();
         let channel_id = channel_id.to_string();
         let mix = mix.to_string();
         thread::spawn(move || {
-            let current = client.snapshot().ok().and_then(|snapshot| {
-                snapshot
+            let current = match client.snapshot() {
+                Ok(snapshot) => snapshot
                     .mixer
                     .channels
                     .into_iter()
-                    .find(|channel| channel.id == channel_id)
-            });
+                    .find(|channel| channel.id == channel_id),
+                Err(error) => {
+                    refresh_after_mutation(window, client, Err(error), "Mute update");
+                    return;
+                }
+            };
             let Some(current) = current else {
-                set_status(window, "Could not read the current mute state".into());
+                refresh_all_with_status(
+                    window,
+                    client,
+                    Some(RefreshStatus {
+                        status: "Mute update was not attempted: source is absent from the current read-back".into(),
+                        alert: true,
+                        failure_context: "Mute update was not confirmed".into(),
+                        requires_profile_readback: false,
+                        preferred_default: None,
+                    }),
+                );
                 return;
             };
             let state = mute_state_with_target(current.mute_state, &mix, muted);
-            if let Err(error) = client.set_mute(&channel_id, state) {
-                set_status(window.clone(), format!("Mute update failed: {error}"));
-            }
-            refresh_all(window, client);
+            let result = client.set_mute(&channel_id, state);
+            refresh_after_mutation(window, client, result, "Mute update");
         });
     });
 
@@ -1244,13 +1411,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let link_volume_client = client.clone();
     window.on_set_volume_linked(move |channel_id, linked| {
         let window = link_volume_window.clone();
+        if !daemon_write_allowed(&window, "Level link update") {
+            return;
+        }
         let client = link_volume_client.clone();
         let channel_id = channel_id.to_string();
         thread::spawn(move || {
-            if let Err(error) = client.set_volume_linked(&channel_id, linked) {
-                set_status(window.clone(), format!("Level link update failed: {error}"));
-            }
-            refresh_all(window, client);
+            let result = client.set_volume_linked(&channel_id, linked);
+            refresh_after_mutation(window, client, result, "Level link update");
         });
     });
 
@@ -1258,15 +1426,15 @@ fn main() -> Result<(), slint::PlatformError> {
     let route_client = client.clone();
     window.on_set_route(move |source_id, target_id, enabled| {
         let window = route_window.clone();
+        if !daemon_write_allowed(&window, "Software route update") {
+            return;
+        }
         let client = route_client.clone();
         let source_id = source_id.to_string();
         let target_id = target_id.to_string();
         thread::spawn(move || {
-            match client.set_route(&source_id, &target_id, enabled) {
-                Ok(()) => set_status(window.clone(), "Software route updated".into()),
-                Err(error) => set_status(window.clone(), format!("Route update failed: {error}")),
-            }
-            refresh_all(window, client);
+            let result = client.set_route(&source_id, &target_id, enabled);
+            refresh_after_mutation(window, client, result, "Software route update");
         });
     });
 
@@ -1274,14 +1442,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let create_source_client = client.clone();
     window.on_create_source(move |name| {
         let window = create_source_window.clone();
+        if !daemon_write_allowed(&window, "Add mixer knob") {
+            return;
+        }
         let client = create_source_client.clone();
         let name = name.to_string();
         thread::spawn(move || {
-            match client.create_source(&name) {
-                Ok(()) => set_status(window.clone(), format!("Added {name} mixer knob")),
-                Err(error) => set_status(window.clone(), format!("Add knob failed: {error}")),
-            }
-            refresh_all(window, client);
+            let result = client.create_source(&name);
+            refresh_after_mutation(window, client, result, "Add mixer knob");
         });
     });
 
@@ -1289,14 +1457,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let remove_source_client = client.clone();
     window.on_remove_source(move |source_id| {
         let window = remove_source_window.clone();
+        if !daemon_write_allowed(&window, "Remove mixer knob") {
+            return;
+        }
         let client = remove_source_client.clone();
         let source_id = source_id.to_string();
         thread::spawn(move || {
-            match client.remove_source(&source_id) {
-                Ok(()) => set_status(window.clone(), "Mixer knob removed".into()),
-                Err(error) => set_status(window.clone(), format!("Remove knob failed: {error}")),
-            }
-            refresh_all(window, client);
+            let result = client.remove_source(&source_id);
+            refresh_after_mutation(window, client, result, "Remove mixer knob");
         });
     });
 
@@ -1304,12 +1472,18 @@ fn main() -> Result<(), slint::PlatformError> {
     let reorder_source_client = client.clone();
     window.on_reorder_source(move |source_id, requested_position| {
         let window = reorder_source_window.clone();
+        if !daemon_write_allowed(&window, "Mixer knob reorder") {
+            return;
+        }
         let client = reorder_source_client.clone();
         let source_id = source_id.to_string();
         thread::spawn(move || {
-            let Ok(snapshot) = client.snapshot() else {
-                set_status(window, "Could not read the current source order".into());
-                return;
+            let snapshot = match client.snapshot() {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    refresh_after_mutation(window, client, Err(error), "Mixer knob reorder");
+                    return;
+                }
             };
             let count = snapshot.mixer.channels.len();
             if count == 0 || !requested_position.is_finite() {
@@ -1325,11 +1499,8 @@ fn main() -> Result<(), slint::PlatformError> {
             if current == Some(position) {
                 return;
             }
-            match client.reorder_source(&source_id, position) {
-                Ok(()) => set_status(window.clone(), "Mixer knob order updated".into()),
-                Err(error) => set_status(window.clone(), format!("Reorder failed: {error}")),
-            }
-            refresh_all(window, client);
+            let result = client.reorder_source(&source_id, position);
+            refresh_after_mutation(window, client, result, "Mixer knob reorder");
         });
     });
 
@@ -1337,15 +1508,13 @@ fn main() -> Result<(), slint::PlatformError> {
     let create_profile_client = client.clone();
     window.on_create_mixer_profile(move || {
         let window = create_profile_window.clone();
+        if !daemon_write_allowed(&window, "Mixer profile creation") {
+            return;
+        }
         let client = create_profile_client.clone();
         thread::spawn(move || {
-            match client.create_mixer_profile() {
-                Ok(()) => set_status(window.clone(), "Created a new mixer profile".into()),
-                Err(error) => {
-                    set_status(window.clone(), format!("Profile creation failed: {error}"))
-                }
-            }
-            refresh_all(window, client);
+            let result = client.create_mixer_profile();
+            refresh_after_profile_mutation(window, client, result, "Mixer profile creation");
         });
     });
 
@@ -1353,14 +1522,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let save_profile_client = client.clone();
     window.on_save_mixer_profile(move |name| {
         let window = save_profile_window.clone();
+        if !daemon_write_allowed(&window, "Mixer profile save") {
+            return;
+        }
         let client = save_profile_client.clone();
         let name = name.to_string();
         thread::spawn(move || {
-            match client.save_mixer_profile(&name) {
-                Ok(()) => set_status(window.clone(), format!("Saved mixer profile {name}")),
-                Err(error) => set_status(window.clone(), format!("Profile save failed: {error}")),
-            }
-            refresh_all(window, client);
+            let result = client.save_mixer_profile(&name);
+            refresh_after_profile_mutation(window, client, result, "Mixer profile save");
         });
     });
 
@@ -1368,17 +1537,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let duplicate_profile_client = client.clone();
     window.on_duplicate_mixer_profile(move |name| {
         let window = duplicate_profile_window.clone();
+        if !daemon_write_allowed(&window, "Mixer profile duplication") {
+            return;
+        }
         let client = duplicate_profile_client.clone();
         let name = name.to_string();
         thread::spawn(move || {
-            match client.duplicate_mixer_profile(&name) {
-                Ok(()) => set_status(window.clone(), format!("Duplicated mixer profile {name}")),
-                Err(error) => set_status(
-                    window.clone(),
-                    format!("Profile duplication failed: {error}"),
-                ),
-            }
-            refresh_all(window, client);
+            let result = client.duplicate_mixer_profile(&name);
+            refresh_after_profile_mutation(window, client, result, "Mixer profile duplication");
         });
     });
 
@@ -1386,14 +1552,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let load_profile_client = client.clone();
     window.on_load_mixer_profile(move |name| {
         let window = load_profile_window.clone();
+        if !daemon_write_allowed(&window, "Mixer profile load") {
+            return;
+        }
         let client = load_profile_client.clone();
         let name = name.to_string();
         thread::spawn(move || {
-            match client.load_mixer_profile(&name) {
-                Ok(()) => set_status(window.clone(), format!("Loaded mixer profile {name}")),
-                Err(error) => set_status(window.clone(), format!("Profile load failed: {error}")),
-            }
-            refresh_all(window, client);
+            let result = client.load_mixer_profile(&name);
+            refresh_after_profile_mutation(window, client, result, "Mixer profile load");
         });
     });
 
@@ -1401,14 +1567,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let delete_profile_client = client.clone();
     window.on_delete_mixer_profile(move |name| {
         let window = delete_profile_window.clone();
+        if !daemon_write_allowed(&window, "Mixer profile deletion") {
+            return;
+        }
         let client = delete_profile_client.clone();
         let name = name.to_string();
         thread::spawn(move || {
-            match client.delete_mixer_profile(&name) {
-                Ok(()) => set_status(window.clone(), format!("Deleted mixer profile {name}")),
-                Err(error) => set_status(window.clone(), format!("Profile delete failed: {error}")),
-            }
-            refresh_all(window, client);
+            let result = client.delete_mixer_profile(&name);
+            refresh_after_profile_mutation(window, client, result, "Mixer profile deletion");
         });
     });
 
@@ -1416,6 +1582,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let linux_app_client = client.clone();
     window.on_assign_linux_application(move |process, name, channel_index| {
         let window = linux_app_window.clone();
+        if !daemon_write_allowed(&window, "Linux application assignment") {
+            return;
+        }
         let client = linux_app_client.clone();
         let process = process.to_string();
         let name = name.to_string();
@@ -1431,14 +1600,8 @@ fn main() -> Result<(), slint::PlatformError> {
                         .map(|channel| channel.id.clone())
                 })
             };
-            match client.set_mixer_application(&process, &name, channel_id) {
-                Ok(()) => set_status(window.clone(), "Linux application assigned".into()),
-                Err(error) => set_status(
-                    window.clone(),
-                    format!("Application assignment failed: {error}"),
-                ),
-            }
-            refresh_all(window, client);
+            let result = client.set_mixer_application(&process, &name, channel_id);
+            refresh_after_mutation(window, client, result, "Linux application assignment");
         });
     });
 
@@ -1446,6 +1609,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let link_app_client = client.clone();
     window.on_assign_link_application(move |application, channel_index| {
         let window = link_app_window.clone();
+        if !daemon_write_allowed(&window, "Windows Link assignment") {
+            return;
+        }
         let client = link_app_client.clone();
         let application = application.to_string();
         let channel = match channel_index {
@@ -1456,13 +1622,8 @@ fn main() -> Result<(), slint::PlatformError> {
             _ => LinkChannel::System,
         };
         thread::spawn(move || {
-            match client.set_link_application(&application, channel) {
-                Ok(()) => set_status(window.clone(), "Windows Link assignment updated".into()),
-                Err(error) => {
-                    set_status(window.clone(), format!("Link assignment failed: {error}"))
-                }
-            }
-            refresh_all(window, client);
+            let result = client.set_link_application(&application, channel);
+            refresh_after_mutation(window, client, result, "Windows Link assignment");
         });
     });
 
@@ -1765,13 +1926,19 @@ fn main() -> Result<(), slint::PlatformError> {
     let disarm_client = client.clone();
     window.on_disarm_dsp(move || {
         let window = disarm_window.clone();
+        if !daemon_write_allowed(&window, "DSP disarm") {
+            return;
+        }
         let client = disarm_client.clone();
-        thread::spawn(move || match client.disarm_dsp() {
-            Ok(()) => {
-                set_status(window.clone(), "DSP editing disarmed".into());
-                set_dsp_lease(window, None, None);
+        thread::spawn(move || {
+            let result = client.disarm_dsp();
+            if result.is_ok() {
+                set_dsp_lease(window.clone(), None, None);
+            } else {
+                refresh_after_mutation(window, client, result, "DSP disarm");
+                return;
             }
-            Err(error) => set_status(window, format!("Could not disarm DSP editing: {error}")),
+            refresh_after_mutation(window, client, result, "DSP disarm");
         });
     });
 
@@ -1978,6 +2145,48 @@ fn string_model(values: Vec<String>) -> ModelRc<SharedString> {
 }
 
 fn refresh_all(window: Weak<MainWindow>, client: DaemonClient) {
+    refresh_all_with_status(window, client, None);
+}
+
+fn refresh_after_mutation(
+    window: Weak<MainWindow>,
+    client: DaemonClient,
+    result: Result<(), DaemonClientError>,
+    action: &str,
+) {
+    let status = mutation_refresh_status(action, &result);
+    refresh_all_with_status(window, client, Some(status));
+}
+
+fn refresh_after_profile_mutation(
+    window: Weak<MainWindow>,
+    client: DaemonClient,
+    result: Result<(), DaemonClientError>,
+    action: &str,
+) {
+    let status = profile_mutation_refresh_status(action, &result);
+    refresh_all_with_status(window, client, Some(status));
+}
+
+fn apply_daemon_failure(window: &MainWindow, presentation: &DaemonStatusPresentation) {
+    DAEMON_READY.store(false, Ordering::SeqCst);
+    window.set_daemon_connected(false);
+    window.set_hardware_safe(true);
+    window.set_link_active(false);
+    window.set_dsp_gate_count(0);
+    window.set_arm_confirm_pending(false);
+    window.set_daemon_status_kind(presentation.kind.into());
+    window.set_daemon_status_title(presentation.title.into());
+    window.set_daemon_status_detail(presentation.detail.clone().into());
+    window.set_status_alert(true);
+    window.set_status_text(presentation.status.clone().into());
+}
+
+fn refresh_all_with_status(
+    window: Weak<MainWindow>,
+    client: DaemonClient,
+    mut terminal_status: Option<RefreshStatus>,
+) {
     thread::spawn(move || {
         let health = client.health();
         let snapshot = client.snapshot();
@@ -1997,41 +2206,109 @@ fn refresh_all(window: Weak<MainWindow>, client: DaemonClient) {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
+            let failure_context = terminal_status.as_ref().map_or_else(
+                || "Refresh failed".to_string(),
+                |status| status.failure_context.clone(),
+            );
+            if let Some(status) = terminal_status.as_mut()
+                && let Some((input, requested_id)) = status.preferred_default.take()
+            {
+                match snapshot.as_ref() {
+                    Ok(snapshot) if default_readback_matches(snapshot, input, &requested_id) => {
+                        if let Err(error) = remember_preferred_default(input, &requested_id) {
+                            status.status = format!(
+                                "{}; current state reloaded, but automatic reset preference save failed: {error}",
+                                status.failure_context
+                            );
+                            status.alert = true;
+                        }
+                    }
+                    Ok(_) => {
+                        status.status = format!(
+                            "{}: requested default was not confirmed by read-back; automatic reset preference unchanged",
+                            status.failure_context
+                        );
+                        status.alert = true;
+                    }
+                    Err(_) => {}
+                }
+            }
+            let mut ready = false;
             match health {
-                Ok(health) => {
+                Ok(health) if health.ok => {
+                    DAEMON_READY.store(true, Ordering::SeqCst);
                     let safe = !health.hardware_writes_enabled;
-                    window.set_daemon_connected(health.ok);
+                    ready = true;
+                    window.set_daemon_connected(true);
                     window.set_hardware_safe(safe);
                     window.set_link_active(health.link_control_enabled);
                     window.set_dsp_gate_count(health.dsp_write_modules.len() as i32);
+                    window.set_daemon_status_kind("ready".into());
+                    window.set_daemon_status_title("STUDIOBRIDGE DAEMON IS READY".into());
+                    window.set_daemon_status_detail("Local audio state is current.".into());
+                    window.set_status_alert(false);
                     window.set_status_text(
                         format!("{} + {}", health.studio_mode, health.mixer_mode).into(),
                     );
                 }
+                Ok(_) => apply_daemon_failure(&window, &daemon_not_ready_status(&failure_context)),
                 Err(error) => {
-                    window.set_daemon_connected(false);
-                    window.set_hardware_safe(true);
-                    window.set_arm_confirm_pending(false);
-                    window.set_status_text(format!("Daemon unavailable: {error}").into());
+                    apply_daemon_failure(
+                        &window,
+                        &daemon_status_for_error(&error, &failure_context),
+                    );
                 }
             }
             match snapshot {
-                Ok(snapshot) => apply_snapshot(&window, snapshot, &profile_names),
-                Err(error) => {
-                    window.set_status_text(format!("Snapshot unavailable: {error}").into())
+                Ok(snapshot) if ready => apply_snapshot(&window, snapshot, &profile_names),
+                Ok(_) => {}
+                Err(error) if ready => {
+                    ready = false;
+                    apply_daemon_failure(
+                        &window,
+                        &daemon_status_for_error(&error, &failure_context),
+                    );
                 }
+                Err(_) => {}
             }
-            if let Ok(profiles) = profiles {
-                window.set_mixer_profiles(ModelRc::from(Rc::new(VecModel::from(
-                    profiles
-                        .profiles
-                        .into_iter()
-                        .map(|profile| ProfileModel {
-                            name: profile.name.into(),
-                            active: profile.active,
-                        })
-                        .collect::<Vec<_>>(),
-                ))));
+            let mut profile_readback_error = None;
+            match profiles {
+                Ok(profiles) if ready => {
+                    window.set_mixer_profiles(ModelRc::from(Rc::new(VecModel::from(
+                        profiles
+                            .profiles
+                            .into_iter()
+                            .map(|profile| ProfileModel {
+                                name: profile.name.into(),
+                                active: profile.active,
+                            })
+                            .collect::<Vec<_>>(),
+                    ))));
+                }
+                Ok(_) => {}
+                Err(error) if ready => {
+                    profile_readback_error = Some(daemon_status_for_error(
+                        &error,
+                        "Mixer profile read-back failed",
+                    ));
+                }
+                Err(_) => {}
+            }
+            if ready && let Some(status) = terminal_status {
+                if status.requires_profile_readback
+                    && let Some(presentation) = profile_readback_error
+                {
+                    window.set_status_alert(true);
+                    window.set_status_text(
+                        format!("{}; no profile change is confirmed", presentation.status).into(),
+                    );
+                } else {
+                    window.set_status_alert(status.alert);
+                    window.set_status_text(status.status.into());
+                }
+            } else if ready && let Some(presentation) = profile_readback_error {
+                window.set_status_alert(true);
+                window.set_status_text(presentation.status.into());
             }
         });
     });
@@ -2425,7 +2702,37 @@ fn parse_colour(value: &str) -> Color {
 fn set_status(window: Weak<MainWindow>, status: String) {
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(window) = window.upgrade() {
+            window.set_status_alert(false);
             window.set_status_text(status.into());
+        }
+    });
+}
+
+fn daemon_write_allowed(window: &Weak<MainWindow>, action: &str) -> bool {
+    if DAEMON_READY.load(Ordering::SeqCst) {
+        true
+    } else {
+        set_alert_status(
+            window.clone(),
+            format!("{action} was not attempted: daemon is not ready"),
+        );
+        false
+    }
+}
+
+fn set_alert_status(window: Weak<MainWindow>, status: String) {
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(window) = window.upgrade() {
+            window.set_status_alert(true);
+            window.set_status_text(status.into());
+        }
+    });
+}
+
+fn set_daemon_failure(window: Weak<MainWindow>, presentation: DaemonStatusPresentation) {
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(window) = window.upgrade() {
+            apply_daemon_failure(&window, &presentation);
         }
     });
 }
@@ -2451,11 +2758,17 @@ fn load_dsp(
             show_dsp_snapshot_inner(&window, &snapshot, selected, eq_band, !preserve_selection);
             set_status(window, "Microphone DSP read-back is current".into());
         }
-        Err(error) => set_status(window, format!("DSP read-back failed: {error}")),
+        Err(error) => set_daemon_failure(
+            window,
+            daemon_status_for_error(&error, "DSP read-back failed"),
+        ),
     });
 }
 
 fn arm_dsp(window: Weak<MainWindow>, client: DaemonClient, session: Arc<Mutex<DspSession>>) {
+    if !daemon_write_allowed(&window, "DSP arm") {
+        return;
+    }
     thread::spawn(move || {
         let (selected, eq_band) = session
             .lock()
@@ -2464,7 +2777,7 @@ fn arm_dsp(window: Weak<MainWindow>, client: DaemonClient, session: Arc<Mutex<Ds
         let snapshot = match client.microphone_dsp() {
             Ok(snapshot) => snapshot,
             Err(error) => {
-                set_status(window, format!("DSP safety read-back failed: {error}"));
+                refresh_after_mutation(window, client, Err(error), "DSP arm");
                 return;
             }
         };
@@ -2472,20 +2785,12 @@ fn arm_dsp(window: Weak<MainWindow>, client: DaemonClient, session: Arc<Mutex<Ds
             state.snapshot = Some(snapshot.clone());
             state.captured = Some(snapshot.clone());
         }
-        match client.arm_dsp(selected.module(), 300) {
-            Ok(()) => {
-                show_dsp_snapshot(&window, &snapshot, selected, eq_band);
-                set_dsp_lease(window.clone(), Some(selected.as_str().into()), Some(300));
-                set_status(
-                    window,
-                    format!(
-                        "{} editing armed for 5 minutes; original state captured",
-                        selected.as_str()
-                    ),
-                );
-            }
-            Err(error) => set_status(window, format!("DSP editing was not armed: {error}")),
+        let result = client.arm_dsp(selected.module(), 300);
+        if result.is_ok() {
+            show_dsp_snapshot(&window, &snapshot, selected, eq_band);
+            set_dsp_lease(window.clone(), Some(selected.as_str().into()), Some(300));
         }
+        refresh_after_mutation(window, client, result, "DSP arm");
     });
 }
 
@@ -2496,6 +2801,9 @@ fn apply_dsp(
     values: (f32, f32, f32, f32, f32),
     revert: bool,
 ) {
+    if !daemon_write_allowed(&window, "DSP change") {
+        return;
+    }
     thread::spawn(move || {
         let (selected, eq_band, base) = match session.lock() {
             Ok(state) => {
@@ -2537,11 +2845,47 @@ fn apply_dsp(
                     },
                 );
             }
-            Ok(_) => set_status(
-                window,
-                "DSP write did not verify; no success reported".into(),
-            ),
-            Err(error) => set_status(window, format!("DSP change rejected: {error}")),
+            Ok(_) => match client.microphone_dsp() {
+                Ok(snapshot) => {
+                    if let Ok(mut state) = session.lock() {
+                        state.snapshot = Some(snapshot.clone());
+                    }
+                    show_dsp_snapshot(&window, &snapshot, selected, eq_band);
+                    set_alert_status(
+                        window,
+                        "DSP write did not verify; current DSP state was reloaded".into(),
+                    );
+                }
+                Err(error) => set_daemon_failure(
+                    window,
+                    daemon_status_for_error(
+                        &error,
+                        "DSP write did not verify and read-back failed",
+                    ),
+                ),
+            },
+            Err(error) => {
+                let failure = daemon_status_for_error(&error, "DSP change was not confirmed");
+                match client.microphone_dsp() {
+                    Ok(snapshot) => {
+                        if let Ok(mut state) = session.lock() {
+                            state.snapshot = Some(snapshot.clone());
+                        }
+                        show_dsp_snapshot(&window, &snapshot, selected, eq_band);
+                        set_alert_status(
+                            window,
+                            format!("{}; current DSP state was reloaded", failure.status),
+                        );
+                    }
+                    Err(read_error) => set_daemon_failure(
+                        window,
+                        daemon_status_for_error(
+                            &read_error,
+                            "DSP change was not confirmed and read-back failed",
+                        ),
+                    ),
+                }
+            }
         }
     });
 }
@@ -3150,7 +3494,8 @@ fn start_default_device_monitor(window: Weak<MainWindow>, client: DaemonClient) 
         let mut last_error = None;
         loop {
             let preferences = load_preferences();
-            if preferences.automatic_default_reset
+            if DAEMON_READY.load(Ordering::SeqCst)
+                && preferences.automatic_default_reset
                 && let Ok(snapshot) = client.snapshot()
             {
                 let repair = default_device_repair(&preferences, &snapshot);
@@ -3197,10 +3542,21 @@ fn start_health_monitor(
                         let Some(window) = update_window.upgrade() else {
                             return;
                         };
-                        window.set_daemon_connected(health.ok);
-                        window.set_hardware_safe(!health.hardware_writes_enabled);
-                        window.set_link_active(health.link_control_enabled);
-                        window.set_dsp_gate_count(health.dsp_write_modules.len() as i32);
+                        if health.ok {
+                            DAEMON_READY.store(true, Ordering::SeqCst);
+                            window.set_daemon_connected(true);
+                            window.set_hardware_safe(!health.hardware_writes_enabled);
+                            window.set_link_active(health.link_control_enabled);
+                            window.set_dsp_gate_count(health.dsp_write_modules.len() as i32);
+                            window.set_daemon_status_kind("ready".into());
+                            window.set_daemon_status_title("STUDIOBRIDGE DAEMON IS READY".into());
+                            window.set_daemon_status_detail("Local audio state is current.".into());
+                        } else {
+                            apply_daemon_failure(
+                                &window,
+                                &daemon_not_ready_status("Connection monitor failed"),
+                            );
+                        }
                     });
                     set_dsp_lease(window.clone(), active, seconds);
                     if recovered {
@@ -3211,16 +3567,12 @@ fn start_health_monitor(
                 Err(error) => {
                     was_connected = false;
                     let update_window = window.clone();
+                    let presentation = daemon_status_for_error(&error, "Connection monitor failed");
                     let _ = slint::invoke_from_event_loop(move || {
                         let Some(window) = update_window.upgrade() else {
                             return;
                         };
-                        window.set_daemon_connected(false);
-                        window.set_hardware_safe(true);
-                        window.set_link_active(false);
-                        window.set_dsp_gate_count(0);
-                        window.set_arm_confirm_pending(false);
-                        window.set_status_text(format!("Daemon unavailable: {error}").into());
+                        apply_daemon_failure(&window, &presentation);
                     });
                     set_dsp_lease(window.clone(), None, None);
                 }
@@ -3348,12 +3700,14 @@ fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
 #[cfg(test)]
 mod desktop_tests {
     use super::{
-        AppPreferences, DspSelection, active_eq_profile, add_eq_band, adjust_eq_band_value,
-        application_chip_text_width, channel_detail, dsp_display, external_link_url,
-        hotkey_key_name, link_channel_for_source, link_channel_label, mock_meter_level,
-        mute_state_with_target, normalize_captured_hotkey, normalize_mute_action,
-        preferred_default_repair, remove_eq_band, selected_dsp_enabled, set_enhancement_preset,
-        set_enhancement_value, set_eq_band_type_value, set_eq_band_value,
+        AppPreferences, DaemonErrorKind, DspSelection, active_eq_profile, add_eq_band,
+        adjust_eq_band_value, application_chip_text_width, channel_detail, daemon_not_ready_status,
+        daemon_status_for_kind, default_mutation_refresh_status, default_selection_matches,
+        dsp_display, external_link_url, hotkey_key_name, link_channel_for_source,
+        link_channel_label, mock_meter_level, mutation_refresh_status, mute_state_with_target,
+        normalize_captured_hotkey, normalize_mute_action, preferred_default_repair,
+        profile_mutation_refresh_status, remove_eq_band, selected_dsp_enabled,
+        set_enhancement_preset, set_enhancement_value, set_eq_band_type_value, set_eq_band_value,
         set_headphone_eq_band_value, set_headphone_subwoofer_value, set_selected_dsp_enabled,
         should_preserve_drawer_window_size, should_start_in_background, source_name_available,
         update_from_values,
@@ -3995,5 +4349,177 @@ mod desktop_tests {
         assert!(should_preserve_drawer_window_size(false, false));
         assert!(!should_preserve_drawer_window_size(true, false));
         assert!(!should_preserve_drawer_window_size(false, true));
+    }
+
+    #[test]
+    fn daemon_failures_have_deterministic_category_specific_copy() {
+        let cases = [
+            (DaemonErrorKind::Offline, "offline", "DAEMON IS OFFLINE"),
+            (DaemonErrorKind::Timeout, "timeout", "DID NOT RESPOND"),
+            (
+                DaemonErrorKind::HttpStatus(503),
+                "http",
+                "REJECTED THE REQUEST",
+            ),
+            (
+                DaemonErrorKind::InvalidResponse,
+                "invalid_response",
+                "RESPONSE IS INVALID",
+            ),
+            (DaemonErrorKind::Transport, "transport", "CONNECTION FAILED"),
+        ];
+
+        for (kind, expected_kind, title_fragment) in cases {
+            let status = daemon_status_for_kind(kind, "Refresh failed");
+            assert_eq!(status.kind, expected_kind);
+            assert!(status.title.contains(title_fragment));
+            assert!(status.status.starts_with("Refresh failed:"));
+            assert!(!status.detail.is_empty());
+        }
+        assert!(
+            daemon_status_for_kind(DaemonErrorKind::HttpStatus(503), "Refresh failed")
+                .status
+                .ends_with("HTTP 503")
+        );
+    }
+
+    #[test]
+    fn offline_banner_is_non_blocking_and_unused_settings_are_honest() {
+        let ui = include_str!("../ui/app-window.slint");
+        let banner_start = ui
+            .find("if !root.daemon-connected: Rectangle")
+            .expect("offline banner should exist");
+        let banner_end = ui[banner_start..]
+            .find("if root.legal-dialog-open")
+            .map(|offset| banner_start + offset)
+            .expect("offline banner should end before legal dialog");
+        let banner = &ui[banner_start..banner_end];
+        assert!(banner.contains("READ-ONLY NAVIGATION REMAINS AVAILABLE"));
+        assert!(banner.contains("Retry StudioBridge daemon connection"));
+        assert!(!banner.contains("TouchArea { width: parent.width; height: parent.height; }"));
+
+        assert!(ui.contains("Update channels are not implemented in this build."));
+        assert!(ui.contains("This compatibility preference has no runtime consumer yet."));
+        assert!(ui.contains("Profile-switch crossfade is not implemented."));
+        assert!(ui.matches("interactive: false; checked: root.").count() >= 3);
+        assert!(ui.contains("accessible-enabled: root.interactive;"));
+        assert!(ui.contains("if !root.daemon-connected && root.active-page <= 1: TouchArea"));
+        assert!(
+            ui.contains("width: parent.width - 72px - (root.profiles-drawer-open ? 285px : 0px);")
+        );
+        assert!(ui.contains("interactive: root.connected;"));
+        assert!(ui.contains("enabled: root.connected;"));
+        assert!(ui.contains(
+            "if root.active-page == 0: FocusScope {\n                enabled: root.daemon-connected;"
+        ));
+        assert!(ui.contains(
+            "if root.active-page == 1: FocusScope {\n                enabled: root.daemon-connected;"
+        ));
+        assert!(ui.contains("enabled: root.daemon-connected;\n                        clicked =>"));
+        assert!(ui.contains("if root.daemon-connected {\n                                let name = root.pending-profile-save;"));
+        assert!(
+            ui.matches("available: root.daemon-connected && root.source-name-available")
+                .count()
+                >= 13
+        );
+        assert!(
+            ui.matches("selected(name) => { if root.daemon-connected")
+                .count()
+                >= 13
+        );
+    }
+
+    #[test]
+    fn accepted_mutations_only_report_request_acceptance_and_readback() {
+        let status = mutation_refresh_status("Volume update", &Ok(()));
+        assert_eq!(
+            status.status,
+            "Volume update request accepted; current state reloaded"
+        );
+        assert!(!status.alert);
+        assert!(!status.status.contains("succeeded"));
+        assert!(!status.status.contains("confirmed"));
+    }
+
+    #[test]
+    fn profile_mutations_require_profile_list_readback() {
+        let status = profile_mutation_refresh_status("Mixer profile save", &Ok(()));
+        assert!(status.requires_profile_readback);
+        assert_eq!(status.preferred_default, None);
+    }
+
+    #[test]
+    fn preferred_defaults_are_only_staged_for_matching_readback() {
+        let status = default_mutation_refresh_status(
+            "Default playback device update",
+            &Ok(()),
+            false,
+            "headphones",
+        );
+        assert_eq!(status.preferred_default, Some((false, "headphones".into())));
+        assert!(default_selection_matches(Some("headphones"), "headphones"));
+        assert!(!default_selection_matches(Some("system"), "headphones"));
+        assert!(!default_selection_matches(None, "headphones"));
+
+        let source = include_str!("main.rs");
+        let callback_start = source
+            .find("window.on_set_default_input")
+            .expect("default input callback should exist");
+        let callback_end = source[callback_start..]
+            .find("window.on_set_source_mute")
+            .map(|offset| callback_start + offset)
+            .expect("default callback block should end before mute callback");
+        let callbacks = &source[callback_start..callback_end];
+        assert!(!callbacks.contains("remember_preferred_default"));
+        assert!(source.contains("default_readback_matches(snapshot, input, &requested_id)"));
+    }
+
+    #[test]
+    fn daemon_not_ready_never_reuses_ready_banner_copy() {
+        let status = daemon_not_ready_status("Refresh failed");
+        assert_eq!(status.kind, "not_ready");
+        assert!(status.title.contains("NOT READY"));
+        assert!(!status.title.ends_with("IS READY"));
+        assert!(status.status.contains("reported not ready"));
+    }
+
+    #[test]
+    fn every_daemon_write_callback_has_a_central_ready_guard() {
+        let source = include_str!("main.rs");
+        for callback in [
+            "on_set_volume",
+            "on_set_target_volume",
+            "on_set_target_mute",
+            "on_set_target_device",
+            "on_set_source_device",
+            "on_set_link_output_assignment",
+            "on_set_default_input",
+            "on_set_default_output",
+            "on_set_source_mute",
+            "on_set_volume_linked",
+            "on_set_route",
+            "on_create_source",
+            "on_remove_source",
+            "on_reorder_source",
+            "on_create_mixer_profile",
+            "on_save_mixer_profile",
+            "on_duplicate_mixer_profile",
+            "on_load_mixer_profile",
+            "on_delete_mixer_profile",
+            "on_assign_linux_application",
+            "on_assign_link_application",
+            "on_disarm_dsp",
+        ] {
+            let start = source.find(callback).expect("callback should exist");
+            let guarded_prefix = &source[start..(start + 420).min(source.len())];
+            assert!(
+                guarded_prefix.contains("daemon_write_allowed"),
+                "{callback} must refuse writes while the daemon is unavailable"
+            );
+        }
+        assert!(source.contains("fn arm_dsp("));
+        assert!(source.contains("daemon_write_allowed(&window, \"DSP arm\")"));
+        assert!(source.contains("daemon_write_allowed(&window, \"DSP change\")"));
+        assert!(source.contains("DAEMON_READY.load(Ordering::SeqCst)\n                && preferences.automatic_default_reset"));
     }
 }

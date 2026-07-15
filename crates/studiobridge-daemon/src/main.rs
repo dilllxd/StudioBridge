@@ -128,10 +128,83 @@ struct ProfileFile {
     profiles: Vec<SavedMixerProfile>,
 }
 
+#[cfg(test)]
+struct ProfilePersistenceControl {
+    fail_next: std::sync::atomic::AtomicBool,
+    pause_next: std::sync::atomic::AtomicBool,
+    entered: tokio::sync::Semaphore,
+    released: (std::sync::Mutex<bool>, std::sync::Condvar),
+}
+
+#[cfg(test)]
+impl ProfilePersistenceControl {
+    fn new() -> Self {
+        Self {
+            fail_next: std::sync::atomic::AtomicBool::new(false),
+            pause_next: std::sync::atomic::AtomicBool::new(false),
+            entered: tokio::sync::Semaphore::new(0),
+            released: (std::sync::Mutex::new(false), std::sync::Condvar::new()),
+        }
+    }
+
+    fn fail_once(&self) {
+        self.fail_next
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn pause_once(&self) {
+        *self.released.0.lock().expect("persistence release lock") = false;
+        self.pause_next
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    async fn wait_until_paused(&self) {
+        self.entered
+            .acquire()
+            .await
+            .expect("persistence pause semaphore")
+            .forget();
+    }
+
+    fn release(&self) {
+        *self.released.0.lock().expect("persistence release lock") = true;
+        self.released.1.notify_all();
+    }
+
+    fn before_persist(&self) -> Result<(), BridgeError> {
+        if self
+            .fail_next
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(BridgeError::Backend(
+                "injected profile persistence failure".into(),
+            ));
+        }
+        if self
+            .pause_next
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            self.entered.add_permits(1);
+            let mut released = self.released.0.lock().expect("persistence release lock");
+            while !*released {
+                released = self
+                    .released
+                    .1
+                    .wait(released)
+                    .expect("persistence release condition");
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 struct ProfileStore {
     path: PathBuf,
     state: Arc<RwLock<ProfileFile>>,
+    transaction: Arc<tokio::sync::Mutex<()>>,
+    #[cfg(test)]
+    persistence_control: Option<Arc<ProfilePersistenceControl>>,
 }
 
 impl ProfileStore {
@@ -141,6 +214,9 @@ impl ProfileStore {
         Self {
             path,
             state: Arc::new(RwLock::new(state)),
+            transaction: Arc::new(tokio::sync::Mutex::new(())),
+            #[cfg(test)]
+            persistence_control: None,
         }
     }
 
@@ -170,133 +246,171 @@ impl ProfileStore {
 
     async fn save(&self, name: String, mixer: MixerSnapshot) -> Result<(), BridgeError> {
         validate_profile_name(&name)?;
-        let mut state = self.state.write().await;
-        let mut next = state.clone();
-        if let Some(profile) = next
-            .profiles
-            .iter_mut()
-            .find(|profile| profile.name == name)
-        {
-            profile.mixer = mixer;
-        } else {
+        self.transact(move |next| {
+            if let Some(profile) = next
+                .profiles
+                .iter_mut()
+                .find(|profile| profile.name == name)
+            {
+                profile.mixer = mixer;
+            } else {
+                next.profiles.push(SavedMixerProfile {
+                    name: name.clone(),
+                    mixer,
+                });
+            }
+            next.active = Some(name);
+            Ok(())
+        })
+        .await
+    }
+
+    async fn create(&self, mixer: MixerSnapshot) -> Result<String, BridgeError> {
+        self.transact(move |next| {
+            let name = next_profile_name(
+                "New Profile",
+                next.profiles.iter().map(|profile| profile.name.as_str()),
+                false,
+            );
             next.profiles.push(SavedMixerProfile {
                 name: name.clone(),
                 mixer,
             });
-        }
-        next.active = Some(name);
-        self.persist(&next)?;
-        *state = next;
-        Ok(())
-    }
-
-    async fn create(&self, mixer: MixerSnapshot) -> Result<String, BridgeError> {
-        let mut state = self.state.write().await;
-        let mut next = state.clone();
-        let name = next_profile_name(
-            "New Profile",
-            next.profiles.iter().map(|profile| profile.name.as_str()),
-            false,
-        );
-        next.profiles.push(SavedMixerProfile {
-            name: name.clone(),
-            mixer,
-        });
-        next.active = Some(name.clone());
-        self.persist(&next)?;
-        *state = next;
-        Ok(name)
+            next.active = Some(name.clone());
+            Ok(name)
+        })
+        .await
     }
 
     async fn duplicate(&self, name: &str) -> Result<String, BridgeError> {
-        let mut state = self.state.write().await;
-        let mut next = state.clone();
-        let mixer = next
-            .profiles
-            .iter()
-            .find(|profile| profile.name == name)
-            .map(|profile| profile.mixer.clone())
-            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown mixer profile: {name}")))?;
-        let duplicate_name = next_profile_name(
-            name,
-            next.profiles.iter().map(|profile| profile.name.as_str()),
-            true,
-        );
-        next.profiles.push(SavedMixerProfile {
-            name: duplicate_name.clone(),
-            mixer,
-        });
-        self.persist(&next)?;
-        *state = next;
-        Ok(duplicate_name)
+        let name = name.to_owned();
+        self.transact(move |next| {
+            let mixer = next
+                .profiles
+                .iter()
+                .find(|profile| profile.name == name)
+                .map(|profile| profile.mixer.clone())
+                .ok_or_else(|| {
+                    BridgeError::InvalidValue(format!("unknown mixer profile: {name}"))
+                })?;
+            let duplicate_name = next_profile_name(
+                &name,
+                next.profiles.iter().map(|profile| profile.name.as_str()),
+                true,
+            );
+            next.profiles.push(SavedMixerProfile {
+                name: duplicate_name.clone(),
+                mixer,
+            });
+            Ok(duplicate_name)
+        })
+        .await
     }
 
     async fn set_active(&self, name: &str) -> Result<(), BridgeError> {
-        let mut state = self.state.write().await;
-        if !state.profiles.iter().any(|profile| profile.name == name) {
-            return Err(BridgeError::InvalidValue(format!(
-                "unknown mixer profile: {name}"
-            )));
-        }
-        let mut next = state.clone();
-        next.active = Some(name.to_owned());
-        self.persist(&next)?;
-        *state = next;
-        Ok(())
+        let name = name.to_owned();
+        self.transact(move |next| {
+            if !next.profiles.iter().any(|profile| profile.name == name) {
+                return Err(BridgeError::InvalidValue(format!(
+                    "unknown mixer profile: {name}"
+                )));
+            }
+            next.active = Some(name);
+            Ok(())
+        })
+        .await
     }
 
     async fn delete(&self, name: &str) -> Result<(), BridgeError> {
-        let mut state = self.state.write().await;
-        let mut next = state.clone();
-        let before = next.profiles.len();
-        next.profiles.retain(|profile| profile.name != name);
-        if next.profiles.len() == before {
-            return Err(BridgeError::InvalidValue(format!(
-                "unknown mixer profile: {name}"
-            )));
-        }
-        if next.active.as_deref() == Some(name) {
-            next.active = None;
-        }
-        self.persist(&next)?;
-        *state = next;
-        Ok(())
+        let name = name.to_owned();
+        self.transact(move |next| {
+            let before = next.profiles.len();
+            next.profiles.retain(|profile| profile.name != name);
+            if next.profiles.len() == before {
+                return Err(BridgeError::InvalidValue(format!(
+                    "unknown mixer profile: {name}"
+                )));
+            }
+            if next.active.as_deref() == Some(name.as_str()) {
+                next.active = None;
+            }
+            Ok(())
+        })
+        .await
     }
 
-    fn persist(&self, state: &ProfileFile) -> Result<(), BridgeError> {
-        let parent = self.path.parent().ok_or_else(|| {
-            BridgeError::Backend("mixer profile path has no parent directory".into())
-        })?;
-        std::fs::create_dir_all(parent).map_err(|error| BridgeError::Backend(error.to_string()))?;
-        let json = serde_json::to_vec_pretty(state)
-            .map_err(|error| BridgeError::Backend(error.to_string()))?;
-        let temp_path = self.path.with_extension(format!(
-            "json.tmp-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
-        let write_result = (|| {
-            let mut temp = std::fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&temp_path)
-                .map_err(|error| BridgeError::Backend(error.to_string()))?;
-            std::io::Write::write_all(&mut temp, &json)
-                .map_err(|error| BridgeError::Backend(error.to_string()))?;
-            temp.sync_all()
-                .map_err(|error| BridgeError::Backend(error.to_string()))
-        })();
-        if let Err(error) = write_result {
-            let _ = std::fs::remove_file(&temp_path);
-            return Err(error);
-        }
-        replace_file(&temp_path, &self.path).inspect_err(|_| {
-            let _ = std::fs::remove_file(&temp_path);
+    async fn transact<T, F>(&self, mutation: F) -> Result<T, BridgeError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut ProfileFile) -> Result<T, BridgeError> + Send + 'static,
+    {
+        // A canceled waiter leaves the queue. Once acquired, the owned task
+        // finishes disk persistence and memory publication even if its caller
+        // disconnects, keeping both committed representations aligned.
+        let transaction = self.transaction.clone().lock_owned().await;
+        let store = self.clone();
+        tokio::spawn(async move {
+            let _transaction = transaction;
+            let mut next = store.state.read().await.clone();
+            let result = mutation(&mut next)?;
+            let path = store.path.clone();
+            let durable = next.clone();
+            #[cfg(test)]
+            let persistence_control = store.persistence_control.clone();
+            tokio::task::spawn_blocking(move || {
+                #[cfg(test)]
+                if let Some(control) = persistence_control {
+                    control.before_persist()?;
+                }
+                persist_profile_file(&path, &durable)
+            })
+            .await
+            .map_err(|error| {
+                BridgeError::Backend(format!("profile persistence task failed: {error}"))
+            })??;
+            *store.state.write().await = next;
+            Ok(result)
         })
+        .await
+        .map_err(|error| {
+            BridgeError::Backend(format!("profile transaction task failed: {error}"))
+        })?
     }
+}
+
+fn persist_profile_file(path: &std::path::Path, state: &ProfileFile) -> Result<(), BridgeError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| BridgeError::Backend("mixer profile path has no parent directory".into()))?;
+    std::fs::create_dir_all(parent).map_err(|error| BridgeError::Backend(error.to_string()))?;
+    let json = serde_json::to_vec_pretty(state)
+        .map_err(|error| BridgeError::Backend(error.to_string()))?;
+    let temp_path = path.with_extension(format!(
+        "json.tmp-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let write_result = (|| {
+        let mut temp = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temp_path)
+            .map_err(|error| BridgeError::Backend(error.to_string()))?;
+        std::io::Write::write_all(&mut temp, &json)
+            .map_err(|error| BridgeError::Backend(error.to_string()))?;
+        temp.sync_all()
+            .map_err(|error| BridgeError::Backend(error.to_string()))
+    })();
+    if let Err(error) = write_result {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error);
+    }
+    replace_file(&temp_path, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temp_path);
+    })
 }
 
 fn profile_backup_path(path: &std::path::Path) -> PathBuf {
@@ -978,13 +1092,29 @@ mod tests {
         ))
     }
 
+    fn test_profile_store(
+        root: &std::path::Path,
+    ) -> (ProfileStore, Arc<ProfilePersistenceControl>) {
+        let persistence_control = Arc::new(ProfilePersistenceControl::new());
+        (
+            ProfileStore {
+                path: root.join("mixer-profiles.json"),
+                state: Arc::new(RwLock::new(ProfileFile::default())),
+                transaction: Arc::new(tokio::sync::Mutex::new(())),
+                persistence_control: Some(persistence_control.clone()),
+            },
+            persistence_control,
+        )
+    }
+
+    fn read_persisted_profiles(store: &ProfileStore) -> ProfileFile {
+        serde_json::from_slice(&std::fs::read(&store.path).unwrap()).unwrap()
+    }
+
     #[tokio::test]
     async fn profile_store_persists_complete_snapshot_without_false_in_memory_success() {
         let root = temporary_test_path("profile-store");
-        let store = ProfileStore {
-            path: root.join("mixer-profiles.json"),
-            state: Arc::new(RwLock::new(ProfileFile::default())),
-        };
+        let (store, _) = test_profile_store(&root);
         let mixer = MockMixerBackend::default().snapshot().await.unwrap();
         store
             .save("Default Profile".into(), mixer.clone())
@@ -1008,6 +1138,8 @@ mod tests {
         let failing = ProfileStore {
             path: blocked_parent.join("mixer-profiles.json"),
             state: Arc::new(RwLock::new(ProfileFile::default())),
+            transaction: Arc::new(tokio::sync::Mutex::new(())),
+            persistence_control: None,
         };
         let error = failing
             .save("Must Not Exist".into(), mixer)
@@ -1016,6 +1148,156 @@ mod tests {
         assert!(matches!(error, BridgeError::Backend(_)));
         assert!(failing.list().await.profiles.is_empty());
 
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn profile_store_serializes_every_mutation_without_lost_updates() {
+        let root = temporary_test_path("profile-concurrency");
+        let (store, _) = test_profile_store(&root);
+        let mixer = MockMixerBackend::default().snapshot().await.unwrap();
+        store.save("Keep A".into(), mixer.clone()).await.unwrap();
+        store.save("Keep B".into(), mixer.clone()).await.unwrap();
+        store.save("Delete Me".into(), mixer.clone()).await.unwrap();
+
+        let save = tokio::spawn({
+            let store = store.clone();
+            let mixer = mixer.clone();
+            async move { store.save("Saved".into(), mixer).await }
+        });
+        let create = tokio::spawn({
+            let store = store.clone();
+            let mixer = mixer.clone();
+            async move { store.create(mixer).await }
+        });
+        let duplicate = tokio::spawn({
+            let store = store.clone();
+            async move { store.duplicate("Keep A").await }
+        });
+        let activate = tokio::spawn({
+            let store = store.clone();
+            async move { store.set_active("Keep B").await }
+        });
+        let delete = tokio::spawn({
+            let store = store.clone();
+            async move { store.delete("Delete Me").await }
+        });
+
+        save.await.unwrap().unwrap();
+        let created = create.await.unwrap().unwrap();
+        let duplicated = duplicate.await.unwrap().unwrap();
+        activate.await.unwrap().unwrap();
+        delete.await.unwrap().unwrap();
+
+        let memory = store.state.read().await.clone();
+        let persisted = read_persisted_profiles(&store);
+        assert_eq!(
+            serde_json::to_value(&memory).unwrap(),
+            serde_json::to_value(&persisted).unwrap()
+        );
+        let names = memory
+            .profiles
+            .iter()
+            .map(|profile| profile.name.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(names.len(), 5);
+        assert!(names.contains("Keep A"));
+        assert!(names.contains("Keep B"));
+        assert!(names.contains("Saved"));
+        assert!(names.contains(created.as_str()));
+        assert!(names.contains(duplicated.as_str()));
+        assert!(!names.contains("Delete Me"));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn profile_store_finishes_an_active_transaction_after_caller_cancellation() {
+        let root = temporary_test_path("profile-cancellation");
+        let (store, control) = test_profile_store(&root);
+        let mixer = MockMixerBackend::default().snapshot().await.unwrap();
+        control.pause_once();
+        let caller = tokio::spawn({
+            let store = store.clone();
+            let mixer = mixer.clone();
+            async move { store.save("Canceled Caller".into(), mixer).await }
+        });
+        control.wait_until_paused().await;
+
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        assert!(store.list().await.profiles.is_empty());
+        control.release();
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if store.get("Canceled Caller").await.is_some() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached profile transaction should finish");
+        let persisted = read_persisted_profiles(&store);
+        assert_eq!(persisted.active.as_deref(), Some("Canceled Caller"));
+        assert_eq!(persisted.profiles.len(), 1);
+
+        store.create(mixer).await.unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn profile_store_cancels_a_waiter_before_its_transaction_starts() {
+        let root = temporary_test_path("profile-waiter-cancellation");
+        let (store, control) = test_profile_store(&root);
+        let mixer = MockMixerBackend::default().snapshot().await.unwrap();
+        control.pause_once();
+        let first = tokio::spawn({
+            let store = store.clone();
+            let mixer = mixer.clone();
+            async move { store.save("First".into(), mixer).await }
+        });
+        control.wait_until_paused().await;
+
+        let canceled = tokio::time::timeout(Duration::from_millis(25), store.create(mixer)).await;
+        assert!(canceled.is_err());
+        control.release();
+        first.await.unwrap().unwrap();
+        tokio::task::yield_now().await;
+
+        let memory = store.state.read().await;
+        assert_eq!(memory.profiles.len(), 1);
+        assert_eq!(memory.profiles[0].name, "First");
+        assert_eq!(read_persisted_profiles(&store).profiles.len(), 1);
+        drop(memory);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn profile_store_failure_keeps_disk_and_memory_at_previous_commit() {
+        let root = temporary_test_path("profile-failure");
+        let (store, control) = test_profile_store(&root);
+        let mixer = MockMixerBackend::default().snapshot().await.unwrap();
+        store.save("Durable".into(), mixer.clone()).await.unwrap();
+        let before_disk = std::fs::read(&store.path).unwrap();
+        let before_memory = serde_json::to_value(&*store.state.read().await).unwrap();
+
+        control.fail_once();
+        let error = store
+            .save("Must Fail".into(), mixer.clone())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, BridgeError::Backend(_)));
+        assert_eq!(std::fs::read(&store.path).unwrap(), before_disk);
+        assert_eq!(
+            serde_json::to_value(&*store.state.read().await).unwrap(),
+            before_memory
+        );
+        assert!(store.get("Must Fail").await.is_none());
+
+        store.save("After Failure".into(), mixer).await.unwrap();
+        assert!(store.get("After Failure").await.is_some());
         std::fs::remove_dir_all(root).unwrap();
     }
 

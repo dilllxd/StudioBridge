@@ -1613,21 +1613,23 @@ component ToggleSwitch inherits Rectangle {
 
 component SettingCheckbox inherits Rectangle {
     in-out property <bool> checked;
+    in property <bool> interactive: true;
     in property <string> control-label: "Toggle setting";
     callback toggled(bool);
     width: 18px;
     height: 18px;
     border-radius: 4px;
     border-width: 1px;
-    border-color: root.checked ? #52ceca : #717177;
-    background: root.checked ? #31bcb9 : #2b2b2e;
+    border-color: !root.interactive ? #47474c : root.checked ? #52ceca : #717177;
+    background: !root.interactive ? #242427 : root.checked ? #31bcb9 : #2b2b2e;
     checkbox-focus := FocusScope {
         width: parent.width; height: parent.height;
         accessible-role: checkbox;
+        accessible-enabled: root.interactive;
         accessible-checked: root.checked;
         accessible-label: root.control-label;
         key-pressed(event) => {
-            if event.text == Key.Return || event.text == Key.Space {
+            if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                 root.checked = !root.checked;
                 root.toggled(root.checked);
                 return accept;
@@ -1635,6 +1637,7 @@ component SettingCheckbox inherits Rectangle {
             return reject;
         }
         TouchArea {
+            enabled: root.interactive;
             clicked => {
                 checkbox-focus.focus();
                 root.checked = !root.checked;
@@ -1646,13 +1649,17 @@ component SettingCheckbox inherits Rectangle {
 
 component SettingRow inherits Rectangle {
     in property <string> label;
+    in property <string> detail: "";
+    in property <bool> interactive: true;
     in-out property <bool> checked;
     callback toggled(bool);
     height: 40px;
     background: transparent;
     Rectangle { y: parent.height - 1px; width: parent.width; height: 1px; background: #2f2f33; }
-    Text { x: 4px; width: parent.width - 58px; text: root.label; color: Theme.quiet; font-size: 11px; font-weight: 700; vertical-alignment: center; }
-    SettingCheckbox { x: parent.width - 26px; y: 11px; checked: root.checked; control-label: root.label; toggled(value) => { root.checked = value; root.toggled(value); } }
+    Text { x: 4px; y: root.detail == "" ? 0px : 4px; height: root.detail == "" ? parent.height : 16px; width: parent.width - 158px; text: root.label; color: root.interactive ? Theme.quiet : #85858b; font-size: 11px; font-weight: 700; vertical-alignment: center; overflow: elide; }
+    if root.detail != "": Text { x: 4px; y: 21px; height: 14px; width: parent.width - 158px; text: root.detail; color: #77777d; font-size: 8px; vertical-alignment: center; overflow: elide; }
+    if !root.interactive: Text { x: parent.width - 142px; y: 0px; width: 104px; height: parent.height; text: "UNAVAILABLE"; color: Theme.amber; font-size: 8px; font-weight: 800; horizontal-alignment: right; vertical-alignment: center; }
+    SettingCheckbox { x: parent.width - 26px; y: 11px; checked: root.checked; interactive: root.interactive; control-label: root.interactive ? root.label : root.label + ", unavailable. " + root.detail; toggled(value) => { root.checked = value; root.toggled(value); } }
 }
 
 component ModuleTab inherits Rectangle {
@@ -1748,6 +1755,7 @@ component DeleteProfileGlyph inherits Rectangle {
 
 component MixerProfileRow inherits Rectangle {
     in property <ProfileModel> profile;
+    in property <bool> interactive: true;
     callback selected;
     callback saved;
     callback duplicated;
@@ -1762,16 +1770,17 @@ component MixerProfileRow inherits Rectangle {
         x: 20px;
         width: parent.width - 72px;
         text: root.profile.name;
-        color: root.profile.active ? Theme.text : Theme.quiet;
+        color: !root.interactive ? #77777d : root.profile.active ? Theme.text : Theme.quiet;
         font-size: 11px;
         font-weight: root.profile.active ? 700 : 400;
         vertical-alignment: center;
         overflow: elide;
     }
     name-focus := FocusScope {
+        enabled: root.interactive;
         width: parent.width - 52px; height: parent.height;
         accessible-role: button;
-        accessible-label: "Load mixer profile " + root.profile.name;
+        accessible-label: root.interactive ? "Load mixer profile " + root.profile.name : "Mixer profile " + root.profile.name + ", unavailable while daemon is disconnected";
         key-pressed(event) => {
             if event.text == Key.Return || event.text == Key.Space {
                 root.selected();
@@ -1779,34 +1788,37 @@ component MixerProfileRow inherits Rectangle {
             }
             return reject;
         }
-        name-area := TouchArea { clicked => { name-focus.focus(); root.selected(); } }
+        name-area := TouchArea { enabled: root.interactive; clicked => { name-focus.focus(); root.selected(); } }
     }
 
     save-focus := FocusScope {
+        enabled: root.interactive;
         x: parent.width - 50px; width: 16px; height: parent.height;
         accessible-role: button;
         accessible-label: "Save mixer profile " + root.profile.name;
         key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.saved(); return accept; } return reject; }
         SaveProfileGlyph { width: parent.width; height: parent.height; visible: root.controls-visible; colour: save-area.has-hover || save-focus.has-focus ? Theme.text : Theme.quiet; }
-        save-area := TouchArea { clicked => { save-focus.focus(); root.saved(); } }
+        save-area := TouchArea { enabled: root.interactive; clicked => { save-focus.focus(); root.saved(); } }
     }
 
     duplicate-focus := FocusScope {
+        enabled: root.interactive;
         x: parent.width - 34px; width: 16px; height: parent.height;
         accessible-role: button;
         accessible-label: "Duplicate mixer profile " + root.profile.name;
         key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.duplicated(); return accept; } return reject; }
         DuplicateProfileGlyph { width: parent.width; height: parent.height; visible: root.controls-visible; colour: duplicate-area.has-hover || duplicate-focus.has-focus ? Theme.text : Theme.quiet; }
-        duplicate-area := TouchArea { clicked => { duplicate-focus.focus(); root.duplicated(); } }
+        duplicate-area := TouchArea { enabled: root.interactive; clicked => { duplicate-focus.focus(); root.duplicated(); } }
     }
 
     delete-focus := FocusScope {
+        enabled: root.interactive;
         x: parent.width - 18px; width: 16px; height: parent.height;
         accessible-role: button;
         accessible-label: "Delete mixer profile " + root.profile.name;
         key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.deleted(); return accept; } return reject; }
         DeleteProfileGlyph { width: parent.width; height: parent.height; visible: root.controls-visible; colour: delete-area.has-hover || delete-focus.has-focus ? Theme.text : Theme.quiet; }
-        delete-area := TouchArea { clicked => { delete-focus.focus(); root.deleted(); } }
+        delete-area := TouchArea { enabled: root.interactive; clicked => { delete-focus.focus(); root.deleted(); } }
     }
 }
 
@@ -1882,9 +1894,10 @@ component ProfileRail inherits Rectangle {
                         TouchArea { clicked => { mixer-profiles-focus.focus(); root.expansion-changed(root.studio-profiles-expanded, !root.mixer-profiles-expanded); } }
                     }
                     create-profile-focus := FocusScope {
+                        enabled: root.connected;
                         x: parent.width - 32px; width: 32px; height: parent.height;
                         accessible-role: button;
-                        accessible-label: "Create mixer profile";
+                        accessible-label: root.connected ? "Create mixer profile" : "Create mixer profile, unavailable while daemon is disconnected";
                         key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.create-profile(); return accept; } return reject; }
                         TouchArea { clicked => { create-profile-focus.focus(); root.create-profile(); } }
                     }
@@ -1893,6 +1906,7 @@ component ProfileRail inherits Rectangle {
                     spacing: 3px;
                     for profile in root.mixer-profiles: MixerProfileRow {
                         profile: profile;
+                        interactive: root.connected;
                         selected => { root.select-profile(profile.name); }
                         saved => { root.save-profile(profile.name); }
                         duplicated => { root.duplicate-profile(profile.name); }
@@ -1921,7 +1935,7 @@ component AddSourceRow inherits Rectangle {
         accessible-role: button;
         accessible-label: "Add " + root.label;
         key-pressed(event) => {
-            if event.text == Key.Return || event.text == Key.Space {
+            if root.available && (event.text == Key.Return || event.text == Key.Space) {
                 root.selected(root.label);
                 return accept;
             }
@@ -2029,6 +2043,10 @@ export component MainWindow inherits Window {
     in property <float> dsp-min-e: 0;
     in property <float> dsp-max-e: 1;
     in property <string> status-text: "Connecting to StudioBridge daemon";
+    in property <bool> status-alert: false;
+    in property <string> daemon-status-kind: "connecting";
+    in property <string> daemon-status-title: "CONNECTING TO STUDIOBRIDGE DAEMON";
+    in property <string> daemon-status-detail: "Waiting for the local audio service. Navigation and read-only settings remain available.";
     in property <string> device-name: "BEACN Studio";
     in property <string> device-serial: "Unavailable";
     in property <string> device-firmware: "Unavailable";
@@ -2171,7 +2189,12 @@ export component MainWindow inherits Window {
                 horizontal-stretch: 1;
                 spacing: 0px;
 
-            if root.active-page == 0: VerticalLayout {
+            if root.active-page == 0: FocusScope {
+                enabled: root.daemon-connected;
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                VerticalLayout {
+                width: parent.width; height: parent.height;
                 padding: 8px;
                 spacing: 5px;
                 Rectangle {
@@ -2249,19 +2272,19 @@ export component MainWindow inherits Window {
                                         background: #27272b; border-width: 1px; border-color: #242326;
                                         VerticalLayout {
                                             padding: 2px; spacing: 0px;
-                                            AddSourceRow { label: "Mic"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
-                                            AddSourceRow { label: "Game"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
-                                            AddSourceRow { label: "Music"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
-                                            AddSourceRow { label: "Chat"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
-                                            AddSourceRow { label: "Browser"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
-                                            AddSourceRow { label: "System"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
-                                            AddSourceRow { label: "Aux 1"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
-                                            AddSourceRow { label: "Aux 2"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
-                                            AddSourceRow { label: "Hardware"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
-                                            AddSourceRow { label: "Link In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
-                                            AddSourceRow { label: "Link 2 In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
-                                            AddSourceRow { label: "Link 3 In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
-                                            AddSourceRow { label: "Link 4 In"; available: root.source-name-available(self.label, root.source-name-key); selected(name) => { add-source-menu.close(); root.create-source(name); } }
+                                            AddSourceRow { label: "Mic"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
+                                            AddSourceRow { label: "Game"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
+                                            AddSourceRow { label: "Music"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
+                                            AddSourceRow { label: "Chat"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
+                                            AddSourceRow { label: "Browser"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
+                                            AddSourceRow { label: "System"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
+                                            AddSourceRow { label: "Aux 1"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
+                                            AddSourceRow { label: "Aux 2"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
+                                            AddSourceRow { label: "Hardware"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
+                                            AddSourceRow { label: "Link In"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
+                                            AddSourceRow { label: "Link 2 In"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
+                                            AddSourceRow { label: "Link 3 In"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
+                                            AddSourceRow { label: "Link 4 In"; available: root.daemon-connected && root.source-name-available(self.label, root.source-name-key); selected(name) => { if root.daemon-connected { add-source-menu.close(); root.create-source(name); } } }
                                         }
                                     }
                                 }
@@ -2510,9 +2533,15 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+                }
             }
 
-            if root.active-page == 1: HorizontalLayout {
+            if root.active-page == 1: FocusScope {
+                enabled: root.daemon-connected;
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+                HorizontalLayout {
+                width: parent.width; height: parent.height;
                 spacing: 0px;
                 VerticalLayout {
                     width: 897px;
@@ -3017,6 +3046,7 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+                }
             }
 
             if root.active-page == 2: VerticalLayout {
@@ -3148,13 +3178,13 @@ export component MainWindow inherits Window {
                     Text { text: "STUDIOBRIDGE APP SETTINGS"; color: Theme.text; font-size: 12px; font-weight: 800; }
                     SettingRow { label: "Show Save Confirmation Window"; checked: root.save-confirmation; toggled(value) => { root.save-confirmation = value; root.save-preferences(root.start-at-login, root.open-to-system-tray, value, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
                     Text { text: "STUDIOBRIDGE BETA OPT-IN"; color: Theme.text; font-size: 12px; font-weight: 800; }
-                    SettingRow { label: "Opt-In to StudioBridge Public Beta Releases"; checked: root.beta-opt-in; toggled(value) => { root.beta-opt-in = value; root.save-preferences(root.start-at-login, root.open-to-system-tray, root.save-confirmation, value, root.mixing-suite-enabled, root.automatic-default-reset, root.meter-crossfade); } }
+                    SettingRow { label: "Opt-In to StudioBridge Public Beta Releases"; detail: "Update channels are not implemented in this build."; interactive: false; checked: root.beta-opt-in; }
                     Text { text: "STUDIOBRIDGE MIXING SUITE"; color: Theme.text; font-size: 12px; font-weight: 800; }
-                    SettingRow { label: "StudioBridge Mixing Suite Enabled"; checked: root.mixing-suite-enabled; toggled(value) => { root.mixing-suite-enabled = value; root.save-preferences(root.start-at-login, root.open-to-system-tray, root.save-confirmation, root.beta-opt-in, value, root.automatic-default-reset, root.meter-crossfade); } }
+                    SettingRow { label: "StudioBridge Mixing Suite Enabled"; detail: "This compatibility preference has no runtime consumer yet."; interactive: false; checked: root.mixing-suite-enabled; }
                     Text { text: "LINUX AUDIO SETTINGS"; color: Theme.text; font-size: 12px; font-weight: 800; }
                     SettingRow { label: "Automatic Linux Default Device Reset"; checked: root.automatic-default-reset; toggled(value) => { root.automatic-default-reset = value; root.save-preferences(root.start-at-login, root.open-to-system-tray, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, value, root.meter-crossfade); } }
                     Text { text: "MIXER SETTINGS"; color: Theme.text; font-size: 12px; font-weight: 800; }
-                    SettingRow { label: "Enable Crossfade on Profile Switching"; checked: root.meter-crossfade; toggled(value) => { root.meter-crossfade = value; root.save-preferences(root.start-at-login, root.open-to-system-tray, root.save-confirmation, root.beta-opt-in, root.mixing-suite-enabled, root.automatic-default-reset, value); } }
+                    SettingRow { label: "Enable Crossfade on Profile Switching"; detail: "Profile-switch crossfade is not implemented."; interactive: false; checked: root.meter-crossfade; }
                     Text { text: "HOTKEY ASSIGNMENTS"; color: Theme.text; font-size: 12px; font-weight: 800; }
                     for hotkey in root.hotkeys: VerticalLayout {
                         spacing: 1px;
@@ -3204,7 +3234,7 @@ export component MainWindow inherits Window {
                 background: #171719;
                 border-width: 1px;
                 border-color: Theme.border;
-                HorizontalLayout { padding-left: 12px; padding-right: 12px; Text { text: root.status-text; color: root.daemon-connected ? Theme.quiet : Theme.red; font-size: 9px; horizontal-stretch: 1; vertical-alignment: center; } Text { text: root.hardware-safe ? "HARDWARE WRITES OFF" : "WRITES ACTIVE"; color: root.hardware-safe ? Theme.green : Theme.red; font-size: 9px; font-weight: 800; vertical-alignment: center; } Text { text: "  ·  StudioBridge"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; } }
+                HorizontalLayout { padding-left: 12px; padding-right: 12px; Text { text: root.status-text; color: root.status-alert || !root.daemon-connected ? Theme.red : Theme.quiet; font-size: 9px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } Text { text: root.hardware-safe ? "HARDWARE WRITES OFF" : "WRITES ACTIVE"; color: root.hardware-safe ? Theme.green : Theme.red; font-size: 9px; font-weight: 800; vertical-alignment: center; } Text { text: "  ·  StudioBridge"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; } }
             }
         }
 
@@ -3235,35 +3265,29 @@ export component MainWindow inherits Window {
             }
         }
     }
-    if !root.daemon-connected: Rectangle {
-        z: 90;
+    if !root.daemon-connected && root.active-page <= 1: TouchArea {
+        z: 89;
         x: 72px;
         y: 28px;
-        width: parent.width - 72px;
+        width: parent.width - 72px - (root.profiles-drawer-open ? 285px : 0px);
         height: parent.height - 52px;
-        background: #121214d9;
-        TouchArea { width: parent.width; height: parent.height; }
-        Rectangle {
-            x: (parent.width - self.width) / 2;
-            y: (parent.height - self.height) / 2;
-            width: 350px;
-            height: 154px;
-            border-radius: 7px;
-            border-width: 1px;
-            border-color: #44444a;
-            background: #222225;
-            VerticalLayout {
-                padding: 18px;
-                spacing: 9px;
-                Text { text: "STUDIOBRIDGE IS OFFLINE"; color: Theme.text; font-size: 13px; font-weight: 800; horizontal-alignment: center; }
-                Text { text: "The audio service is unavailable. Controls are paused to prevent stale changes."; color: Theme.quiet; font-size: 10px; horizontal-alignment: center; wrap: word-wrap; }
-                Text { text: root.status-text; color: Theme.red; font-size: 9px; horizontal-alignment: center; overflow: elide; }
-                HorizontalLayout {
-                    alignment: center;
-                    Button { text: "Retry connection"; clicked => { root.refresh(); } }
-                }
-            }
-        }
+        mouse-cursor: not-allowed;
+    }
+    if !root.daemon-connected: Rectangle {
+        z: 90;
+        x: 84px;
+        y: 42px;
+        width: min(610px, parent.width - 108px);
+        height: 104px;
+        border-radius: 5px;
+        border-width: 1px;
+        border-color: root.daemon-status-kind == "timeout" ? #a97d32 : #8d4548;
+        background: #242427f5;
+        Rectangle { x: 0px; y: 0px; width: 4px; height: parent.height; background: root.daemon-status-kind == "timeout" ? Theme.amber : Theme.red; }
+        Text { x: 16px; y: 11px; width: parent.width - 138px; height: 18px; text: root.daemon-status-title; color: Theme.text; font-size: 11px; font-weight: 800; vertical-alignment: center; overflow: elide; }
+        Text { x: 16px; y: 32px; width: parent.width - 32px; height: 37px; text: root.daemon-status-detail; color: Theme.quiet; font-size: 9px; vertical-alignment: top; wrap: word-wrap; overflow: elide; }
+        Text { x: 16px; y: 76px; width: parent.width - 138px; height: 18px; text: "READ-ONLY NAVIGATION REMAINS AVAILABLE"; color: Theme.amber; font-size: 8px; font-weight: 800; vertical-alignment: center; }
+        Button { x: parent.width - 116px; y: 71px; width: 102px; height: 24px; text: "Retry"; accessible-label: "Retry StudioBridge daemon connection"; clicked => { root.refresh(); } }
     }
     if root.legal-dialog-open: Rectangle {
         z: 102;
@@ -3321,18 +3345,21 @@ export component MainWindow inherits Window {
                     color: Theme.text; font-size: 12px; horizontal-alignment: center; wrap: word-wrap;
                 }
                 Text {
-                    text: "This updates its routing, volumes, assignments, and source order.";
-                    color: Theme.quiet; font-size: 10px; horizontal-alignment: center; wrap: word-wrap;
+                    text: root.daemon-connected ? "This updates its routing, volumes, assignments, and source order." : "Connection lost. Saving is unavailable until the daemon reconnects.";
+                    color: root.daemon-connected ? Theme.quiet : Theme.red; font-size: 10px; horizontal-alignment: center; wrap: word-wrap;
                 }
                 HorizontalLayout {
                     alignment: center; spacing: 14px;
                     Button {
                         width: 76px; text: "Save";
+                        enabled: root.daemon-connected;
                         clicked => {
-                            let name = root.pending-profile-save;
-                            root.profile-save-confirm-open = false;
-                            root.pending-profile-save = "";
-                            root.save-mixer-profile(name);
+                            if root.daemon-connected {
+                                let name = root.pending-profile-save;
+                                root.profile-save-confirm-open = false;
+                                root.pending-profile-save = "";
+                                root.save-mixer-profile(name);
+                            }
                         }
                     }
                     Button { text: "Cancel"; clicked => { root.profile-save-confirm-open = false; root.pending-profile-save = ""; } }
@@ -3349,10 +3376,15 @@ export component MainWindow inherits Window {
                     return accept;
                 }
                 if event.text == Key.Return {
-                    let name = root.pending-profile-save;
-                    root.profile-save-confirm-open = false;
-                    root.pending-profile-save = "";
-                    root.save-mixer-profile(name);
+                    if root.daemon-connected {
+                        let name = root.pending-profile-save;
+                        root.profile-save-confirm-open = false;
+                        root.pending-profile-save = "";
+                        root.save-mixer-profile(name);
+                    } else {
+                        root.profile-save-confirm-open = false;
+                        root.pending-profile-save = "";
+                    }
                     return accept;
                 }
                 return accept;
