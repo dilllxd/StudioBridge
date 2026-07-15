@@ -352,6 +352,7 @@ component MixFader inherits Rectangle {
     in property <float> meter;
     in property <bool> muted;
     in property <color> accent;
+    in property <bool> interactive: true;
     callback changed(float);
     callback mute-clicked;
     background: transparent;
@@ -369,6 +370,7 @@ component MixFader inherits Rectangle {
                 accent: root.accent;
                 muted: root.muted;
                 personal: root.label == "PERSONAL";
+                interactive: root.interactive;
                 changed(value) => { root.changed(value); }
                 mute-clicked => { root.mute-clicked(); }
             }
@@ -380,17 +382,19 @@ component MixFader inherits Rectangle {
 component MuteActionRow inherits Rectangle {
     in property <string> label;
     in property <bool> selected;
+    in property <bool> interactive: true;
     callback activated;
     height: 20px;
-    background: action-touch.has-hover || action-focus.has-focus ? #3a393e : transparent;
+    background: root.interactive && (action-touch.has-hover || action-focus.has-focus) ? #3a393e : transparent;
     border-width: action-focus.has-focus ? 1px : 0px;
     border-color: Theme.teal;
     action-focus := FocusScope {
         width: parent.width; height: parent.height;
         accessible-role: button;
         accessible-label: root.label;
+        accessible-enabled: root.interactive;
         key-pressed(event) => {
-            if event.text == Key.Return || event.text == Key.Space {
+            if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                 root.activated();
                 return accept;
             }
@@ -405,10 +409,10 @@ component MuteActionRow inherits Rectangle {
         Text {
             x: 20px; width: parent.width - 24px;
             text: root.label;
-            color: Theme.text; font-size: 9px; font-weight: 700;
+            color: root.interactive ? Theme.text : #6f6f74; font-size: 9px; font-weight: 700;
             vertical-alignment: center;
         }
-        action-touch := TouchArea { clicked => { action-focus.focus(); root.activated(); } }
+        action-touch := TouchArea { enabled: root.interactive; clicked => { action-focus.focus(); root.activated(); } }
     }
 }
 
@@ -416,15 +420,17 @@ component SelectorMenuRow inherits Rectangle {
     in property <string> label;
     in property <bool> selected;
     in property <bool> highlighted;
+    in property <bool> interactive: true;
     callback activated;
     height: 24px;
-    background: root.highlighted || row-touch.has-hover ? #49474d : root.selected ? #343338 : transparent;
+    background: root.interactive && (root.highlighted || row-touch.has-hover) ? #49474d : root.selected ? #343338 : transparent;
     row-focus := FocusScope {
         width: parent.width; height: parent.height;
         accessible-role: button;
         accessible-label: root.label + (root.selected ? ", selected" : "");
+        accessible-enabled: root.interactive;
         key-pressed(event) => {
-            if event.text == Key.Return || event.text == Key.Space {
+            if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                 root.activated();
                 return accept;
             }
@@ -433,7 +439,7 @@ component SelectorMenuRow inherits Rectangle {
         Text {
             x: 4px; width: 12px;
             text: root.selected ? "✓" : "";
-            color: Theme.text; font-size: 10px; font-weight: 700;
+            color: root.interactive ? Theme.text : #6f6f74; font-size: 10px; font-weight: 700;
             horizontal-alignment: center; vertical-alignment: center;
         }
         Text {
@@ -442,7 +448,7 @@ component SelectorMenuRow inherits Rectangle {
             color: Theme.text; font-size: 10px; font-weight: 700;
             vertical-alignment: center; overflow: elide;
         }
-        row-touch := TouchArea { clicked => { row-focus.focus(); root.activated(); } }
+        row-touch := TouchArea { enabled: root.interactive; clicked => { row-focus.focus(); root.activated(); } }
     }
 }
 
@@ -475,6 +481,7 @@ component BeacnSelector inherits Rectangle {
         width: parent.width; height: parent.height;
         enabled: root.selector-enabled;
         accessible-role: combobox;
+        accessible-enabled: root.selector-enabled;
         accessible-label: root.current-index >= 0 && root.current-index < root.model.length
             ? root.model[root.current-index] : root.placeholder;
         key-pressed(event) => {
@@ -541,6 +548,7 @@ component BeacnSelector inherits Rectangle {
                     label: item;
                     selected: index == root.current-index;
                     highlighted: index == root.highlighted-index;
+                    interactive: root.selector-enabled;
                     activated => {
                         selector-menu.close();
                         root.highlighted-index = index;
@@ -557,9 +565,10 @@ component BeacnSelector inherits Rectangle {
 component InputDeviceRow inherits Rectangle {
     in property <string> label;
     in property <bool> selected;
+    in property <bool> interactive: true;
     callback activated;
     height: 18px;
-    background: input-touch.has-hover || input-focus.has-focus ? #252529 : transparent;
+    background: root.interactive && (input-touch.has-hover || input-focus.has-focus) ? #252529 : transparent;
     border-width: input-focus.has-focus ? 1px : 0px;
     border-color: Theme.teal;
     Rectangle {
@@ -576,7 +585,7 @@ component InputDeviceRow inherits Rectangle {
     Text {
         x: 17px; width: parent.width - 20px;
         text: root.label;
-        color: root.selected ? Theme.teal : Theme.quiet;
+        color: !root.interactive ? #6f6f74 : root.selected ? Theme.teal : Theme.quiet;
         font-size: 8px;
         font-weight: root.selected ? 700 : 400;
         vertical-alignment: center;
@@ -587,27 +596,29 @@ component InputDeviceRow inherits Rectangle {
         accessible-role: checkbox;
         accessible-checked: root.selected;
         accessible-label: (root.selected ? "Detach " : "Attach ") + root.label;
+        accessible-enabled: root.interactive;
         key-pressed(event) => {
-            if event.text == Key.Return || event.text == Key.Space {
+            if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                 root.activated();
                 return accept;
             }
             return reject;
         }
-        input-touch := TouchArea { clicked => { input-focus.focus(); root.activated(); } }
+        input-touch := TouchArea { enabled: root.interactive; clicked => { input-focus.focus(); root.activated(); } }
     }
 }
 
 component SourceStrip inherits Rectangle {
     in property <SourceModel> source;
     in property <int> source-index;
+    in property <bool> interactive: true;
     in-out property <bool> dragging: false;
     in-out property <length> drag-distance: 0px;
     in property <bool> application-dragging: false;
     in property <length> application-drag-x: 0px;
     in property <length> application-drag-y: 0px;
     in property <[string]> input-device-names;
-    property <bool> application-hovered: root.application-dragging
+    property <bool> application-hovered: root.interactive && root.application-dragging
         && root.application-drag-x >= root.absolute-position.x
         && root.application-drag-x < root.absolute-position.x + root.width
         && root.application-drag-y >= root.absolute-position.y
@@ -631,7 +642,7 @@ component SourceStrip inherits Rectangle {
     border-width: 1px;
     border-color: root.dragging || root.application-hovered || root.interaction-focused ? Theme.teal : Theme.border;
     background: Theme.panel;
-    opacity: root.dragging ? 0.82 : 1.0;
+    opacity: root.interactive ? (root.dragging ? 0.82 : 1.0) : 0.62;
     VerticalLayout {
         padding: 7px;
         spacing: 5px;
@@ -644,11 +655,12 @@ component SourceStrip inherits Rectangle {
                     width: 14px;
                     accessible-role: button;
                     accessible-label: "Reorder " + root.source.name;
+                    accessible-enabled: root.interactive;
                     key-pressed(event) => {
-                        if event.text == Key.LeftArrow {
+                        if root.interactive && event.text == Key.LeftArrow {
                             root.reorder-requested(root.source-index - 1);
                             return accept;
-                        } else if event.text == Key.RightArrow {
+                        } else if root.interactive && event.text == Key.RightArrow {
                             root.reorder-requested(root.source-index + 1);
                             return accept;
                         }
@@ -656,6 +668,7 @@ component SourceStrip inherits Rectangle {
                     }
                     Text { text: "⠿"; color: root.dragging || grip-focus.has-focus || drag-touch.has-hover ? Theme.teal : #5f5e64; font-size: 10px; vertical-alignment: center; }
                     drag-touch := TouchArea {
+                        enabled: root.interactive;
                         mouse-cursor: MouseCursor.grab;
                         pointer-event(event) => {
                             if event.button == PointerEventButton.left && event.kind == PointerEventKind.down {
@@ -686,14 +699,15 @@ component SourceStrip inherits Rectangle {
                 x: 17px; width: parent.width - 17px;
                 accessible-role: button;
                 accessible-label: "Open menu for " + root.source.name;
+                accessible-enabled: root.interactive;
                 key-pressed(event) => {
-                    if event.text == Key.Return || event.text == Key.Space {
+                    if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                         if channel-menu.is-open { channel-menu.close(); } else { channel-menu.show(); }
                         return accept;
                     }
                     return reject;
                 }
-                header-touch := TouchArea { clicked => { header-menu-focus.focus(); if channel-menu.is-open { channel-menu.close(); } else { channel-menu.show(); } } }
+                header-touch := TouchArea { enabled: root.interactive; clicked => { header-menu-focus.focus(); if channel-menu.is-open { channel-menu.close(); } else { channel-menu.show(); } } }
             }
         }
         Rectangle {
@@ -711,6 +725,7 @@ component SourceStrip inherits Rectangle {
                 meter: root.source.meter;
                 muted: root.source.personal-muted;
                 accent: Theme.teal;
+                interactive: root.interactive;
                 changed(value) => { root.personal-changed(value); }
                 mute-clicked => { root.personal-mute(); }
             }
@@ -721,6 +736,7 @@ component SourceStrip inherits Rectangle {
                 meter: root.source.meter * root.source.audience / 100.0;
                 muted: root.source.audience-muted;
                 accent: Theme.amber;
+                interactive: root.interactive;
                 changed(value) => { root.audience-changed(value); }
                 mute-clicked => { root.audience-mute(); }
             }
@@ -741,14 +757,15 @@ component SourceStrip inherits Rectangle {
                         width: parent.width; height: parent.height;
                         accessible-role: button;
                         accessible-label: (root.source.linked ? "Unlink " : "Link ") + root.source.name + " Personal and Audience volumes";
+                        accessible-enabled: root.interactive;
                         key-pressed(event) => {
-                            if event.text == Key.Return || event.text == Key.Space {
+                            if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                                 root.link-changed(!root.source.linked);
                                 return accept;
                             }
                             return reject;
                         }
-                        link-touch := TouchArea { clicked => { link-focus.focus(); root.link-changed(!root.source.linked); } }
+                        link-touch := TouchArea { enabled: root.interactive; clicked => { link-focus.focus(); root.link-changed(!root.source.linked); } }
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
@@ -769,6 +786,7 @@ component SourceStrip inherits Rectangle {
                     for input[index] in root.input-device-names: InputDeviceRow {
                         label: input;
                         selected: root.source.input-device-index == index;
+                        interactive: root.interactive;
                         activated => { root.input-device-selected(root.source.input-device-index == index ? -1 : index); }
                     }
                     if root.input-device-names.length == 0: Text {
@@ -803,28 +821,30 @@ component SourceStrip inherits Rectangle {
                     width: parent.width; height: parent.height;
                     accessible-role: button;
                     accessible-label: "Choose mute action for " + root.source.name;
+                    accessible-enabled: root.interactive;
                     key-pressed(event) => {
-                        if event.text == Key.Return || event.text == Key.Space {
+                        if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                             if mute-menu.is-open { mute-menu.close(); } else { mute-menu.show(); }
                             return accept;
                         }
                         return reject;
                     }
-                    mute-menu-touch := TouchArea { clicked => { mute-menu-focus.focus(); if mute-menu.is-open { mute-menu.close(); } else { mute-menu.show(); } } }
+                    mute-menu-touch := TouchArea { enabled: root.interactive; clicked => { mute-menu-focus.focus(); if mute-menu.is-open { mute-menu.close(); } else { mute-menu.show(); } } }
                 }
             }
             mute-action-focus := FocusScope {
                 width: parent.width - 20px; height: parent.height;
                 accessible-role: button;
                 accessible-label: "Apply " + (root.source.mute-action == "all" ? "Mute to All" : root.source.mute-action == "personal" ? root.personal-mute-label : "Mute to Audience") + " to " + root.source.name;
+                accessible-enabled: root.interactive;
                 key-pressed(event) => {
-                    if event.text == Key.Return || event.text == Key.Space {
+                    if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                         root.mute-action(root.source.mute-action);
                         return accept;
                     }
                     return reject;
                 }
-                mute-action-touch := TouchArea { clicked => { mute-action-focus.focus(); root.mute-action(root.source.mute-action); } }
+                mute-action-touch := TouchArea { enabled: root.interactive; clicked => { mute-action-focus.focus(); root.mute-action(root.source.mute-action); } }
             }
         }
     }
@@ -838,8 +858,9 @@ component SourceStrip inherits Rectangle {
                 width: parent.width; height: parent.height;
                 accessible-role: button;
                 accessible-label: "Delete " + root.source.name;
+                accessible-enabled: root.interactive;
                 key-pressed(event) => {
-                    if event.text == Key.Return || event.text == Key.Space {
+                    if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                         channel-menu.close();
                         root.delete-source();
                         return accept;
@@ -847,7 +868,7 @@ component SourceStrip inherits Rectangle {
                     return reject;
                 }
                 Text { text: "Delete Knob"; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                TouchArea { clicked => { delete-focus.focus(); channel-menu.close(); root.delete-source(); } }
+                TouchArea { enabled: root.interactive; clicked => { delete-focus.focus(); channel-menu.close(); root.delete-source(); } }
             }
         }
     }
@@ -860,15 +881,15 @@ component SourceStrip inherits Rectangle {
             VerticalLayout {
                 spacing: 0px;
                 MuteActionRow {
-                    label: "Mute to All"; selected: root.source.mute-action == "all";
+                    label: "Mute to All"; selected: root.source.mute-action == "all"; interactive: root.interactive;
                     activated => { mute-menu.close(); root.mute-action-selected("all"); }
                 }
                 MuteActionRow {
-                    label: "Mute to Audience"; selected: root.source.mute-action == "audience";
+                    label: "Mute to Audience"; selected: root.source.mute-action == "audience"; interactive: root.interactive;
                     activated => { mute-menu.close(); root.mute-action-selected("audience"); }
                 }
                 MuteActionRow {
-                    label: root.personal-mute-label; selected: root.source.mute-action == "personal";
+                    label: root.personal-mute-label; selected: root.source.mute-action == "personal"; interactive: root.interactive;
                     activated => { mute-menu.close(); root.mute-action-selected("personal"); }
                 }
             }
@@ -904,20 +925,21 @@ component ContextTab inherits Rectangle {
 
 component RoutingToggle inherits Rectangle {
     in property <RouteModel> route;
+    in property <bool> interactive: true;
     callback toggled;
     width: 90px;
     height: 34px;
     background: transparent;
     cell := Rectangle {
         y: 5px; width: parent.width; height: 28px;
-        background: #1c1c1f;
+        background: root.interactive ? #1c1c1f : #202023;
         border-width: 1px; border-color: #2e2e32;
         indicator := Rectangle {
             x: (parent.width - 18px) / 2; y: 5px; width: 18px; height: 18px;
             border-radius: 9px;
             border-width: 2px;
-            border-color: root.route.enabled ? Theme.teal : Theme.red;
-            background: root.route.enabled ? Theme.teal : transparent;
+            border-color: !root.interactive ? #55555a : root.route.enabled ? Theme.teal : Theme.red;
+            background: root.route.enabled ? (root.interactive ? Theme.teal : #55555a) : transparent;
             if root.route.enabled: Path {
                 width: parent.width; height: parent.height;
                 commands: "M 4 9 L 8 13 L 14 5";
@@ -935,13 +957,15 @@ component RoutingToggle inherits Rectangle {
         accessible-role: checkbox;
         accessible-checked: root.route.enabled;
         accessible-label: (root.route.enabled ? "Exclude " : "Include ") + root.route.source-name + " in " + root.route.target-name;
-        key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.toggled(); return accept; } return reject; }
-        TouchArea { clicked => { route-focus.focus(); root.toggled(); } }
+        accessible-enabled: root.interactive;
+        key-pressed(event) => { if root.interactive && (event.text == Key.Return || event.text == Key.Space) { root.toggled(); return accept; } return reject; }
+        TouchArea { enabled: root.interactive; clicked => { route-focus.focus(); root.toggled(); } }
     }
 }
 
 component TargetStrip inherits Rectangle {
     in property <TargetModel> target;
+    in property <bool> interactive: true;
     in property <[string]> output-device-names;
     in property <int> output-device-index: -1;
     callback volume-changed(float);
@@ -954,6 +978,7 @@ component TargetStrip inherits Rectangle {
     border-width: 1px;
     border-color: Theme.border;
     background: Theme.raised;
+    opacity: root.interactive ? 1.0 : 0.62;
     if root.target.target-id == "headphones" || root.target.target-id == "audience-mix": VerticalLayout {
         padding-left: 7px; padding-right: 7px; padding-top: 4px; padding-bottom: 4px; spacing: 2px;
         Text {
@@ -970,6 +995,7 @@ component TargetStrip inherits Rectangle {
                 model: root.output-device-names;
                 current-index: root.output-device-index;
                 popup-width: 248px;
+                selector-enabled: root.interactive;
                 selected(index) => { root.output-device-selected(index); }
             }
             LevelMeter { width: 8px; height: 24px; value: root.target.muted ? 0 : root.target.meter; colour: root.target.mix == "Personal" ? Theme.teal : Theme.amber; }
@@ -977,6 +1003,7 @@ component TargetStrip inherits Rectangle {
                 horizontal-stretch: 1;
                 value: root.target.volume;
                 control-label: root.target.name + " output volume";
+                interactive: root.interactive;
                 changed(value) => { root.volume-changed(value); }
             }
             Rectangle {
@@ -988,14 +1015,15 @@ component TargetStrip inherits Rectangle {
                     width: parent.width; height: parent.height;
                     accessible-role: button;
                     accessible-label: (root.target.muted ? "Unmute " : "Mute ") + root.target.name;
+                    accessible-enabled: root.interactive;
                     key-pressed(event) => {
-                        if event.text == Key.Return || event.text == Key.Space {
+                        if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                             root.mute-clicked();
                             return accept;
                         }
                         return reject;
                     }
-                    TouchArea { clicked => { target-mute-focus.focus(); root.mute-clicked(); } }
+                    TouchArea { enabled: root.interactive; clicked => { target-mute-focus.focus(); root.mute-clicked(); } }
                 }
             }
         }
@@ -1009,6 +1037,7 @@ component TargetStrip inherits Rectangle {
             HorizontalFader {
                 value: root.target.volume;
                 control-label: root.target.name + " output volume";
+                interactive: root.interactive;
                 changed(value) => { root.volume-changed(value); }
             }
         }
@@ -1018,6 +1047,7 @@ component TargetStrip inherits Rectangle {
             model: root.output-device-names;
             current-index: root.output-device-index;
             popup-width: 248px;
+            selector-enabled: root.interactive;
             selected(index) => { root.output-device-selected(index); }
         }
         LevelMeter { width: 12px; value: root.target.muted ? 0 : root.target.meter; colour: root.target.mix == "Personal" ? Theme.teal : Theme.amber; }
@@ -1031,14 +1061,15 @@ component TargetStrip inherits Rectangle {
                 width: parent.width; height: parent.height;
                 accessible-role: button;
                 accessible-label: (root.target.muted ? "Unmute " : "Mute ") + root.target.name;
+                accessible-enabled: root.interactive;
                 key-pressed(event) => {
-                    if event.text == Key.Return || event.text == Key.Space {
+                    if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                         root.mute-clicked();
                         return accept;
                     }
                     return reject;
                 }
-                TouchArea { clicked => { extra-target-mute-focus.focus(); root.mute-clicked(); } }
+                TouchArea { enabled: root.interactive; clicked => { extra-target-mute-focus.focus(); root.mute-clicked(); } }
             }
         }
     }
@@ -1050,6 +1081,7 @@ component ApplicationChip inherits Rectangle {
     in property <float> application-name-width: 44;
     in property <float> destination-width: 44;
     in property <bool> dragging: false;
+    in property <bool> interactive: true;
     callback drag-started(length, length);
     callback drag-moved(length, length);
     callback drag-ended(length, length);
@@ -1061,7 +1093,7 @@ component ApplicationChip inherits Rectangle {
     border-width: chip-focus.has-focus ? 1px : 0px;
     border-color: chip-focus.has-focus ? #78e5df : transparent;
     background: root.dragging ? #1a3d3c : transparent;
-    opacity: root.dragging ? 0.82 : 1.0;
+    opacity: root.interactive ? (root.dragging ? 0.82 : 1.0) : 0.58;
 
     HorizontalLayout {
         padding-left: 3px;
@@ -1101,18 +1133,20 @@ component ApplicationChip inherits Rectangle {
         height: parent.height;
         accessible-role: button;
         accessible-label: root.application-name + ", assigned to " + root.destination + ". Drag onto a source";
+        accessible-enabled: root.interactive;
         key-pressed(event) => {
-            if event.text == Key.LeftArrow || event.text == Key.UpArrow {
+            if root.interactive && (event.text == Key.LeftArrow || event.text == Key.UpArrow) {
                 root.assignment-step(-1);
                 return accept;
             }
-            if event.text == Key.RightArrow || event.text == Key.DownArrow {
+            if root.interactive && (event.text == Key.RightArrow || event.text == Key.DownArrow) {
                 root.assignment-step(1);
                 return accept;
             }
             return reject;
         }
         chip-touch := TouchArea {
+            enabled: root.interactive;
             mouse-cursor: root.dragging ? MouseCursor.grabbing : MouseCursor.grab;
             pointer-event(event) => {
                 let pointer-x = self.absolute-position.x + self.mouse-x;
@@ -1161,12 +1195,12 @@ component EnhancementPresetButton inherits Rectangle {
     callback clicked;
     width: 34px;
     height: 34px;
-    background: root.selected ? Theme.teal : #18181b;
+    background: !root.interactive ? #202023 : root.selected ? Theme.teal : #18181b;
     border-width: 1px;
-    border-color: root.selected ? #78e5df : #2c2c31;
+    border-color: !root.interactive ? #35353a : root.selected ? #78e5df : #2c2c31;
     Text {
         text: root.preset;
-        color: root.selected ? #ffffff : root.interactive ? Theme.text : #66666b;
+        color: !root.interactive ? #66666b : root.selected ? #ffffff : Theme.text;
         font-size: 18px;
         horizontal-alignment: center;
         vertical-alignment: center;
@@ -1211,18 +1245,18 @@ component EnhancementDial inherits Rectangle {
         border-radius: 31px;
         background: #171719;
         border-width: 5px;
-        border-color: root.enabled-state ? Theme.teal : #4a494f;
+        border-color: root.interactive && root.enabled-state ? Theme.teal : #4a494f;
         Rectangle {
             x: 27px;
             y: 3px;
             width: 4px;
             height: 16px;
-            background: root.enabled-state ? Theme.teal : Theme.quiet;
+            background: root.interactive && root.enabled-state ? Theme.teal : Theme.quiet;
             border-radius: 2px;
         }
     }
     Text { x: 0px; y: 65px; width: parent.width; text: root.label; color: Theme.text; font-size: 9px; font-weight: 700; horizontal-alignment: center; }
-    Text { x: 0px; y: 78px; width: parent.width; text: root.value-label; color: root.enabled-state ? Theme.teal : Theme.quiet; font-size: 8px; horizontal-alignment: center; }
+    Text { x: 0px; y: 78px; width: parent.width; text: root.value-label; color: root.interactive && root.enabled-state ? Theme.teal : Theme.quiet; font-size: 8px; horizontal-alignment: center; }
     dial-focus := FocusScope {
         width: parent.width;
         height: parent.height;
@@ -1278,12 +1312,12 @@ component ProcessorModeButton inherits Rectangle {
     in property <bool> interactive: true;
     callback clicked;
     height: 32px;
-    background: root.selected ? #4a494f : mode-focus.has-focus ? #38383d : #29292d;
+    background: !root.interactive ? #242427 : root.selected ? #4a494f : mode-focus.has-focus ? #38383d : #29292d;
     border-width: 1px;
-    border-color: root.selected ? #626168 : mode-focus.has-focus ? Theme.teal : #34343a;
+    border-color: !root.interactive ? #343439 : root.selected ? #626168 : mode-focus.has-focus ? Theme.teal : #34343a;
     Text {
         text: root.label;
-        color: root.selected ? Theme.text : Theme.quiet;
+        color: !root.interactive ? #6f6f74 : root.selected ? Theme.text : Theme.quiet;
         font-size: 10px;
         font-weight: 700;
         horizontal-alignment: center;
@@ -1346,14 +1380,15 @@ component EqTypeButton inherits Rectangle {
     width: 38px;
     height: 34px;
     border-radius: 3px;
-    background: root.selected ? Theme.teal : #18181b;
+    background: !root.interactive ? #202023 : root.selected ? Theme.teal : #18181b;
     border-width: 1px;
-    border-color: root.selected ? #78e5df : #2c2c31;
-    Text { text: root.glyph; color: root.selected ? #ffffff : root.interactive ? Theme.text : #66666b; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
+    border-color: !root.interactive ? #35353a : root.selected ? #78e5df : #2c2c31;
+    Text { text: root.glyph; color: !root.interactive ? #66666b : root.selected ? #ffffff : Theme.text; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
     type-focus := FocusScope {
         width: parent.width; height: parent.height;
         accessible-role: button;
         accessible-label: root.label;
+        accessible-enabled: root.interactive;
         key-pressed(event) => {
             if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                 root.clicked();
@@ -1444,11 +1479,11 @@ component ProcessorValueRow inherits Rectangle {
     callback increase;
     height: 25px;
     Text { x: 0px; width: 82px; text: root.label; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
-    Text { x: 82px; width: parent.width - 110px; text: root.value-label; color: Theme.teal; font-size: 10px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
+    Text { x: 82px; width: parent.width - 110px; text: root.value-label; color: root.interactive ? Theme.teal : #747479; font-size: 10px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
     Text {
         x: parent.width - 24px; width: 10px; text: "‹"; color: root.interactive ? Theme.text : #55555a; font-size: 15px; horizontal-alignment: center; vertical-alignment: center;
         decrease-focus := FocusScope {
-            width: parent.width; height: parent.height; accessible-role: button; accessible-label: "Decrease " + root.label;
+            width: parent.width; height: parent.height; accessible-role: button; accessible-label: "Decrease " + root.label; accessible-enabled: root.interactive;
             key-pressed(event) => { if root.interactive && (event.text == Key.Return || event.text == Key.Space) { root.decrease(); return accept; } return reject; }
             TouchArea { enabled: root.interactive; clicked => { decrease-focus.focus(); root.decrease(); } }
         }
@@ -1456,7 +1491,7 @@ component ProcessorValueRow inherits Rectangle {
     Text {
         x: parent.width - 12px; width: 10px; text: "›"; color: root.interactive ? Theme.text : #55555a; font-size: 15px; horizontal-alignment: center; vertical-alignment: center;
         increase-focus := FocusScope {
-            width: parent.width; height: parent.height; accessible-role: button; accessible-label: "Increase " + root.label;
+            width: parent.width; height: parent.height; accessible-role: button; accessible-label: "Increase " + root.label; accessible-enabled: root.interactive;
             key-pressed(event) => { if root.interactive && (event.text == Key.Return || event.text == Key.Space) { root.increase(); return accept; } return reject; }
             TouchArea { enabled: root.interactive; clicked => { increase-focus.focus(); root.increase(); } }
         }
@@ -1584,7 +1619,7 @@ component ToggleSwitch inherits Rectangle {
     width: 34px;
     height: 18px;
     border-radius: 9px;
-    background: root.checked ? Theme.teal : #414147;
+    background: !root.interactive ? (root.checked ? #39706e : #303035) : root.checked ? Theme.teal : #414147;
     Rectangle {
         x: root.checked ? parent.width - 16px : 2px;
         y: 2px;
@@ -1599,6 +1634,7 @@ component ToggleSwitch inherits Rectangle {
         accessible-role: checkbox;
         accessible-checked: root.checked;
         accessible-label: root.control-label;
+        accessible-enabled: root.interactive;
         key-pressed(event) => {
             if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                 root.checked = !root.checked;
@@ -1667,18 +1703,20 @@ component ModuleTab inherits Rectangle {
     in property <string> module;
     in property <string> selected;
     in property <length> tab-width: 126px;
+    in property <bool> interactive: true;
     callback clicked(string);
     width: root.tab-width;
-    background: root.module == root.selected ? #1c2b2f : #111719;
+    background: !root.interactive ? #17191a : root.module == root.selected ? #1c2b2f : #111719;
     border-width: 1px;
-    border-color: root.module == root.selected ? Theme.teal : Theme.border;
-    Text { text: root.label; color: root.module == root.selected ? Theme.teal : Theme.quiet; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+    border-color: !root.interactive ? #303034 : root.module == root.selected ? Theme.teal : Theme.border;
+    Text { text: root.label; color: !root.interactive ? #67676c : root.module == root.selected ? Theme.teal : Theme.quiet; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
     tab-focus := FocusScope {
         width: parent.width; height: parent.height;
         accessible-role: tab;
         accessible-label: root.label;
-        key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.clicked(root.module); return accept; } return reject; }
-        TouchArea { clicked => { tab-focus.focus(); root.clicked(root.module); } }
+        accessible-enabled: root.interactive;
+        key-pressed(event) => { if root.interactive && (event.text == Key.Return || event.text == Key.Space) { root.clicked(root.module); return accept; } return reject; }
+        TouchArea { enabled: root.interactive; clicked => { tab-focus.focus(); root.clicked(root.module); } }
     }
 }
 
@@ -1781,6 +1819,7 @@ component MixerProfileRow inherits Rectangle {
         width: parent.width - 52px; height: parent.height;
         accessible-role: button;
         accessible-label: root.interactive ? "Load mixer profile " + root.profile.name : "Mixer profile " + root.profile.name + ", unavailable while daemon is disconnected";
+        accessible-enabled: root.interactive;
         key-pressed(event) => {
             if event.text == Key.Return || event.text == Key.Space {
                 root.selected();
@@ -1796,6 +1835,7 @@ component MixerProfileRow inherits Rectangle {
         x: parent.width - 50px; width: 16px; height: parent.height;
         accessible-role: button;
         accessible-label: "Save mixer profile " + root.profile.name;
+        accessible-enabled: root.interactive;
         key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.saved(); return accept; } return reject; }
         SaveProfileGlyph { width: parent.width; height: parent.height; visible: root.controls-visible; colour: save-area.has-hover || save-focus.has-focus ? Theme.text : Theme.quiet; }
         save-area := TouchArea { enabled: root.interactive; clicked => { save-focus.focus(); root.saved(); } }
@@ -1806,6 +1846,7 @@ component MixerProfileRow inherits Rectangle {
         x: parent.width - 34px; width: 16px; height: parent.height;
         accessible-role: button;
         accessible-label: "Duplicate mixer profile " + root.profile.name;
+        accessible-enabled: root.interactive;
         key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.duplicated(); return accept; } return reject; }
         DuplicateProfileGlyph { width: parent.width; height: parent.height; visible: root.controls-visible; colour: duplicate-area.has-hover || duplicate-focus.has-focus ? Theme.text : Theme.quiet; }
         duplicate-area := TouchArea { enabled: root.interactive; clicked => { duplicate-focus.focus(); root.duplicated(); } }
@@ -1816,6 +1857,7 @@ component MixerProfileRow inherits Rectangle {
         x: parent.width - 18px; width: 16px; height: parent.height;
         accessible-role: button;
         accessible-label: "Delete mixer profile " + root.profile.name;
+        accessible-enabled: root.interactive;
         key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.deleted(); return accept; } return reject; }
         DeleteProfileGlyph { width: parent.width; height: parent.height; visible: root.controls-visible; colour: delete-area.has-hover || delete-focus.has-focus ? Theme.text : Theme.quiet; }
         delete-area := TouchArea { enabled: root.interactive; clicked => { delete-focus.focus(); root.deleted(); } }
@@ -1898,8 +1940,9 @@ component ProfileRail inherits Rectangle {
                         x: parent.width - 32px; width: 32px; height: parent.height;
                         accessible-role: button;
                         accessible-label: root.connected ? "Create mixer profile" : "Create mixer profile, unavailable while daemon is disconnected";
-                        key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.create-profile(); return accept; } return reject; }
-                        TouchArea { clicked => { create-profile-focus.focus(); root.create-profile(); } }
+                        accessible-enabled: root.connected;
+                        key-pressed(event) => { if root.connected && (event.text == Key.Return || event.text == Key.Space) { root.create-profile(); return accept; } return reject; }
+                        TouchArea { enabled: root.connected; clicked => { create-profile-focus.focus(); root.create-profile(); } }
                     }
                 }
                 if root.mixer-profiles-expanded: VerticalLayout {
@@ -1934,6 +1977,7 @@ component AddSourceRow inherits Rectangle {
         enabled: root.available;
         accessible-role: button;
         accessible-label: "Add " + root.label;
+        accessible-enabled: root.available;
         key-pressed(event) => {
             if root.available && (event.text == Key.Return || event.text == Key.Space) {
                 root.selected(root.label);
@@ -2210,6 +2254,7 @@ export component MainWindow inherits Window {
                             for source[index] in root.sources: SourceStrip {
                                 source: source;
                                 source-index: index;
+                                interactive: root.daemon-connected;
                                 input-device-names: root.physical-input-names;
                                 application-dragging: root.application-pointer-dragging;
                                 application-drag-x: root.application-pointer-x;
@@ -2241,23 +2286,25 @@ export component MainWindow inherits Window {
                             }
                             Rectangle {
                                 width: 127px; height: 398px;
-                                background: add-source-touch.has-hover || add-source-focus.has-focus ? #202529 : #19191c;
+                                background: root.daemon-connected && (add-source-touch.has-hover || add-source-focus.has-focus) ? #202529 : #19191c;
                                 border-width: 1px;
                                 border-color: add-source-focus.has-focus ? Theme.teal : Theme.border;
                                 border-radius: 2px;
-                                Text { text: "+"; color: add-source-touch.has-hover || add-source-focus.has-focus ? Theme.teal : Theme.quiet; font-size: 42px; font-weight: 200; horizontal-alignment: center; vertical-alignment: center; }
+                                Text { text: "+"; color: !root.daemon-connected ? #5f5f64 : add-source-touch.has-hover || add-source-focus.has-focus ? Theme.teal : Theme.quiet; font-size: 42px; font-weight: 200; horizontal-alignment: center; vertical-alignment: center; }
                                 add-source-focus := FocusScope {
                                     width: parent.width; height: parent.height;
                                     accessible-role: button;
-                                    accessible-label: "Add mixer source";
+                                    accessible-label: root.daemon-connected ? "Add mixer source" : "Add mixer source, unavailable while daemon is disconnected";
+                                    accessible-enabled: root.daemon-connected;
                                     key-pressed(event) => {
-                                        if event.text == Key.Return || event.text == Key.Space {
+                                        if root.daemon-connected && (event.text == Key.Return || event.text == Key.Space) {
                                             if add-source-menu.is-open { add-source-menu.close(); } else { add-source-menu.show(); }
                                             return accept;
                                         }
                                         return reject;
                                     }
                                     add-source-touch := TouchArea {
+                                        enabled: root.daemon-connected;
                                         clicked => {
                                             add-source-focus.focus();
                                             if add-source-menu.is-open { add-source-menu.close(); } else { add-source-menu.show(); }
@@ -2319,6 +2366,7 @@ export component MainWindow inherits Window {
                                 spacing: 5px;
                                 for target in root.targets: TargetStrip {
                                     target: target;
+                                    interactive: root.daemon-connected;
                                     output-device-names: root.physical-output-names;
                                     output-device-index: target.output-device-index;
                                     volume-changed(value) => { root.set-target-volume(target.target-id, value); }
@@ -2356,15 +2404,15 @@ export component MainWindow inherits Window {
                             padding: 8px; spacing: 2px;
                             Text { text: "Recording Devices"; color: Theme.text; font-size: 11px; font-weight: 800; }
                             Text { text: "Default"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                            BeacnSelector { height: 22px; model: root.default-input-names; current-index: root.default-input-index; placeholder: "Choose Audio to input..."; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-input-ids.length { root.set-default-input(root.default-input-ids[index]); } } }
+                            BeacnSelector { height: 22px; model: root.default-input-names; current-index: root.default-input-index; placeholder: "Choose Audio to input..."; popup-width: 232px; selector-enabled: root.daemon-connected; selected(index) => { if index >= 0 && index < root.default-input-ids.length { root.set-default-input(root.default-input-ids[index]); } } }
                             Text { text: "Default Communication"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                            BeacnSelector { height: 22px; model: root.default-input-names; current-index: root.default-input-index; placeholder: "Choose Audio to input..."; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-input-ids.length { root.set-default-input(root.default-input-ids[index]); } } }
+                            BeacnSelector { height: 22px; model: root.default-input-names; current-index: root.default-input-index; placeholder: "Choose Audio to input..."; popup-width: 232px; selector-enabled: root.daemon-connected; selected(index) => { if index >= 0 && index < root.default-input-ids.length { root.set-default-input(root.default-input-ids[index]); } } }
                             Rectangle { height: 3px; background: transparent; }
                             Text { text: "Playback Devices"; color: Theme.text; font-size: 11px; font-weight: 800; }
                             Text { text: "Default"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                            BeacnSelector { height: 22px; model: root.default-output-names; current-index: root.default-output-index; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-output-ids.length { root.set-default-output(root.default-output-ids[index]); } } }
+                            BeacnSelector { height: 22px; model: root.default-output-names; current-index: root.default-output-index; popup-width: 232px; selector-enabled: root.daemon-connected; selected(index) => { if index >= 0 && index < root.default-output-ids.length { root.set-default-output(root.default-output-ids[index]); } } }
                             Text { text: "Default Communication"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                            BeacnSelector { height: 22px; model: root.default-output-names; current-index: root.default-output-index; popup-width: 232px; selected(index) => { if index >= 0 && index < root.default-output-ids.length { root.set-default-output(root.default-output-ids[index]); } } }
+                            BeacnSelector { height: 22px; model: root.default-output-names; current-index: root.default-output-index; popup-width: 232px; selector-enabled: root.daemon-connected; selected(index) => { if index >= 0 && index < root.default-output-ids.length { root.set-default-output(root.default-output-ids[index]); } } }
                             Rectangle { vertical-stretch: 1; }
                         }
                     }
@@ -2384,7 +2432,7 @@ export component MainWindow inherits Window {
                                     current-index: link.target-index;
                                     placeholder: link.available ? "Unassigned" : "BEACN Link endpoint unavailable";
                                     popup-width: 274px;
-                                    selector-enabled: link.available;
+                                    selector-enabled: root.daemon-connected && link.available;
                                     selected(index) => {
                                         if link.available && index >= 0 && index < root.link-output-target-ids.length {
                                             root.set-link-output-assignment(link.node-id, root.link-output-target-ids[index]);
@@ -2409,6 +2457,7 @@ export component MainWindow inherits Window {
                                 VerticalLayout {
                                     spacing: 0px;
                                     for app in root.link-applications: ApplicationChip {
+                                        interactive: root.daemon-connected;
                                         application-name: app.name;
                                         destination: app.destination;
                                         application-name-width: app.name-width;
@@ -2456,6 +2505,7 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                     for app in root.linux-applications: ApplicationChip {
+                                        interactive: root.daemon-connected;
                                         application-name: app.name;
                                         destination: app.destination;
                                         application-name-width: app.name-width;
@@ -2514,6 +2564,7 @@ export component MainWindow inherits Window {
                             row: route.row + 1;
                             col: route.column + 1;
                             route: route;
+                            interactive: root.daemon-connected;
                             toggled => { root.set-route(route.source-id, route.target-id, !route.enabled); }
                         }
                         for route in root.routes: Rectangle {
@@ -2630,12 +2681,12 @@ export component MainWindow inherits Window {
                                 spacing: 5px;
                                 HorizontalLayout {
                                     height: 25px; spacing: 4px;
-                                    Button { horizontal-stretch: 1; text: "ADD BAND"; enabled: root.dsp-active-module == "equalizer" && root.eq-can-add-band; clicked => { root.add-eq-band(); } }
-                                    Button { width: 28px; text: "−"; enabled: root.dsp-active-module == "equalizer" && root.eq-band-enabled; clicked => { root.remove-eq-band(); } }
+                                    Button { horizontal-stretch: 1; text: "ADD BAND"; enabled: root.daemon-connected && root.dsp-active-module == "equalizer" && root.eq-can-add-band; clicked => { root.add-eq-band(); } }
+                                    Button { width: 28px; text: "−"; enabled: root.daemon-connected && root.dsp-active-module == "equalizer" && root.eq-band-enabled; clicked => { root.remove-eq-band(); } }
                                 }
                                 Text { text: "Presets"; color: Theme.quiet; font-size: 9px; }
                                 Rectangle { height: 24px; background: #1a1a1d; Text { x: 6px; text: "Custom / read-back"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
-                                HorizontalLayout { height: 22px; Text { text: "Advanced EQ"; color: Theme.quiet; font-size: 9px; horizontal-stretch: 1; vertical-alignment: center; } ToggleSwitch { checked: root.eq-advanced; interactive: root.dsp-active-module == "equalizer"; control-label: "Advanced EQ"; toggled(value) => { root.select-dsp-mode(value); } } }
+                                HorizontalLayout { height: 22px; Text { text: "Advanced EQ"; color: Theme.quiet; font-size: 9px; horizontal-stretch: 1; vertical-alignment: center; } ToggleSwitch { checked: root.eq-advanced; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; control-label: "Advanced EQ"; toggled(value) => { root.select-dsp-mode(value); } } }
                                 HorizontalLayout { height: 22px; Text { text: "Guide"; color: Theme.quiet; font-size: 9px; horizontal-stretch: 1; vertical-alignment: center; } ToggleSwitch { checked: root.eq-guide; control-label: "EQ guide"; toggled(value) => { root.eq-guide = value; } } }
                             }
                             HorizontalLayout {
@@ -2643,19 +2694,19 @@ export component MainWindow inherits Window {
                                 spacing: 5px;
                                 GridLayout {
                                     width: 120px; spacing: 3px;
-                                    EqTypeButton { row: 0; col: 0; glyph: "⌒"; label: "Low-pass filter"; selected: root.eq-band-type == "low_pass"; interactive: root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("low_pass"); } }
-                                    EqTypeButton { row: 0; col: 1; glyph: "⌊"; label: "Low shelf"; selected: root.eq-band-type == "low_shelf"; interactive: root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("low_shelf"); } }
-                                    EqTypeButton { row: 0; col: 2; glyph: "⌁"; label: "Notch filter"; selected: root.eq-band-type == "notch"; interactive: root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("notch"); } }
-                                    EqTypeButton { row: 1; col: 0; glyph: "⌄"; label: "Bell band"; selected: root.eq-band-type == "bell"; interactive: root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("bell"); } }
-                                    EqTypeButton { row: 1; col: 1; glyph: "⌉"; label: "High shelf"; selected: root.eq-band-type == "high_shelf"; interactive: root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("high_shelf"); } }
-                                    EqTypeButton { row: 1; col: 2; glyph: "∿"; label: "High-pass filter"; selected: root.eq-band-type == "high_pass"; interactive: root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("high_pass"); } }
+                                    EqTypeButton { row: 0; col: 0; glyph: "⌒"; label: "Low-pass filter"; selected: root.eq-band-type == "low_pass"; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("low_pass"); } }
+                                    EqTypeButton { row: 0; col: 1; glyph: "⌊"; label: "Low shelf"; selected: root.eq-band-type == "low_shelf"; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("low_shelf"); } }
+                                    EqTypeButton { row: 0; col: 2; glyph: "⌁"; label: "Notch filter"; selected: root.eq-band-type == "notch"; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("notch"); } }
+                                    EqTypeButton { row: 1; col: 0; glyph: "⌄"; label: "Bell band"; selected: root.eq-band-type == "bell"; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("bell"); } }
+                                    EqTypeButton { row: 1; col: 1; glyph: "⌉"; label: "High shelf"; selected: root.eq-band-type == "high_shelf"; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("high_shelf"); } }
+                                    EqTypeButton { row: 1; col: 2; glyph: "∿"; label: "High-pass filter"; selected: root.eq-band-type == "high_pass"; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; clicked => { root.set-eq-band-type("high_pass"); } }
                                 }
                                 VerticalLayout {
                                     horizontal-stretch: 1; spacing: 4px;
                                     Rectangle { vertical-stretch: 1; }
-                                    ProcessorValueRow { height: 28px; label: "FREQ"; value-label: round(root.eq-frequency-hz) + "Hz"; interactive: root.dsp-active-module == "equalizer"; decrease => { root.adjust-eq-band("frequency", -1); } increase => { root.adjust-eq-band("frequency", 1); } }
-                                    ProcessorValueRow { height: 28px; label: "GAIN"; value-label: round(root.eq-gain-db * 10) / 10 + "dB"; interactive: root.dsp-active-module == "equalizer"; decrease => { root.adjust-eq-band("gain", -1); } increase => { root.adjust-eq-band("gain", 1); } }
-                                    ProcessorValueRow { height: 28px; label: "Q"; value-label: round(root.eq-q * 10) / 10 + ""; interactive: root.dsp-active-module == "equalizer"; decrease => { root.adjust-eq-band("q", -1); } increase => { root.adjust-eq-band("q", 1); } }
+                                    ProcessorValueRow { height: 28px; label: "FREQ"; value-label: round(root.eq-frequency-hz) + "Hz"; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; decrease => { root.adjust-eq-band("frequency", -1); } increase => { root.adjust-eq-band("frequency", 1); } }
+                                    ProcessorValueRow { height: 28px; label: "GAIN"; value-label: round(root.eq-gain-db * 10) / 10 + "dB"; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; decrease => { root.adjust-eq-band("gain", -1); } increase => { root.adjust-eq-band("gain", 1); } }
+                                    ProcessorValueRow { height: 28px; label: "Q"; value-label: round(root.eq-q * 10) / 10 + ""; interactive: root.daemon-connected && root.dsp-active-module == "equalizer"; decrease => { root.adjust-eq-band("q", -1); } increase => { root.adjust-eq-band("q", 1); } }
                                     Rectangle { vertical-stretch: 1; }
                                 }
                             }
@@ -2664,8 +2715,9 @@ export component MainWindow inherits Window {
                             x: 0px; y: 0px; width: parent.width; height: 8px;
                             accessible-role: button;
                             accessible-label: "Select Equalizer processor";
-                            key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.select-dsp-module("equalizer"); return accept; } return reject; }
-                            TouchArea { clicked => { equalizer-card-focus.focus(); root.select-dsp-module("equalizer"); } }
+                            accessible-enabled: root.daemon-connected;
+                            key-pressed(event) => { if root.daemon-connected && (event.text == Key.Return || event.text == Key.Space) { root.select-dsp-module("equalizer"); return accept; } return reject; }
+                            TouchArea { enabled: root.daemon-connected; clicked => { equalizer-card-focus.focus(); root.select-dsp-module("equalizer"); } }
                         }
                     }
                     Rectangle {
@@ -2678,22 +2730,23 @@ export component MainWindow inherits Window {
                             Text { text: "BASS ENHANCE"; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
                             HorizontalLayout {
                                 height: 34px; spacing: 5px;
-                                EnhancementPresetButton { preset: 1; selected: root.enhancement-bass-preset == 1; interactive: root.dsp-active-module == "enhancement_suite"; clicked => { root.set-enhancement-preset(1); } }
-                                EnhancementPresetButton { preset: 2; selected: root.enhancement-bass-preset == 2; interactive: root.dsp-active-module == "enhancement_suite"; clicked => { root.set-enhancement-preset(2); } }
-                                EnhancementPresetButton { preset: 3; selected: root.enhancement-bass-preset == 3; interactive: root.dsp-active-module == "enhancement_suite"; clicked => { root.set-enhancement-preset(3); } }
-                                EnhancementPresetButton { preset: 4; selected: root.enhancement-bass-preset == 4; interactive: root.dsp-active-module == "enhancement_suite"; clicked => { root.set-enhancement-preset(4); } }
+                                EnhancementPresetButton { preset: 1; selected: root.enhancement-bass-preset == 1; interactive: root.daemon-connected && root.dsp-active-module == "enhancement_suite"; clicked => { root.set-enhancement-preset(1); } }
+                                EnhancementPresetButton { preset: 2; selected: root.enhancement-bass-preset == 2; interactive: root.daemon-connected && root.dsp-active-module == "enhancement_suite"; clicked => { root.set-enhancement-preset(2); } }
+                                EnhancementPresetButton { preset: 3; selected: root.enhancement-bass-preset == 3; interactive: root.daemon-connected && root.dsp-active-module == "enhancement_suite"; clicked => { root.set-enhancement-preset(3); } }
+                                EnhancementPresetButton { preset: 4; selected: root.enhancement-bass-preset == 4; interactive: root.daemon-connected && root.dsp-active-module == "enhancement_suite"; clicked => { root.set-enhancement-preset(4); } }
                             }
                             HorizontalLayout {
-                                EnhancementDial { label: "DE-ESSER"; control-label: "De-Esser amount"; value: root.enhancement-de-esser-amount; value-label: ""; dial-accessible-value: round(root.enhancement-de-esser-amount) + "%"; minimum: 0; maximum: 100; step: 1; enabled-state: root.enhancement-de-esser-enabled; interactive: root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("de_esser_amount", value); } }
-                                EnhancementDial { label: "AMOUNT"; control-label: "Bass Enhance amount"; value: root.enhancement-bass-amount; value-label: ""; dial-accessible-value: round(root.enhancement-bass-amount * 10) / 10 + ""; minimum: 0; maximum: 10; step: 0.5; enabled-state: root.enhancement-bass-enabled; interactive: root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("bass_amount", value); } }
+                                EnhancementDial { label: "DE-ESSER"; control-label: "De-Esser amount"; value: root.enhancement-de-esser-amount; value-label: ""; dial-accessible-value: round(root.enhancement-de-esser-amount) + "%"; minimum: 0; maximum: 100; step: 1; enabled-state: root.enhancement-de-esser-enabled; interactive: root.daemon-connected && root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("de_esser_amount", value); } }
+                                EnhancementDial { label: "AMOUNT"; control-label: "Bass Enhance amount"; value: root.enhancement-bass-amount; value-label: ""; dial-accessible-value: round(root.enhancement-bass-amount * 10) / 10 + ""; minimum: 0; maximum: 10; step: 0.5; enabled-state: root.enhancement-bass-enabled; interactive: root.daemon-connected && root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("bass_amount", value); } }
                             }
                         }
                         bass-card-focus := FocusScope {
                             x: 0px; y: 0px; width: parent.width; height: 20px;
                             accessible-role: button;
                             accessible-label: "Select Enhancement Suite Bass Enhance";
-                            key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.select-dsp-module("enhancement_suite"); return accept; } return reject; }
-                            TouchArea { clicked => { bass-card-focus.focus(); root.select-dsp-module("enhancement_suite"); } }
+                            accessible-enabled: root.daemon-connected;
+                            key-pressed(event) => { if root.daemon-connected && (event.text == Key.Return || event.text == Key.Space) { root.select-dsp-module("enhancement_suite"); return accept; } return reject; }
+                            TouchArea { enabled: root.daemon-connected; clicked => { bass-card-focus.focus(); root.select-dsp-module("enhancement_suite"); } }
                         }
                     }
                     Rectangle {
@@ -2705,16 +2758,17 @@ export component MainWindow inherits Window {
                             padding: 8px;
                             Text { text: "EXCITER"; color: Theme.text; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
                             HorizontalLayout {
-                                EnhancementDial { label: "AMOUNT"; control-label: "Exciter amount"; value: root.enhancement-exciter-amount; value-label: ""; dial-accessible-value: round(root.enhancement-exciter-amount) + "%"; minimum: 0; maximum: 100; step: 1; enabled-state: root.enhancement-exciter-enabled; interactive: root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("exciter_amount", value); } }
-                                EnhancementDial { label: "FREQUENCY"; control-label: "Exciter frequency"; value: root.enhancement-exciter-frequency; value-label: round(root.enhancement-exciter-frequency) + "Hz"; minimum: 0; maximum: 5000; step: 100; enabled-state: root.enhancement-exciter-enabled; interactive: root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("exciter_frequency", value); } }
+                                EnhancementDial { label: "AMOUNT"; control-label: "Exciter amount"; value: root.enhancement-exciter-amount; value-label: ""; dial-accessible-value: round(root.enhancement-exciter-amount) + "%"; minimum: 0; maximum: 100; step: 1; enabled-state: root.enhancement-exciter-enabled; interactive: root.daemon-connected && root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("exciter_amount", value); } }
+                                EnhancementDial { label: "FREQUENCY"; control-label: "Exciter frequency"; value: root.enhancement-exciter-frequency; value-label: round(root.enhancement-exciter-frequency) + "Hz"; minimum: 0; maximum: 5000; step: 100; enabled-state: root.enhancement-exciter-enabled; interactive: root.daemon-connected && root.dsp-active-module == "enhancement_suite"; changed(value) => { root.set-enhancement-value("exciter_frequency", value); } }
                             }
                         }
                         exciter-card-focus := FocusScope {
                             x: 0px; y: 0px; width: parent.width; height: 20px;
                             accessible-role: button;
                             accessible-label: "Select Enhancement Suite Exciter";
-                            key-pressed(event) => { if event.text == Key.Return || event.text == Key.Space { root.select-dsp-module("enhancement_suite"); return accept; } return reject; }
-                            TouchArea { clicked => { exciter-card-focus.focus(); root.select-dsp-module("enhancement_suite"); } }
+                            accessible-enabled: root.daemon-connected;
+                            key-pressed(event) => { if root.daemon-connected && (event.text == Key.Return || event.text == Key.Space) { root.select-dsp-module("enhancement_suite"); return accept; } return reject; }
+                            TouchArea { enabled: root.daemon-connected; clicked => { exciter-card-focus.focus(); root.select-dsp-module("enhancement_suite"); } }
                         }
                     }
                     Rectangle { horizontal-stretch: 1; background: transparent; }
@@ -2724,11 +2778,11 @@ export component MainWindow inherits Window {
                     height: 30px;
                     HorizontalLayout {
                         spacing: 0px;
-                        ModuleTab { tab-width: 81px; label: "MIC SETUP"; module: "mic_setup"; selected: root.dsp-selected-module; clicked(module) => { root.dsp-selected-module = module; } }
-                        ModuleTab { tab-width: 161px; label: "NOISE SUPPRESSION"; module: "noise_suppression"; selected: root.dsp-selected-module; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
-                        ModuleTab { tab-width: 80px; label: "EXPANDER"; module: "expander"; selected: root.dsp-selected-module; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
-                        ModuleTab { tab-width: 101px; label: "COMPRESSOR"; module: "compressor"; selected: root.dsp-selected-module; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
-                        ModuleTab { tab-width: 108px; label: "HEADPHONES"; module: "headphone_equalizer"; selected: root.dsp-selected-module; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
+                        ModuleTab { tab-width: 81px; label: "MIC SETUP"; module: "mic_setup"; selected: root.dsp-selected-module; interactive: root.daemon-connected; clicked(module) => { root.dsp-selected-module = module; } }
+                        ModuleTab { tab-width: 161px; label: "NOISE SUPPRESSION"; module: "noise_suppression"; selected: root.dsp-selected-module; interactive: root.daemon-connected; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
+                        ModuleTab { tab-width: 80px; label: "EXPANDER"; module: "expander"; selected: root.dsp-selected-module; interactive: root.daemon-connected; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
+                        ModuleTab { tab-width: 101px; label: "COMPRESSOR"; module: "compressor"; selected: root.dsp-selected-module; interactive: root.daemon-connected; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
+                        ModuleTab { tab-width: 108px; label: "HEADPHONES"; module: "headphone_equalizer"; selected: root.dsp-selected-module; interactive: root.daemon-connected; clicked(module) => { root.dsp-selected-module = module; root.select-dsp-module(module); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
                 }
@@ -2790,11 +2844,11 @@ export component MainWindow inherits Window {
                             VerticalLayout {
                                 width: 330px; spacing: 7px;
                                 Text { text: "BAND " + (root.eq-selected-band + 1) + " FREQUENCY   " + round(root.eq-frequency-hz) + " Hz"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { accessible-label: "Equalizer band frequency"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.eq-frequency-hz; minimum: 20; maximum: 20000; changed(value) => { root.set-eq-band-value("frequency", value); } }
+                                Slider { accessible-label: "Equalizer band frequency"; enabled: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; value: root.eq-frequency-hz; minimum: 20; maximum: 20000; changed(value) => { root.set-eq-band-value("frequency", value); } }
                                 Text { text: "GAIN   " + round(root.eq-gain-db * 10) / 10 + " dB"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { accessible-label: "Equalizer band gain"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.eq-gain-db; minimum: -12; maximum: 12; changed(value) => { root.set-eq-band-value("gain", value); } }
+                                Slider { accessible-label: "Equalizer band gain"; enabled: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; value: root.eq-gain-db; minimum: -12; maximum: 12; changed(value) => { root.set-eq-band-value("gain", value); } }
                                 Text { text: "Q   " + round(root.eq-q * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { accessible-label: "Equalizer band Q"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.eq-q; minimum: 0.1; maximum: 10; changed(value) => { root.set-eq-band-value("q", value); } }
+                                Slider { accessible-label: "Equalizer band Q"; enabled: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; value: root.eq-q; minimum: 0.1; maximum: 10; changed(value) => { root.set-eq-band-value("q", value); } }
                             }
                             Rectangle {
                                 horizontal-stretch: 1; background: #111518; border-width: 1px; border-color: Theme.border;
@@ -2812,13 +2866,13 @@ export component MainWindow inherits Window {
                             VerticalLayout {
                                 width: 330px; spacing: 7px;
                                 Text { text: "BASS AMOUNT   " + round(root.enhancement-bass-amount * 10) / 10; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { accessible-label: "Bass Enhance amount"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-bass-amount; minimum: 0; maximum: 10; changed(value) => { root.set-enhancement-value("bass_amount", value); } }
+                                Slider { accessible-label: "Bass Enhance amount"; enabled: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-bass-amount; minimum: 0; maximum: 10; changed(value) => { root.set-enhancement-value("bass_amount", value); } }
                                 Text { text: "DE-ESSER   " + round(root.enhancement-de-esser-amount) + "%"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { accessible-label: "De-Esser amount"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-de-esser-amount; minimum: 0; maximum: 100; changed(value) => { root.set-enhancement-value("de_esser_amount", value); } }
+                                Slider { accessible-label: "De-Esser amount"; enabled: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-de-esser-amount; minimum: 0; maximum: 100; changed(value) => { root.set-enhancement-value("de_esser_amount", value); } }
                                 Text { text: "EXCITER   " + round(root.enhancement-exciter-amount) + "%"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { accessible-label: "Exciter amount"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-exciter-amount; minimum: 0; maximum: 100; changed(value) => { root.set-enhancement-value("exciter_amount", value); } }
+                                Slider { accessible-label: "Exciter amount"; enabled: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-exciter-amount; minimum: 0; maximum: 100; changed(value) => { root.set-enhancement-value("exciter_amount", value); } }
                                 Text { text: "EXCITER FREQUENCY   " + round(root.enhancement-exciter-frequency) + " Hz"; color: Theme.text; font-size: 10px; font-weight: 700; }
-                                Slider { accessible-label: "Exciter frequency"; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-exciter-frequency; minimum: 0; maximum: 5000; changed(value) => { root.set-enhancement-value("exciter_frequency", value); } }
+                                Slider { accessible-label: "Exciter frequency"; enabled: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; value: root.enhancement-exciter-frequency; minimum: 0; maximum: 5000; changed(value) => { root.set-enhancement-value("exciter_frequency", value); } }
                             }
                             HorizontalLayout {
                                 horizontal-stretch: 1; spacing: 12px;
@@ -2836,18 +2890,18 @@ export component MainWindow inherits Window {
                                 Rectangle { x: parent.width - 1px; width: 1px; height: parent.height; background: Theme.border; }
                                 VerticalLayout {
                                     padding-left: 10px; padding-right: 24px; padding-top: 5px; padding-bottom: 5px; spacing: 3px;
-                                    HorizontalLayout { height: 20px; ToggleSwitch { checked: root.dsp-enabled; interactive: root.dsp-active-module == root.dsp-selected-module; control-label: "Noise Suppression enabled"; toggled(value) => { root.set-dsp-enabled(value); } } Text { text: root.dsp-enabled ? "On" : "Off"; color: Theme.text; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
+                                    HorizontalLayout { height: 20px; ToggleSwitch { checked: root.dsp-enabled; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; control-label: "Noise Suppression enabled"; toggled(value) => { root.set-dsp-enabled(value); } } Text { text: root.dsp-enabled ? "On" : "Off"; color: Theme.text; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
                                     Text { height: 16px; text: "Style"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
                                     HorizontalLayout {
                                         height: 32px; spacing: 4px;
-                                        ProcessorModeButton { horizontal-stretch: 1; label: "Adaptive"; selected: !root.noise-snapshot; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-noise-style(false); } }
-                                        ProcessorModeButton { horizontal-stretch: 1; label: "Snapshot"; selected: root.noise-snapshot; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-noise-style(true); } }
+                                        ProcessorModeButton { horizontal-stretch: 1; label: "Adaptive"; selected: !root.noise-snapshot; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-noise-style(false); } }
+                                        ProcessorModeButton { horizontal-stretch: 1; label: "Snapshot"; selected: root.noise-snapshot; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-noise-style(true); } }
                                     }
                                     Rectangle { height: 8px; }
                                     Text { height: 16px; text: "Amount"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
-                                    HorizontalLayout { height: 26px; spacing: 5px; Text { width: 34px; text: round(root.dsp-value-a) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { accessible-label: "Noise Suppression amount"; horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } } }
+                                    HorizontalLayout { height: 26px; spacing: 5px; Text { width: 34px; text: round(root.dsp-value-a) + "%"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { accessible-label: "Noise Suppression amount"; horizontal-stretch: 1; enabled: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; changed(value) => { root.dsp-value-a = value; } } }
                                     Text { height: 16px; text: "Sensitivity"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
-                                    HorizontalLayout { height: 26px; spacing: 5px; Text { width: 42px; text: round(root.dsp-value-b) + "dB"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { accessible-label: "Noise Suppression sensitivity in decibels"; horizontal-stretch: 1; enabled: root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } } }
+                                    HorizontalLayout { height: 26px; spacing: 5px; Text { width: 42px; text: round(root.dsp-value-b) + "dB"; color: Theme.text; font-size: 10px; vertical-alignment: center; } Slider { accessible-label: "Noise Suppression sensitivity in decibels"; horizontal-stretch: 1; enabled: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; changed(value) => { root.dsp-value-b = value; } } }
                                     Rectangle { vertical-stretch: 1; }
                                 }
                             }
@@ -2869,21 +2923,21 @@ export component MainWindow inherits Window {
                                 width: 200px; background: #202023;
                                 VerticalLayout {
                                     padding-left: 10px; padding-right: 24px; padding-top: 5px; padding-bottom: 4px; spacing: 3px;
-                                    HorizontalLayout { height: 20px; ToggleSwitch { checked: root.dsp-enabled; interactive: root.dsp-active-module == root.dsp-selected-module; control-label: "Expander enabled"; toggled(value) => { root.set-dsp-enabled(value); } } Text { text: root.dsp-enabled ? "On" : "Off"; color: Theme.text; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
+                                    HorizontalLayout { height: 20px; ToggleSwitch { checked: root.dsp-enabled; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; control-label: "Expander enabled"; toggled(value) => { root.set-dsp-enabled(value); } } Text { text: root.dsp-enabled ? "On" : "Off"; color: Theme.text; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
                                     HorizontalLayout {
                                         height: 50px;
-                                        ProcessorStepButton { glyph: "‹"; control-label: "Decrease Expander threshold"; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a - 1 < root.dsp-min-a ? root.dsp-min-a : root.dsp-value-a - 1; } }
+                                        ProcessorStepButton { glyph: "‹"; control-label: "Decrease Expander threshold"; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a - 1 < root.dsp-min-a ? root.dsp-min-a : root.dsp-value-a - 1; } }
                                         Text { horizontal-stretch: 1; text: round(root.dsp-value-a) + "dB"; color: Theme.text; font-size: 22px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
-                                        ProcessorStepButton { glyph: "›"; control-label: "Increase Expander threshold"; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a + 1 > root.dsp-max-a ? root.dsp-max-a : root.dsp-value-a + 1; } }
+                                        ProcessorStepButton { glyph: "›"; control-label: "Increase Expander threshold"; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a + 1 > root.dsp-max-a ? root.dsp-max-a : root.dsp-value-a + 1; } }
                                     }
                                     HorizontalLayout { height: 32px; spacing: 6px;
-                                        ProcessorModeButton { horizontal-stretch: 1; label: "Simple"; selected: !root.dsp-advanced; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(false); } }
-                                        ProcessorModeButton { horizontal-stretch: 1; label: "Advanced"; selected: root.dsp-advanced; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(true); } }
+                                        ProcessorModeButton { horizontal-stretch: 1; label: "Simple"; selected: !root.dsp-advanced; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(false); } }
+                                        ProcessorModeButton { horizontal-stretch: 1; label: "Advanced"; selected: root.dsp-advanced; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(true); } }
                                     }
                                     Rectangle { height: 7px; }
-                                    ProcessorValueRow { label: root.dsp-advanced ? "Ratio" : "Amount"; value-label: round(root.dsp-value-b * 10) / 10 + (root.dsp-advanced ? ":1" : "%"); interactive: root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-b = root.dsp-value-b - 0.1 < root.dsp-min-b ? root.dsp-min-b : root.dsp-value-b - 0.1; } increase => { root.dsp-value-b = root.dsp-value-b + 0.1 > root.dsp-max-b ? root.dsp-max-b : root.dsp-value-b + 0.1; } }
-                                    if root.dsp-advanced: ProcessorValueRow { label: "Attack"; value-label: round(root.dsp-value-c * 10) / 10 + "ms"; interactive: root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-c = root.dsp-value-c - 1 < root.dsp-min-c ? root.dsp-min-c : root.dsp-value-c - 1; } increase => { root.dsp-value-c = root.dsp-value-c + 1 > root.dsp-max-c ? root.dsp-max-c : root.dsp-value-c + 1; } }
-                                    if root.dsp-advanced: ProcessorValueRow { label: "Release"; value-label: round(root.dsp-value-d * 10) / 10 + "ms"; interactive: root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-d = root.dsp-value-d - 1 < root.dsp-min-d ? root.dsp-min-d : root.dsp-value-d - 1; } increase => { root.dsp-value-d = root.dsp-value-d + 1 > root.dsp-max-d ? root.dsp-max-d : root.dsp-value-d + 1; } }
+                                    ProcessorValueRow { label: root.dsp-advanced ? "Ratio" : "Amount"; value-label: round(root.dsp-value-b * 10) / 10 + (root.dsp-advanced ? ":1" : "%"); interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-b = root.dsp-value-b - 0.1 < root.dsp-min-b ? root.dsp-min-b : root.dsp-value-b - 0.1; } increase => { root.dsp-value-b = root.dsp-value-b + 0.1 > root.dsp-max-b ? root.dsp-max-b : root.dsp-value-b + 0.1; } }
+                                    if root.dsp-advanced: ProcessorValueRow { label: "Attack"; value-label: round(root.dsp-value-c * 10) / 10 + "ms"; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-c = root.dsp-value-c - 1 < root.dsp-min-c ? root.dsp-min-c : root.dsp-value-c - 1; } increase => { root.dsp-value-c = root.dsp-value-c + 1 > root.dsp-max-c ? root.dsp-max-c : root.dsp-value-c + 1; } }
+                                    if root.dsp-advanced: ProcessorValueRow { label: "Release"; value-label: round(root.dsp-value-d * 10) / 10 + "ms"; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-d = root.dsp-value-d - 1 < root.dsp-min-d ? root.dsp-min-d : root.dsp-value-d - 1; } increase => { root.dsp-value-d = root.dsp-value-d + 1 > root.dsp-max-d ? root.dsp-max-d : root.dsp-value-d + 1; } }
                                     Rectangle { vertical-stretch: 1; }
                                 }
                             }
@@ -2903,21 +2957,21 @@ export component MainWindow inherits Window {
                                 width: 293px; background: #202023;
                                 VerticalLayout {
                                     padding-left: 10px; padding-right: 34px; padding-top: 5px; padding-bottom: 4px; spacing: 3px;
-                                    HorizontalLayout { height: 20px; ToggleSwitch { checked: root.dsp-enabled; interactive: root.dsp-active-module == root.dsp-selected-module; control-label: "Compressor enabled"; toggled(value) => { root.set-dsp-enabled(value); } } Text { text: root.dsp-enabled ? "On" : "Off"; color: Theme.text; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
+                                    HorizontalLayout { height: 20px; ToggleSwitch { checked: root.dsp-enabled; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; control-label: "Compressor enabled"; toggled(value) => { root.set-dsp-enabled(value); } } Text { text: root.dsp-enabled ? "On" : "Off"; color: Theme.text; font-size: 9px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
                                     HorizontalLayout {
                                         height: 50px;
-                                        ProcessorStepButton { glyph: "‹"; control-label: "Decrease Compressor threshold"; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a - 1 < root.dsp-min-a ? root.dsp-min-a : root.dsp-value-a - 1; } }
+                                        ProcessorStepButton { glyph: "‹"; control-label: "Decrease Compressor threshold"; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a - 1 < root.dsp-min-a ? root.dsp-min-a : root.dsp-value-a - 1; } }
                                         Text { horizontal-stretch: 1; text: round(root.dsp-value-a) + "dB"; color: Theme.text; font-size: 22px; font-weight: 500; horizontal-alignment: center; vertical-alignment: center; }
-                                        ProcessorStepButton { glyph: "›"; control-label: "Increase Compressor threshold"; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a + 1 > root.dsp-max-a ? root.dsp-max-a : root.dsp-value-a + 1; } }
+                                        ProcessorStepButton { glyph: "›"; control-label: "Increase Compressor threshold"; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; clicked => { root.dsp-value-a = root.dsp-value-a + 1 > root.dsp-max-a ? root.dsp-max-a : root.dsp-value-a + 1; } }
                                     }
                                     HorizontalLayout { height: 32px; spacing: 6px;
-                                        ProcessorModeButton { horizontal-stretch: 1; label: "Simple"; selected: !root.dsp-advanced; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(false); } }
-                                        ProcessorModeButton { horizontal-stretch: 1; label: "Advanced"; selected: root.dsp-advanced; interactive: root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(true); } }
+                                        ProcessorModeButton { horizontal-stretch: 1; label: "Simple"; selected: !root.dsp-advanced; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(false); } }
+                                        ProcessorModeButton { horizontal-stretch: 1; label: "Advanced"; selected: root.dsp-advanced; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; clicked => { root.select-dsp-mode(true); } }
                                     }
                                     Rectangle { height: 5px; }
-                                    if root.dsp-advanced: ProcessorValueRow { label: "Ratio"; value-label: round(root.dsp-value-b * 10) / 10 + ":1"; interactive: root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-b = root.dsp-value-b - 0.1 < root.dsp-min-b ? root.dsp-min-b : root.dsp-value-b - 0.1; } increase => { root.dsp-value-b = root.dsp-value-b + 0.1 > root.dsp-max-b ? root.dsp-max-b : root.dsp-value-b + 0.1; } }
-                                    if root.dsp-advanced: ProcessorValueRow { label: "Attack"; value-label: round(root.dsp-value-c * 10) / 10 + "ms"; interactive: root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-c = root.dsp-value-c - 1 < root.dsp-min-c ? root.dsp-min-c : root.dsp-value-c - 1; } increase => { root.dsp-value-c = root.dsp-value-c + 1 > root.dsp-max-c ? root.dsp-max-c : root.dsp-value-c + 1; } }
-                                    if root.dsp-advanced: ProcessorValueRow { label: "Release"; value-label: round(root.dsp-value-d * 10) / 10 + "ms"; interactive: root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-d = root.dsp-value-d - 1 < root.dsp-min-d ? root.dsp-min-d : root.dsp-value-d - 1; } increase => { root.dsp-value-d = root.dsp-value-d + 1 > root.dsp-max-d ? root.dsp-max-d : root.dsp-value-d + 1; } }
+                                    if root.dsp-advanced: ProcessorValueRow { label: "Ratio"; value-label: round(root.dsp-value-b * 10) / 10 + ":1"; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-b = root.dsp-value-b - 0.1 < root.dsp-min-b ? root.dsp-min-b : root.dsp-value-b - 0.1; } increase => { root.dsp-value-b = root.dsp-value-b + 0.1 > root.dsp-max-b ? root.dsp-max-b : root.dsp-value-b + 0.1; } }
+                                    if root.dsp-advanced: ProcessorValueRow { label: "Attack"; value-label: round(root.dsp-value-c * 10) / 10 + "ms"; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-c = root.dsp-value-c - 1 < root.dsp-min-c ? root.dsp-min-c : root.dsp-value-c - 1; } increase => { root.dsp-value-c = root.dsp-value-c + 1 > root.dsp-max-c ? root.dsp-max-c : root.dsp-value-c + 1; } }
+                                    if root.dsp-advanced: ProcessorValueRow { label: "Release"; value-label: round(root.dsp-value-d * 10) / 10 + "ms"; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; decrease => { root.dsp-value-d = root.dsp-value-d - 1 < root.dsp-min-d ? root.dsp-min-d : root.dsp-value-d - 1; } increase => { root.dsp-value-d = root.dsp-value-d + 1 > root.dsp-max-d ? root.dsp-max-d : root.dsp-value-d + 1; } }
                                     if !root.dsp-advanced: VerticalLayout {
                                         height: 48px; spacing: 2px;
                                         Text { height: 16px; text: "Compress Amount"; color: Theme.quiet; font-size: 9px; vertical-alignment: center; }
@@ -2934,7 +2988,7 @@ export component MainWindow inherits Window {
                                 VerticalLayout {
                                     x: parent.width - 174px; y: 5px; width: 78px; height: parent.height - 9px; spacing: 3px;
                                     Text { height: 18px; text: "MAKE-UP GAIN"; color: Theme.quiet; font-size: 8px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: (root.dsp-value-e - root.dsp-min-e) / (root.dsp-max-e - root.dsp-min-e) * 100; control-label: "Compressor make-up gain"; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-e = root.dsp-min-e + value / 100 * (root.dsp-max-e - root.dsp-min-e); } } Rectangle { horizontal-stretch: 1; } }
+                                    HorizontalLayout { Rectangle { horizontal-stretch: 1; } VerticalFader { width: 38px; value: (root.dsp-value-e - root.dsp-min-e) / (root.dsp-max-e - root.dsp-min-e) * 100; control-label: "Compressor make-up gain"; accent: Theme.teal; muted: false; personal: true; show-mute: false; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.dsp-value-e = root.dsp-min-e + value / 100 * (root.dsp-max-e - root.dsp-min-e); } } Rectangle { horizontal-stretch: 1; } }
                                     Text { height: 18px; text: round(root.dsp-value-e * 10) / 10 + "dB"; color: Theme.text; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
                             }
@@ -2963,16 +3017,16 @@ export component MainWindow inherits Window {
                                 width: 405px; background: #19191c;
                                 Rectangle { width: 1px; height: parent.height; background: Theme.border; }
                                 Text { x: 12px; y: 8px; text: "EQUALIZER"; color: Theme.quiet; font-size: 8px; font-weight: 800; }
-                                HorizontalLayout { x: 12px; y: 25px; width: 92px; height: 20px; ToggleSwitch { checked: root.dsp-enabled; interactive: root.dsp-active-module == root.dsp-selected-module; control-label: "Headphone equalizer enabled"; toggled(value) => { root.set-dsp-enabled(value); } } Text { text: root.dsp-enabled ? "On" : "Off"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
+                                HorizontalLayout { x: 12px; y: 25px; width: 92px; height: 20px; ToggleSwitch { checked: root.dsp-enabled; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; control-label: "Headphone equalizer enabled"; toggled(value) => { root.set-dsp-enabled(value); } } Text { text: root.dsp-enabled ? "On" : "Off"; color: Theme.text; font-size: 9px; vertical-alignment: center; } }
                                 HorizontalLayout {
                                     x: 48px; y: 49px; width: parent.width - 70px; height: 110px; spacing: 12px;
-                                    ProcessorDial { label: "BASS"; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.set-headphone-eq-band(0, value); } }
-                                    ProcessorDial { label: "MIDS"; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.set-headphone-eq-band(1, value); } }
-                                    ProcessorDial { label: "TREBLE"; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; interactive: root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.set-headphone-eq-band(2, value); } }
+                                    ProcessorDial { label: "BASS"; value: root.dsp-value-a; minimum: root.dsp-min-a; maximum: root.dsp-max-a; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.set-headphone-eq-band(0, value); } }
+                                    ProcessorDial { label: "MIDS"; value: root.dsp-value-b; minimum: root.dsp-min-b; maximum: root.dsp-max-b; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.set-headphone-eq-band(1, value); } }
+                                    ProcessorDial { label: "TREBLE"; value: root.dsp-value-c; minimum: root.dsp-min-c; maximum: root.dsp-max-c; interactive: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; changed(value) => { root.set-headphone-eq-band(2, value); } }
                                 }
                                 Text { x: 14px; y: parent.height - 50px; width: 76px; height: 16px; text: "SUBWOOFER"; color: Theme.quiet; font-size: 8px; font-weight: 700; vertical-alignment: center; }
                                 Text { x: 78px; y: parent.height - 50px; width: 20px; height: 16px; text: round(root.headphone-subwoofer-amount); color: root.headphone-subwoofer-enabled ? Theme.teal : Theme.quiet; font-size: 8px; font-weight: 700; horizontal-alignment: right; vertical-alignment: center; }
-                                Slider { x: 106px; y: parent.height - 49px; width: parent.width - 128px; height: 18px; accessible-label: "Headphone subwoofer amount"; enabled: root.dsp-active-module == root.dsp-selected-module; value <=> root.headphone-subwoofer-amount; minimum: 0; maximum: 10; changed(value) => { root.set-headphone-subwoofer(value); } }
+                                Slider { x: 106px; y: parent.height - 49px; width: parent.width - 128px; height: 18px; accessible-label: "Headphone subwoofer amount"; enabled: root.daemon-connected && root.dsp-active-module == root.dsp-selected-module; value <=> root.headphone-subwoofer-amount; minimum: 0; maximum: 10; changed(value) => { root.set-headphone-subwoofer(value); } }
                             }
                             Rectangle {
                                 horizontal-stretch: 1; background: #202023;
@@ -2991,13 +3045,13 @@ export component MainWindow inherits Window {
 
                         HorizontalLayout {
                             height: 27px; padding-left: 8px; padding-right: 8px; spacing: 7px;
-                            Button { text: "Reload read-back"; clicked => { root.load-dsp(); } }
-                            if root.dsp-active-module == root.dsp-selected-module: Button { text: "Apply + verify"; clicked => { root.apply-dsp(root.dsp-value-a, root.dsp-value-b, root.dsp-value-c, root.dsp-value-d, root.dsp-value-e); } }
-                            if root.dsp-active-module == root.dsp-selected-module: Button { text: "Revert captured"; clicked => { root.revert-dsp(); } }
-                            if root.dsp-active-module != root.dsp-selected-module && !root.arm-confirm-pending: Button { text: "Enable editing for 5 minutes"; clicked => { root.arm-confirm-pending = true; } }
-                            if root.dsp-active-module != root.dsp-selected-module && root.arm-confirm-pending: Button { text: "Confirm: this changes audio"; clicked => { root.arm-dsp(); } }
+                            Button { text: "Reload read-back"; enabled: root.daemon-connected; clicked => { root.load-dsp(); } }
+                            if root.dsp-active-module == root.dsp-selected-module: Button { text: "Apply + verify"; enabled: root.daemon-connected; clicked => { root.apply-dsp(root.dsp-value-a, root.dsp-value-b, root.dsp-value-c, root.dsp-value-d, root.dsp-value-e); } }
+                            if root.dsp-active-module == root.dsp-selected-module: Button { text: "Revert captured"; enabled: root.daemon-connected; clicked => { root.revert-dsp(); } }
+                            if root.dsp-active-module != root.dsp-selected-module && !root.arm-confirm-pending: Button { text: "Enable editing for 5 minutes"; enabled: root.daemon-connected; clicked => { root.arm-confirm-pending = true; } }
+                            if root.dsp-active-module != root.dsp-selected-module && root.arm-confirm-pending: Button { text: "Confirm: this changes audio"; enabled: root.daemon-connected; clicked => { root.arm-dsp(); } }
                             if root.arm-confirm-pending: Button { text: "Cancel"; clicked => { root.arm-confirm-pending = false; } }
-                            if root.dsp-active-module != "": Button { text: "Disarm now"; clicked => { root.disarm-dsp(); } }
+                            if root.dsp-active-module != "": Button { text: "Disarm now"; enabled: root.daemon-connected; clicked => { root.disarm-dsp(); } }
                             Rectangle { horizontal-stretch: 1; }
                         }
                         Text { height: 11px; text: "General hardware writes remain OFF · phantom, firmware, reset, lighting, limiter guesses, and storage excluded"; color: Theme.amber; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
@@ -3274,6 +3328,7 @@ export component MainWindow inherits Window {
         mouse-cursor: not-allowed;
     }
     if !root.daemon-connected: Rectangle {
+        visible: root.active-page <= 1;
         z: 90;
         x: 84px;
         y: 42px;

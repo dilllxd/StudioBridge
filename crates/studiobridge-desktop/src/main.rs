@@ -51,6 +51,7 @@ const METER_URL: &str = "ws://127.0.0.1:14565/api/websocket/meter";
 const PROJECT_URL: &str = "https://github.com/dilllxd/StudioBridge";
 const SUPPORT_URL: &str = "https://github.com/dilllxd/StudioBridge/issues";
 static DAEMON_READY: AtomicBool = AtomicBool::new(false);
+static REFRESH_COORDINATOR: RefreshCoordinator = RefreshCoordinator::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DaemonStatusPresentation {
@@ -67,6 +68,75 @@ struct RefreshStatus {
     failure_context: String,
     requires_profile_readback: bool,
     preferred_default: Option<(bool, String)>,
+}
+
+#[derive(Debug)]
+struct RefreshOrderingState {
+    generation: u64,
+    last_applied_generation: u64,
+    pending_status: Option<RefreshStatus>,
+}
+
+#[derive(Debug)]
+struct RefreshCoordinator {
+    state: Mutex<RefreshOrderingState>,
+}
+
+impl RefreshCoordinator {
+    const fn new() -> Self {
+        Self {
+            state: Mutex::new(RefreshOrderingState {
+                generation: 0,
+                last_applied_generation: 0,
+                pending_status: None,
+            }),
+        }
+    }
+
+    fn begin(&self, status: Option<RefreshStatus>) -> u64 {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.generation = state.generation.wrapping_add(1).max(1);
+        if let Some(status) = status {
+            state.pending_status = Some(match state.pending_status.take() {
+                Some(pending) => merge_pending_refresh_status(pending, status),
+                None => status,
+            });
+        }
+        state.generation
+    }
+
+    fn monitor_generation(&self) -> Option<u64> {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        (state.generation == state.last_applied_generation).then_some(state.generation)
+    }
+
+    fn lock_if_current(
+        &self,
+        generation: u64,
+    ) -> Option<std::sync::MutexGuard<'_, RefreshOrderingState>> {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.generation != generation {
+            return None;
+        }
+        Some(state)
+    }
+}
+
+fn merge_pending_refresh_status(pending: RefreshStatus, incoming: RefreshStatus) -> RefreshStatus {
+    let requires_profile_readback =
+        pending.requires_profile_readback || incoming.requires_profile_readback;
+    let preferred_default = incoming
+        .preferred_default
+        .clone()
+        .or_else(|| pending.preferred_default.clone());
+    let mut merged = if pending.alert && !incoming.alert {
+        pending
+    } else {
+        incoming
+    };
+    merged.requires_profile_readback = requires_profile_readback;
+    merged.preferred_default = preferred_default;
+    merged
 }
 
 fn daemon_status_for_kind(kind: DaemonErrorKind, context: &str) -> DaemonStatusPresentation {
@@ -135,6 +205,31 @@ fn default_readback_matches(snapshot: &AppSnapshot, input: bool, requested_id: &
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreferredDefaultReadback {
+    Retain,
+    Persist,
+    Reject,
+}
+
+fn preferred_default_readback(
+    health_ready: bool,
+    snapshot: Option<&AppSnapshot>,
+    input: bool,
+    requested_id: &str,
+) -> PreferredDefaultReadback {
+    if !health_ready {
+        return PreferredDefaultReadback::Retain;
+    }
+    match snapshot {
+        None => PreferredDefaultReadback::Retain,
+        Some(snapshot) if default_readback_matches(snapshot, input, requested_id) => {
+            PreferredDefaultReadback::Persist
+        }
+        Some(_) => PreferredDefaultReadback::Reject,
+    }
+}
+
 fn default_selection_matches(actual: Option<&str>, requested_id: &str) -> bool {
     actual == Some(requested_id)
 }
@@ -187,6 +282,15 @@ fn default_mutation_refresh_status(
         status.preferred_default = Some((input, requested_id.into()));
     }
     status
+}
+
+fn mutation_readback_is_authoritative(
+    status: &RefreshStatus,
+    health_ready: bool,
+    snapshot_ready: bool,
+    profiles_ready: bool,
+) -> bool {
+    health_ready && snapshot_ready && (!status.requires_profile_readback || profiles_ready)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2185,8 +2289,9 @@ fn apply_daemon_failure(window: &MainWindow, presentation: &DaemonStatusPresenta
 fn refresh_all_with_status(
     window: Weak<MainWindow>,
     client: DaemonClient,
-    mut terminal_status: Option<RefreshStatus>,
+    terminal_status: Option<RefreshStatus>,
 ) {
+    let generation = REFRESH_COORDINATOR.begin(terminal_status);
     thread::spawn(move || {
         let health = client.health();
         let snapshot = client.snapshot();
@@ -2196,6 +2301,25 @@ fn refresh_all_with_status(
             let Some(window) = window.upgrade() else {
                 return;
             };
+            // Slint runs this closure synchronously. Keep the ordering guard until every
+            // property/model write is complete; none of the guarded code may dispatch a refresh.
+            // This also serializes the small local preference write used after matching default
+            // read-back, preventing a newer generation from being validated against older state.
+            let Some(mut refresh_ordering) = REFRESH_COORDINATOR.lock_if_current(generation) else {
+                return;
+            };
+            let mut terminal_status = refresh_ordering.pending_status.clone();
+            let health_ready = health.as_ref().is_ok_and(|health| health.ok);
+            let snapshot_ready = snapshot.is_ok();
+            let profiles_ready = profiles.is_ok();
+            let clear_pending_status = terminal_status.as_ref().is_some_and(|status| {
+                mutation_readback_is_authoritative(
+                    status,
+                    health_ready,
+                    snapshot_ready,
+                    profiles_ready,
+                )
+            });
             let profile_names = profiles
                 .as_ref()
                 .map(|profiles| {
@@ -2213,8 +2337,13 @@ fn refresh_all_with_status(
             if let Some(status) = terminal_status.as_mut()
                 && let Some((input, requested_id)) = status.preferred_default.take()
             {
-                match snapshot.as_ref() {
-                    Ok(snapshot) if default_readback_matches(snapshot, input, &requested_id) => {
+                match preferred_default_readback(
+                    health_ready,
+                    snapshot.as_ref().ok(),
+                    input,
+                    &requested_id,
+                ) {
+                    PreferredDefaultReadback::Persist => {
                         if let Err(error) = remember_preferred_default(input, &requested_id) {
                             status.status = format!(
                                 "{}; current state reloaded, but automatic reset preference save failed: {error}",
@@ -2223,14 +2352,14 @@ fn refresh_all_with_status(
                             status.alert = true;
                         }
                     }
-                    Ok(_) => {
+                    PreferredDefaultReadback::Reject => {
                         status.status = format!(
                             "{}: requested default was not confirmed by read-back; automatic reset preference unchanged",
                             status.failure_context
                         );
                         status.alert = true;
                     }
-                    Err(_) => {}
+                    PreferredDefaultReadback::Retain => {}
                 }
             }
             let mut ready = false;
@@ -2310,6 +2439,10 @@ fn refresh_all_with_status(
                 window.set_status_alert(true);
                 window.set_status_text(presentation.status.into());
             }
+            if clear_pending_status {
+                refresh_ordering.pending_status = None;
+            }
+            refresh_ordering.last_applied_generation = generation;
         });
     });
 }
@@ -3529,19 +3662,32 @@ fn start_health_monitor(
     session: Arc<Mutex<DspSession>>,
 ) {
     thread::spawn(move || {
-        let mut was_connected = false;
         loop {
+            let Some(generation) = REFRESH_COORDINATOR.monitor_generation() else {
+                thread::sleep(Duration::from_secs(1));
+                continue;
+            };
             match client.health() {
                 Ok(health) => {
-                    let recovered = health.ok && !was_connected;
-                    was_connected = health.ok;
                     let active = health.dsp_write_active_module.clone();
                     let seconds = health.dsp_write_lease_seconds;
+                    let armed = active.is_some();
                     let update_window = window.clone();
+                    let recovery_client = client.clone();
+                    let recovery_session = session.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         let Some(window) = update_window.upgrade() else {
                             return;
                         };
+                        let Some(_refresh_ordering) =
+                            REFRESH_COORDINATOR.lock_if_current(generation)
+                        else {
+                            return;
+                        };
+                        let recovered = monitor_connection_recovered(
+                            health.ok,
+                            DAEMON_READY.load(Ordering::SeqCst),
+                        );
                         if health.ok {
                             DAEMON_READY.store(true, Ordering::SeqCst);
                             window.set_daemon_connected(true);
@@ -3551,35 +3697,58 @@ fn start_health_monitor(
                             window.set_daemon_status_kind("ready".into());
                             window.set_daemon_status_title("STUDIOBRIDGE DAEMON IS READY".into());
                             window.set_daemon_status_detail("Local audio state is current.".into());
+                            window.set_dsp_active_module(active.unwrap_or_default().into());
+                            window.set_dsp_lease_seconds(seconds.unwrap_or_default() as i32);
+                            if armed {
+                                window.set_arm_confirm_pending(false);
+                            }
                         } else {
                             apply_daemon_failure(
                                 &window,
                                 &daemon_not_ready_status("Connection monitor failed"),
                             );
+                            window.set_dsp_active_module("".into());
+                            window.set_dsp_lease_seconds(0);
+                        }
+                        drop(_refresh_ordering);
+                        if recovered {
+                            let recovery_window = window.as_weak();
+                            refresh_all(recovery_window.clone(), recovery_client.clone());
+                            load_dsp(
+                                recovery_window,
+                                recovery_client,
+                                recovery_session,
+                                false,
+                                true,
+                            );
                         }
                     });
-                    set_dsp_lease(window.clone(), active, seconds);
-                    if recovered {
-                        refresh_all(window.clone(), client.clone());
-                        load_dsp(window.clone(), client.clone(), session.clone(), false, true);
-                    }
                 }
                 Err(error) => {
-                    was_connected = false;
                     let update_window = window.clone();
                     let presentation = daemon_status_for_error(&error, "Connection monitor failed");
                     let _ = slint::invoke_from_event_loop(move || {
                         let Some(window) = update_window.upgrade() else {
                             return;
                         };
+                        let Some(_refresh_ordering) =
+                            REFRESH_COORDINATOR.lock_if_current(generation)
+                        else {
+                            return;
+                        };
                         apply_daemon_failure(&window, &presentation);
+                        window.set_dsp_active_module("".into());
+                        window.set_dsp_lease_seconds(0);
                     });
-                    set_dsp_lease(window.clone(), None, None);
                 }
             }
             thread::sleep(Duration::from_secs(1));
         }
     });
+}
+
+fn monitor_connection_recovered(health_ready: bool, daemon_was_ready: bool) -> bool {
+    health_ready && !daemon_was_ready
 }
 
 fn mock_meter_level(tick: u64, index: usize, target: bool) -> f32 {
@@ -3700,26 +3869,108 @@ fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
 #[cfg(test)]
 mod desktop_tests {
     use super::{
-        AppPreferences, DaemonErrorKind, DspSelection, active_eq_profile, add_eq_band,
-        adjust_eq_band_value, application_chip_text_width, channel_detail, daemon_not_ready_status,
+        AppPreferences, DaemonErrorKind, DspSelection, PreferredDefaultReadback,
+        RefreshCoordinator, RefreshStatus, active_eq_profile, add_eq_band, adjust_eq_band_value,
+        application_chip_text_width, channel_detail, daemon_not_ready_status,
         daemon_status_for_kind, default_mutation_refresh_status, default_selection_matches,
         dsp_display, external_link_url, hotkey_key_name, link_channel_for_source,
-        link_channel_label, mock_meter_level, mutation_refresh_status, mute_state_with_target,
-        normalize_captured_hotkey, normalize_mute_action, preferred_default_repair,
-        profile_mutation_refresh_status, remove_eq_band, selected_dsp_enabled,
-        set_enhancement_preset, set_enhancement_value, set_eq_band_type_value, set_eq_band_value,
-        set_headphone_eq_band_value, set_headphone_subwoofer_value, set_selected_dsp_enabled,
+        link_channel_label, merge_pending_refresh_status, mock_meter_level,
+        monitor_connection_recovered, mutation_readback_is_authoritative, mutation_refresh_status,
+        mute_state_with_target, normalize_captured_hotkey, normalize_mute_action,
+        preferred_default_readback, preferred_default_repair, profile_mutation_refresh_status,
+        remove_eq_band, selected_dsp_enabled, set_enhancement_preset, set_enhancement_value,
+        set_eq_band_type_value, set_eq_band_value, set_headphone_eq_band_value,
+        set_headphone_subwoofer_value, set_selected_dsp_enabled,
         should_preserve_drawer_window_size, should_start_in_background, source_name_available,
         update_from_values,
     };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
-    use studiobridge_core::{
-        DspMode, EqualizerBandState, EqualizerBandType, HeadphoneEqualizerState,
-        HeadphoneOutputMode, HeadphoneState, LinkChannel, MicrophoneDspSnapshot,
-        MicrophoneDspUpdate, MixerChannel, MixerDeviceChoice, MixerSourceKind, MuteState,
-        StudioIdentity,
+    use std::{
+        sync::{Arc, mpsc},
+        thread,
+        time::Duration,
     };
+    use studiobridge_core::{
+        AppSnapshot, BackendStatus, DspMode, EqualizerBandState, EqualizerBandType,
+        HeadphoneEqualizerState, HeadphoneOutputMode, HeadphoneState, LinkChannel,
+        MicrophoneDspSnapshot, MicrophoneDspUpdate, MicrophoneState, MixerChannel,
+        MixerDeviceChoice, MixerSnapshot, MixerSourceKind, MuteState, StudioIdentity,
+        StudioSnapshot,
+    };
+
+    fn take_refresh_status(
+        coordinator: &RefreshCoordinator,
+        generation: u64,
+    ) -> Option<Option<RefreshStatus>> {
+        let mut ordering = coordinator.lock_if_current(generation)?;
+        Some(ordering.pending_status.take())
+    }
+
+    fn settle_refresh_status(
+        coordinator: &RefreshCoordinator,
+        generation: u64,
+        health_ready: bool,
+        snapshot_ready: bool,
+        profiles_ready: bool,
+    ) -> Option<RefreshStatus> {
+        let mut ordering = coordinator
+            .lock_if_current(generation)
+            .expect("test generation should remain current");
+        let status = ordering.pending_status.clone();
+        if status.as_ref().is_some_and(|status| {
+            mutation_readback_is_authoritative(status, health_ready, snapshot_ready, profiles_ready)
+        }) {
+            ordering.pending_status = None;
+        }
+        status
+    }
+
+    fn default_snapshot(input: Option<&str>, output: Option<&str>) -> AppSnapshot {
+        AppSnapshot {
+            studio: StudioSnapshot {
+                identity: StudioIdentity {
+                    status: BackendStatus::Mock,
+                    error: None,
+                    product: "test".into(),
+                    serial: None,
+                    firmware: None,
+                    usb_port: "test".into(),
+                    driverless_mode: true,
+                },
+                microphone: MicrophoneState {
+                    gain_db: 0,
+                    phantom_power: false,
+                    muted: false,
+                },
+                headphones: HeadphoneState {
+                    volume: 0,
+                    mic_monitor: 0,
+                    muted: false,
+                    channels_linked: false,
+                    output_mode: HeadphoneOutputMode::LineLevel,
+                    mic_output_gain_tenths_db: 0,
+                },
+                linked_applications: Vec::new(),
+            },
+            mixer: MixerSnapshot {
+                status: BackendStatus::Mock,
+                error: None,
+                engine: "test".into(),
+                channels: Vec::new(),
+                targets: Vec::new(),
+                routes: Vec::new(),
+                applications: Vec::new(),
+                default_input: input.map(str::to_owned),
+                default_output: output.map(str::to_owned),
+                default_inputs: Vec::new(),
+                default_outputs: Vec::new(),
+                physical_outputs: Vec::new(),
+                physical_inputs: Vec::new(),
+                link_outputs: Vec::new(),
+            },
+        }
+    }
 
     fn dsp_snapshot() -> MicrophoneDspSnapshot {
         let mut snapshot: MicrophoneDspSnapshot = serde_json::from_value(serde_json::json!({
@@ -4439,6 +4690,279 @@ mod desktop_tests {
         assert!(!status.alert);
         assert!(!status.status.contains("succeeded"));
         assert!(!status.status.contains("confirmed"));
+    }
+
+    #[test]
+    fn stale_refresh_cannot_claim_or_consume_a_newer_mutation_status() {
+        let coordinator = RefreshCoordinator::new();
+        let older = coordinator.begin(Some(mutation_refresh_status(
+            "Older volume update",
+            &Ok(()),
+        )));
+        let newer = coordinator.begin(Some(mutation_refresh_status("Newer mute update", &Ok(()))));
+
+        assert!(take_refresh_status(&coordinator, older).is_none());
+        let status = take_refresh_status(&coordinator, newer)
+            .expect("newest refresh should be current")
+            .expect("newest mutation status should remain pending");
+        assert!(status.status.starts_with("Newer mute update"));
+    }
+
+    #[test]
+    fn newer_plain_refresh_carries_forward_an_unreported_mutation_failure() {
+        let coordinator = RefreshCoordinator::new();
+        let failed_mutation = coordinator.begin(Some(RefreshStatus {
+            status: "Volume update was not confirmed: request timed out; result was ambiguous, so current state was reloaded".into(),
+            alert: true,
+            failure_context: "Volume update was not confirmed".into(),
+            requires_profile_readback: false,
+            preferred_default: None,
+        }));
+        let reconnect_refresh = coordinator.begin(None);
+
+        assert!(take_refresh_status(&coordinator, failed_mutation).is_none());
+        let status = take_refresh_status(&coordinator, reconnect_refresh)
+            .expect("reconnect refresh should be current")
+            .expect("mutation failure must survive until authoritative read-back");
+        assert!(status.alert);
+        assert!(status.status.contains("was not confirmed"));
+        assert!(status.status.contains("ambiguous"));
+    }
+
+    #[test]
+    fn mutation_status_is_consumed_once_by_the_current_authoritative_refresh() {
+        let coordinator = RefreshCoordinator::new();
+        let mutation = coordinator.begin(Some(mutation_refresh_status(
+            "Output device update",
+            &Ok(()),
+        )));
+
+        assert!(
+            take_refresh_status(&coordinator, mutation)
+                .expect("mutation refresh should be current")
+                .is_some()
+        );
+        assert!(matches!(
+            take_refresh_status(&coordinator, mutation),
+            Some(None)
+        ));
+
+        let later_refresh = coordinator.begin(None);
+        assert!(matches!(
+            take_refresh_status(&coordinator, later_refresh),
+            Some(None)
+        ));
+    }
+
+    #[test]
+    fn newer_refresh_cannot_begin_during_a_claimed_ui_application() {
+        let coordinator = Arc::new(RefreshCoordinator::new());
+        let current = coordinator.begin(Some(mutation_refresh_status("Volume update", &Ok(()))));
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let applying_coordinator = coordinator.clone();
+        let apply = thread::spawn(move || {
+            let mut ordering = applying_coordinator
+                .lock_if_current(current)
+                .expect("current refresh should claim the application lock");
+            let status = ordering.pending_status.clone();
+            entered_tx
+                .send(())
+                .expect("test receiver should remain open");
+            release_rx
+                .recv()
+                .expect("test should release the simulated UI application");
+            ordering.pending_status = None;
+            status
+        });
+
+        entered_rx
+            .recv()
+            .expect("simulated UI application should start");
+        let (begun_tx, begun_rx) = mpsc::channel();
+        let beginning_coordinator = coordinator.clone();
+        let begin = thread::spawn(move || {
+            let generation = beginning_coordinator.begin(None);
+            begun_tx
+                .send(generation)
+                .expect("test receiver should remain open");
+        });
+
+        assert!(
+            begun_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "a newer refresh must block until the current UI application is complete"
+        );
+        release_tx
+            .send(())
+            .expect("simulated UI application should remain open");
+        let status = apply.join().expect("application thread should not panic");
+        assert!(status.is_some());
+        let newer = begun_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("newer refresh should begin after application completes");
+        begin.join().expect("begin thread should not panic");
+        assert!(matches!(
+            take_refresh_status(&coordinator, newer),
+            Some(None)
+        ));
+    }
+
+    #[test]
+    fn ordinary_mutation_status_survives_failed_readback_until_reconnect() {
+        let coordinator = RefreshCoordinator::new();
+        let failed = coordinator.begin(Some(mutation_refresh_status("Mute update", &Ok(()))));
+        assert!(settle_refresh_status(&coordinator, failed, false, false, false).is_some());
+
+        let reconnect = coordinator.begin(None);
+        assert!(settle_refresh_status(&coordinator, reconnect, true, true, false).is_some());
+        assert!(matches!(
+            take_refresh_status(&coordinator, reconnect),
+            Some(None)
+        ));
+    }
+
+    #[test]
+    fn profile_mutation_waits_for_profile_readback_after_reconnect() {
+        let coordinator = RefreshCoordinator::new();
+        let failed = coordinator.begin(Some(profile_mutation_refresh_status(
+            "Mixer profile save",
+            &Ok(()),
+        )));
+        assert!(settle_refresh_status(&coordinator, failed, true, true, false).is_some());
+
+        let reconnect = coordinator.begin(None);
+        assert!(settle_refresh_status(&coordinator, reconnect, true, true, true).is_some());
+        assert!(matches!(
+            take_refresh_status(&coordinator, reconnect),
+            Some(None)
+        ));
+    }
+
+    #[test]
+    fn preferred_default_mismatch_is_authoritative_and_settles_without_persisting() {
+        let snapshot = default_snapshot(None, Some("speakers"));
+        assert_eq!(
+            preferred_default_readback(true, Some(&snapshot), false, "headphones"),
+            PreferredDefaultReadback::Reject
+        );
+        let coordinator = RefreshCoordinator::new();
+        let mismatch = coordinator.begin(Some(default_mutation_refresh_status(
+            "Default playback device update",
+            &Ok(()),
+            false,
+            "headphones",
+        )));
+        let status = settle_refresh_status(&coordinator, mismatch, true, true, true)
+            .expect("mismatch should still produce one terminal status");
+        assert!(status.preferred_default.is_some());
+        assert!(matches!(
+            take_refresh_status(&coordinator, mismatch),
+            Some(None)
+        ));
+    }
+
+    #[test]
+    fn preferred_default_survives_failed_health_then_persists_once_on_match() {
+        let snapshot = default_snapshot(None, Some("headphones"));
+        assert_eq!(
+            preferred_default_readback(false, Some(&snapshot), false, "headphones"),
+            PreferredDefaultReadback::Retain
+        );
+        assert_eq!(
+            preferred_default_readback(true, None, false, "headphones"),
+            PreferredDefaultReadback::Retain
+        );
+        let coordinator = RefreshCoordinator::new();
+        let failed = coordinator.begin(Some(default_mutation_refresh_status(
+            "Default playback device update",
+            &Ok(()),
+            false,
+            "headphones",
+        )));
+        assert!(settle_refresh_status(&coordinator, failed, false, true, true).is_some());
+
+        let reconnect = coordinator.begin(None);
+        assert_eq!(
+            preferred_default_readback(true, Some(&snapshot), false, "headphones"),
+            PreferredDefaultReadback::Persist
+        );
+        assert!(settle_refresh_status(&coordinator, reconnect, true, true, true).is_some());
+        assert!(matches!(
+            take_refresh_status(&coordinator, reconnect),
+            Some(None)
+        ));
+    }
+
+    #[test]
+    fn unreported_alert_is_not_replaced_by_a_newer_success() {
+        let alert = RefreshStatus {
+            status: "Volume update was not confirmed: request timed out".into(),
+            alert: true,
+            failure_context: "Volume update was not confirmed".into(),
+            requires_profile_readback: false,
+            preferred_default: None,
+        };
+        let success = profile_mutation_refresh_status("Mixer profile save", &Ok(()));
+        let merged = merge_pending_refresh_status(alert, success);
+        assert!(merged.alert);
+        assert!(merged.status.contains("Volume update was not confirmed"));
+        assert!(merged.requires_profile_readback);
+    }
+
+    #[test]
+    fn monitor_result_started_before_a_refresh_cannot_overwrite_it() {
+        let coordinator = RefreshCoordinator::new();
+        let stale_success = coordinator
+            .monitor_generation()
+            .expect("idle coordinator should allow a monitor request");
+        let failed_refresh = coordinator.begin(None);
+
+        assert!(coordinator.lock_if_current(stale_success).is_none());
+        let mut ordering = coordinator
+            .lock_if_current(failed_refresh)
+            .expect("failed full refresh should present authoritative offline state");
+        ordering.last_applied_generation = failed_refresh;
+        drop(ordering);
+
+        let accepted_success = coordinator
+            .monitor_generation()
+            .expect("monitor should resume after failed refresh is presented");
+        assert_eq!(accepted_success, failed_refresh);
+        assert!(monitor_connection_recovered(true, false));
+        assert!(!monitor_connection_recovered(true, true));
+    }
+
+    #[test]
+    fn monitor_cannot_start_while_a_full_refresh_is_in_flight() {
+        let coordinator = RefreshCoordinator::new();
+        let refresh_generation = coordinator.begin(None);
+        assert!(coordinator.monitor_generation().is_none());
+
+        let mut ordering = coordinator
+            .lock_if_current(refresh_generation)
+            .expect("refresh should still be current");
+        ordering.last_applied_generation = refresh_generation;
+        drop(ordering);
+        assert_eq!(coordinator.monitor_generation(), Some(refresh_generation));
+    }
+
+    #[test]
+    fn window_upgrade_precedes_pending_status_access() {
+        let source = include_str!("main.rs");
+        let refresh = source
+            .split("fn refresh_all_with_status")
+            .nth(1)
+            .expect("refresh implementation should exist");
+        let upgrade = refresh
+            .find("window.upgrade()")
+            .expect("refresh should upgrade the window");
+        let lock = refresh
+            .find("REFRESH_COORDINATOR.lock_if_current")
+            .expect("refresh should claim its generation");
+        let pending = refresh
+            .find("pending_status.clone()")
+            .expect("refresh should clone pending status");
+        assert!(upgrade < lock && lock < pending);
     }
 
     #[test]
