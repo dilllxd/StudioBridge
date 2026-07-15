@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=StudioBridge
+Comment=Start StudioBridge in the system tray
+Exec=studiobridge-desktop --background
+Icon=studiobridge
+Terminal=false
+Categories=AudioVideo;Audio;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-after=panel

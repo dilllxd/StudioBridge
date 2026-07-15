@@ -93,8 +93,13 @@ if [[ "$target_dir" != /* ]]; then
   target_dir="$root/$target_dir"
 fi
 daemon_binary="$target_dir/release/studiobridge-daemon"
+desktop_binary="$target_dir/release/studiobridge-desktop"
 if [[ ! -x "$daemon_binary" ]]; then
   printf 'Missing Linux daemon build: %s\n' "$daemon_binary" >&2
+  exit 1
+fi
+if [[ ! -x "$desktop_binary" ]]; then
+  printf 'Missing Linux desktop build: %s\n' "$desktop_binary" >&2
   exit 1
 fi
 if [[ ! -r web/dist/index.html ]]; then
@@ -117,6 +122,7 @@ destination() {
 
 printf 'Installing user files...\n'
 install -Dm755 "$daemon_binary" "$(destination "$HOME/.local/bin/studiobridge-daemon")"
+install -Dm755 "$desktop_binary" "$(destination "$HOME/.local/bin/studiobridge-desktop")"
 web_destination="$(destination "$HOME/.local/share/studiobridge/web/dist")"
 install -d "$web_destination"
 while IFS= read -r -d '' asset; do
@@ -127,6 +133,8 @@ install -Dm644 packaging/systemd/studiobridge.service \
   "$(destination "$HOME/.config/systemd/user/studiobridge.service")"
 install -Dm644 packaging/desktop/studiobridge.desktop \
   "$(destination "$HOME/.local/share/applications/studiobridge.desktop")"
+install -Dm644 crates/studiobridge-desktop/assets/studiobridge.svg \
+  "$(destination "$HOME/.local/share/icons/hicolor/scalable/apps/studiobridge.svg")"
 
 if [[ -n "$stage_root" ]]; then
   install -Dm644 packaging/udev/70-studiobridge.rules \
@@ -149,5 +157,7 @@ if command -v update-desktop-database >/dev/null 2>&1; then
 fi
 
 printf '\nStudioBridge installed in read-only hardware mode.\n'
-printf 'Open http://127.0.0.1:17840 after BEACN Studio USB1 and PipeWeaver are running.\n'
-printf 'Do not enable hardware writes until the read-only validation checklist passes.\n'
+printf 'Launch StudioBridge from the application menu after BEACN Studio USB1 and PipeWeaver are running.\n'
+printf 'Enable Start at Login in StudioBridge settings, or run scripts/enable-desktop-autostart.sh from this source tree.\n'
+printf 'Run scripts/validate-readonly.sh before scripts/enable-link-host.sh.\n'
+printf 'Do not enable general hardware writes during this validation.\n'

@@ -25,6 +25,9 @@ Uses `beacn-lib` as a dependency rather than duplicating its reverse-engineered
 USB protocol. The alpha implements Studio discovery; serial and firmware reads;
 microphone gain and phantom-power reads/writes; headphone and mic-monitor reads;
 and Link application discovery/assignment. All writes are disabled by default.
+After a read-only validation, a separate gate can enable only a fixed four-byte,
+zero-payload USB1 host heartbeat and Link assignments. Gain and phantom power
+remain behind the broader hardware-write gate.
 
 Full microphone DSP editing, headphone writes, lighting, profiles, firmware
 updates, factory reset, and unrestricted storage access are not part of the
@@ -64,13 +67,21 @@ The UI is a local web application served by the daemon and optionally wrapped in
 a small Linux desktop shell. It should remain usable in a normal browser so the
 mixer can also be adjusted from a tablet on the local network later.
 
+The primary workspace uses PipeWeaver's source/target mental model rather than a
+separate mixer metaphor. Real-time levels come directly from PipeWeaver's
+`/api/websocket/meter` read-only stream. Personal/Audience volumes can be linked
+or independent, and their mute targets remain separate. Application assignment
+is a dedicated view: Windows applications are draggable onto Link 1–4
+(many-to-one is allowed), while Linux applications are persistently assigned to
+PipeWeaver virtual sources.
+
 ## Delivery phases
 
 1. Mock daemon and UI shell — implemented and tested.
-2. Read-only Studio detection and core state inspection — implemented; hardware validation pending.
-3. Opt-in gain, phantom-power, and Link assignment — implemented; hardware validation pending.
+2. Read-only Studio detection and core state inspection — implemented and physically validated on Ubuntu 26.04 Live.
+3. Separately gated USB1 host heartbeat and Link assignment — implemented and physically validated with BEACN Link 1.0.4.
 4. PipeWeaver discovery, state, volume, mute, and routing integration — implemented and wire-tested.
-5. Studio Link application discovery and assignment — implemented; hardware validation pending.
+5. Studio Link application discovery and assignment — implemented and physically validated across Link 1–4.
 6. Installer, least-privilege USB1 udev rule, systemd user service, desktop launcher, and recovery behavior — implemented and validated on Ubuntu; physical desktop validation pending.
 
 ## Linux requirements

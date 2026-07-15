@@ -8,9 +8,13 @@ section() {
   printf '\n===== %s =====\n' "$1"
 }
 
+redact() {
+  sed -E 's/(usb-BEACN_BEACN_Studio_)[[:alnum:]]+(-[0-9]+)/\1REDACTED\2/g'
+}
+
 run_if_available() {
   if command -v "$1" >/dev/null 2>&1; then
-    "$@" 2>&1 || true
+    "$@" 2>&1 | redact || true
   else
     printf '%s is not installed\n' "$1"
   fi

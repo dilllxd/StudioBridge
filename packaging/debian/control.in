@@ -1,0 +1,10 @@
+Package: studiobridge
+Version: @VERSION@
+Section: sound
+Priority: optional
+Architecture: @ARCH@
+Maintainer: StudioBridge contributors
+Depends: @DEPENDS@
+Description: Native Linux control surface for BEACN Studio
+ StudioBridge integrates BEACN Studio USB1 with PipeWeaver and provides a
+ native mixer, routing, application assignment, and guarded microphone DSP UI.

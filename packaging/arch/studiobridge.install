@@ -1,0 +1,21 @@
+# shellcheck shell=bash
+
+reload_udev_rules() {
+  if [[ -x /usr/bin/udevadm ]]; then
+    /usr/bin/udevadm control --reload-rules || true
+  fi
+}
+
+post_install() {
+  reload_udev_rules
+  printf '%s\n' 'Run as the desktop user: systemctl --user enable --now studiobridge.service'
+  printf '%s\n' 'StudioBridge general hardware writes remain disabled by default.'
+}
+
+post_upgrade() {
+  reload_udev_rules
+}
+
+post_remove() {
+  reload_udev_rules
+}
