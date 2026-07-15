@@ -13,6 +13,7 @@ use crate::{
 pub const COMMAND_CAPACITY: usize = 32;
 const TIMER_INTERVAL_MS: u64 = 100;
 const OWNER_POLL_INTERVAL_MS: u64 = 10;
+const SIMULATED_FRAMES_PER_TICK: usize = SAMPLE_RATE / 100;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Command {
@@ -67,6 +68,10 @@ pub enum CommandKind {
 pub enum SendCommandError {
     Busy,
     Disconnected,
+}
+
+enum OwnerCommand {
+    WorkspaceExited { acknowledgement: mpsc::Sender<bool> },
 }
 
 #[derive(Clone)]
@@ -141,6 +146,7 @@ pub struct Snapshot {
     pub timer_tenths: u32,
     pub controls: Controls,
     pub reason: Option<String>,
+    pub confirmation_pending: bool,
     pub mode: ComparisonMode,
     pub availability_label: &'static str,
 }
@@ -232,6 +238,7 @@ impl<D: AudioDriver> ProtocolCore<D> {
         }
         self.last_command_sequence = Some(command.sequence);
         let before = self.semantic_signature();
+        let mut confirmation_resolved = false;
         let result = match command.kind {
             CommandKind::ProbeAvailability => {
                 self.publish_semantic_snapshot();
@@ -263,10 +270,12 @@ impl<D: AudioDriver> ProtocolCore<D> {
                 self.engine.handle(command.sequence, Action::TogglePlay)
             }
             CommandKind::Cancel => {
+                confirmation_resolved = self.pending_confirmation.is_some();
                 self.pending_confirmation = None;
                 self.engine.handle(command.sequence, Action::Cancel)
             }
             CommandKind::WorkspaceExited => {
+                confirmation_resolved = self.pending_confirmation.is_some();
                 self.pending_confirmation = None;
                 self.engine
                     .handle(command.sequence, Action::WorkspaceExited)
@@ -275,12 +284,12 @@ impl<D: AudioDriver> ProtocolCore<D> {
         };
 
         let changed = before != self.semantic_signature();
-        if changed {
+        if changed || confirmation_resolved {
             self.publish_semantic_snapshot();
         }
         match result {
             ActionResult::Transitioned => {
-                if !changed {
+                if !changed && !confirmation_resolved {
                     self.publish_semantic_snapshot();
                 }
             }
@@ -326,6 +335,7 @@ impl<D: AudioDriver> ProtocolCore<D> {
             controls,
             state,
             reason,
+            confirmation_pending: self.pending_confirmation.is_some(),
             mode: ComparisonMode::Simulated,
             availability_label: "Simulated comparison",
         }
@@ -547,6 +557,24 @@ impl<D: AudioDriver> ProtocolCore<D> {
         });
     }
 
+    fn owner_workspace_exit(&mut self) -> bool {
+        let Some(sequence) = self.last_command_sequence.unwrap_or(0).checked_add(1) else {
+            self.force_shutdown();
+            return false;
+        };
+        self.process(Command {
+            sequence,
+            kind: CommandKind::WorkspaceExited,
+        });
+        self.pending_confirmation.is_none()
+            && !matches!(
+                self.engine.state(),
+                PublicState::Recording { .. }
+                    | PublicState::RecordingPaused { .. }
+                    | PublicState::Playing { .. }
+            )
+    }
+
     fn timer_tick(&mut self, now_ms: u64) {
         if !matches!(
             self.engine.state(),
@@ -573,6 +601,23 @@ impl<D: AudioDriver> ProtocolCore<D> {
         }
         if before != self.semantic_signature() {
             self.publish_semantic_snapshot();
+        }
+    }
+
+    fn simulated_audio_tick(&mut self) {
+        let Some(token) = self.engine.active_token() else {
+            return;
+        };
+        match self.engine.state() {
+            PublicState::Recording { .. } => {
+                let silence = [0.0; SIMULATED_FRAMES_PER_TICK];
+                self.accept_capture(&silence);
+            }
+            PublicState::Playing { .. } => {
+                let mut silence = [0.0; SIMULATED_FRAMES_PER_TICK];
+                let _ = self.engine.render_playback(token, &mut silence);
+            }
+            _ => {}
         }
     }
 }
@@ -620,6 +665,7 @@ pub struct ComparisonWorker {
     terminal: mpsc::Receiver<TerminalEvent>,
     deferred_terminal: VecDeque<TerminalEvent>,
     owner_teardown: mpsc::Sender<()>,
+    owner_commands: mpsc::Sender<OwnerCommand>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -633,11 +679,12 @@ impl ComparisonWorker {
         endpoint_generation: u64,
         start_gate: Option<mpsc::Receiver<()>>,
         probe: Option<WorkerTestProbe>,
-        test_capture: Option<Box<[f32]>>,
+        test_capture_frames: Option<usize>,
     ) -> Self {
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
         let (terminal_tx, terminal_rx) = mpsc::channel();
         let (teardown_tx, teardown_rx) = mpsc::channel();
+        let (owner_command_tx, owner_command_rx) = mpsc::channel();
         let latest_timer = LatestSnapshot::default();
         let worker_latest_timer = latest_timer.clone();
         let thread = thread::Builder::new()
@@ -649,12 +696,14 @@ impl ComparisonWorker {
                     worker_latest_timer,
                     terminal_tx,
                 );
-                if let Some(samples) = test_capture {
+                if let Some(frames) = test_capture_frames {
                     core.process(Command {
                         sequence: 1,
                         kind: CommandKind::ToggleRecord,
                     });
-                    core.accept_capture(&samples);
+                    for _ in 0..frames.div_ceil(SIMULATED_FRAMES_PER_TICK) {
+                        core.simulated_audio_tick();
+                    }
                 }
                 if let Some(gate) = start_gate {
                     let _ = gate.recv();
@@ -665,6 +714,17 @@ impl ComparisonWorker {
                         core.force_shutdown();
                         break;
                     }
+                    if let Ok(OwnerCommand::WorkspaceExited { acknowledgement }) =
+                        owner_command_rx.try_recv()
+                    {
+                        while let Ok(command) = command_rx.try_recv() {
+                            if core.process(command) {
+                                break;
+                            }
+                        }
+                        let _ = acknowledgement.send(core.owner_workspace_exit());
+                        continue;
+                    }
                     match command_rx.recv_timeout(Duration::from_millis(OWNER_POLL_INTERVAL_MS)) {
                         Ok(command) => {
                             if core.process(command) {
@@ -673,6 +733,7 @@ impl ComparisonWorker {
                             core.timer_tick(started.elapsed().as_millis() as u64);
                         }
                         Err(mpsc::RecvTimeoutError::Timeout) => {
+                            core.simulated_audio_tick();
                             core.timer_tick(started.elapsed().as_millis() as u64);
                         }
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -692,6 +753,7 @@ impl ComparisonWorker {
             terminal: terminal_rx,
             deferred_terminal: VecDeque::new(),
             owner_teardown: teardown_tx,
+            owner_commands: owner_command_tx,
             thread: Some(thread),
         }
     }
@@ -708,6 +770,23 @@ impl ComparisonWorker {
         self.deferred_terminal
             .pop_front()
             .or_else(|| self.terminal.try_recv().ok())
+    }
+
+    /// Stops capture/playback before an owner allows the microphone workspace
+    /// to disappear. This queue-independent barrier is bounded by `timeout`.
+    pub fn workspace_exit(&mut self, timeout: Duration) -> bool {
+        if self.thread.is_none() {
+            return true;
+        }
+        let (acknowledgement, received) = mpsc::channel();
+        if self
+            .owner_commands
+            .send(OwnerCommand::WorkspaceExited { acknowledgement })
+            .is_err()
+        {
+            return false;
+        }
+        received.recv_timeout(timeout).unwrap_or(false)
     }
 
     pub fn shutdown(&mut self, _sequence: u64, _timeout: Duration) -> bool {
@@ -1641,7 +1720,7 @@ mod tests {
             1,
             Some(gate_rx),
             Some(probe.clone()),
-            Some(vec![0.7; MIN_COMMIT_FRAMES].into_boxed_slice()),
+            Some(MIN_COMMIT_FRAMES),
         );
         let clone = worker.command_sender();
         for sequence in 2..2 + COMMAND_CAPACITY as u64 {
@@ -1678,6 +1757,44 @@ mod tests {
     }
 
     #[test]
+    fn workspace_exit_owner_barrier_bypasses_a_saturated_ui_queue() {
+        let (gate_tx, gate_rx) = mpsc::channel();
+        let mut worker = ComparisonWorker::spawn_inner(
+            FakeAudioDriver::default(),
+            1,
+            Some(gate_rx),
+            None,
+            Some(MIN_COMMIT_FRAMES),
+        );
+        let sender = worker.command_sender();
+        for sequence in 2..2 + COMMAND_CAPACITY as u64 {
+            sender
+                .try_send(Command {
+                    sequence,
+                    kind: CommandKind::ProbeAvailability,
+                })
+                .unwrap();
+        }
+        let releaser = thread::spawn(move || gate_tx.send(()).unwrap());
+        assert!(worker.workspace_exit(Duration::from_secs(1)));
+        releaser.join().unwrap();
+
+        let snapshots: Vec<_> = std::iter::from_fn(|| worker.try_terminal_event())
+            .filter_map(|event| match event {
+                TerminalEvent::Snapshot(snapshot) => Some(snapshot),
+                _ => None,
+            })
+            .collect();
+        assert!(!matches!(
+            snapshots.last().expect("workspace exit snapshot").state,
+            PublicState::Recording { .. }
+                | PublicState::RecordingPaused { .. }
+                | PublicState::Playing { .. }
+        ));
+        assert!(worker.shutdown(0, Duration::ZERO));
+    }
+
+    #[test]
     fn owner_drop_joins_and_tears_down_even_while_clone_survives() {
         let probe = WorkerTestProbe::default();
         let worker = ComparisonWorker::spawn_inner(
@@ -1685,7 +1802,7 @@ mod tests {
             1,
             None,
             Some(probe.clone()),
-            Some(vec![0.6; MIN_COMMIT_FRAMES].into_boxed_slice()),
+            Some(MIN_COMMIT_FRAMES),
         );
         let clone = worker.command_sender();
         drop(worker);

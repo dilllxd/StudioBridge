@@ -1,10 +1,10 @@
 use crate::dsp::*;
 use crate::{
     BackendStatus, BridgeError, BridgeResult, HeadphoneState, LinkChannel, LinkedApplication,
-    MicrophoneState, MixBus, MixerApplication, MixerChannel, MixerDeviceChoice,
-    MixerLinkOutputAssignment, MixerPhysicalDeviceChoice, MixerPhysicalDeviceDescriptor,
-    MixerRoute, MixerSnapshot, MixerSourceKind, MixerTarget, MuteState, SetMicrophoneRequest,
-    StudioIdentity, StudioSnapshot,
+    MicrophoneState, MixBus, MixerApplication, MixerChannel, MixerCopyOutputAssignment,
+    MixerDeviceChoice, MixerLinkOutputAssignment, MixerPhysicalDeviceChoice,
+    MixerPhysicalDeviceDescriptor, MixerRoute, MixerSnapshot, MixerSourceKind, MixerTarget,
+    MuteState, SetMicrophoneRequest, StudioIdentity, StudioSnapshot,
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -36,6 +36,12 @@ pub trait MixerBackend: Send + Sync {
         &self,
         target_id: &str,
         device_node_id: Option<u32>,
+    ) -> BridgeResult<()>;
+    async fn attach_target_output(&self, target_id: &str, device_node_id: u32) -> BridgeResult<()>;
+    async fn detach_target_output(
+        &self,
+        target_id: &str,
+        descriptor: &MixerPhysicalDeviceDescriptor,
     ) -> BridgeResult<()>;
     async fn set_source_device(
         &self,
@@ -538,6 +544,10 @@ impl Default for MockMixerBackend {
                         target_id: None,
                     },
                 ],
+                copy_outputs: vec![MixerCopyOutputAssignment {
+                    target_id: "voice-chat-mic".into(),
+                    output: None,
+                }],
             })),
         }
     }
@@ -621,6 +631,55 @@ impl MixerBackend for MockMixerBackend {
             .find(|target| target.id == target_id)
             .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
         target.attached_devices = descriptor.into_iter().collect();
+        sync_mock_link_outputs(&mut state);
+        Ok(())
+    }
+
+    async fn attach_target_output(&self, target_id: &str, device_node_id: u32) -> BridgeResult<()> {
+        let mut state = self.state.write().await;
+        let descriptor = state
+            .physical_outputs
+            .iter()
+            .find(|device| device.node_id == device_node_id)
+            .map(|device| device.descriptor.clone())
+            .ok_or_else(|| {
+                BridgeError::InvalidValue(format!("unknown physical output node: {device_node_id}"))
+            })?;
+        let target = state
+            .targets
+            .iter_mut()
+            .find(|target| target.id == target_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
+        target.attached_devices.push(descriptor);
+        sync_mock_link_outputs(&mut state);
+        Ok(())
+    }
+
+    async fn detach_target_output(
+        &self,
+        target_id: &str,
+        descriptor: &MixerPhysicalDeviceDescriptor,
+    ) -> BridgeResult<()> {
+        let mut state = self.state.write().await;
+        let target = state
+            .targets
+            .iter_mut()
+            .find(|target| target.id == target_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
+        let matching = target
+            .attached_devices
+            .iter()
+            .enumerate()
+            .filter_map(|(index, attached)| {
+                physical_device_matches(attached, descriptor).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if matching.len() != 1 {
+            return Err(BridgeError::InvalidValue(format!(
+                "target output descriptor must match exactly one attachment: {target_id}"
+            )));
+        }
+        target.attached_devices.remove(matching[0]);
         sync_mock_link_outputs(&mut state);
         Ok(())
     }
@@ -942,6 +1001,16 @@ impl MixerBackend for MockMixerBackend {
 fn valid_mixer_colour(colour: &str) -> bool {
     let hex = colour.strip_prefix('#').unwrap_or(colour);
     matches!(hex.len(), 3 | 6) && hex.chars().all(|character| character.is_ascii_hexdigit())
+}
+
+fn physical_device_matches(
+    left: &MixerPhysicalDeviceDescriptor,
+    right: &MixerPhysicalDeviceDescriptor,
+) -> bool {
+    match (&left.name, &right.name) {
+        (Some(left), Some(right)) => left == right,
+        _ => left.description.is_some() && left.description == right.description,
+    }
 }
 
 fn sync_mock_link_outputs(state: &mut MixerSnapshot) {

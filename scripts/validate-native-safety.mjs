@@ -9,6 +9,7 @@ const REQUIRED_FILES = [
   "crates/studiobridge-comparison/src/worker.rs",
   "crates/studiobridge-beacn/src/lib.rs",
   "crates/studiobridge-daemon/src/main.rs",
+  "crates/studiobridge-desktop/Cargo.toml",
   "crates/studiobridge-desktop/src/client.rs",
   "crates/studiobridge-desktop/src/main.rs",
   "crates/studiobridge-desktop/ui/app-window.slint",
@@ -54,6 +55,36 @@ const COMPARISON_FORBIDDEN_INTEGRATION_PATHS = [
   [/#\s*\[\s*path\s*=|\b(?:include|include_bytes|include_str)!\s*\(/, "unreviewed external source or data inclusion"],
   [/\bunsafe\s*\{/, "unsafe integration code"],
 ];
+const SIMULATED_COMPARISON_FEATURE = "simulated-comparison";
+const EXTENDED_WORKSPACES_FEATURE = "extended-workspaces";
+const DESKTOP_COMPARISON_FORBIDDEN_CODE = [
+  [/(?:^|\W)(?:pipewire|libspa|spa_sys|alsa|cpal|rodio|jack|beacn_lib|studiobridge_beacn|studiobridge_pipeweaver|reqwest|axum|hyper|ureq|tungstenite|tokio_tungstenite)\s*::/, "real audio, device, BEACN, Link, DSP, or network integration"],
+  [/\bstd\s*::\s*(?:fs|net|path|process|env|io)\b/, "filesystem, network, process, environment, or I/O integration"],
+  [/\b(?:DaemonClient|AudioDriver|PipeWire|Beacn|LinkHost|DspWrite|TcpStream|UdpSocket)\b/, "real driver, audio, device, BEACN, Link, DSP, or network integration"],
+  [/\b(?:load_preferences|save_preferences|refresh_all|start_meter_stream|start_health_monitor|start_default_device_monitor|instance_socket_path|notify_existing_instance|claim_single_instance)\b/, "existing filesystem, network, device, or daemon integration helper"],
+  [/\bimpl(?:\s*<[^>{}]*>)?\s+[^{};]*AudioDriver\b/, "desktop AudioDriver implementation"],
+  [/\b(?:accept_capture|inject_samples|expose_samples)\b|\b(?:Vec|Box)\s*<\s*f32\s*>|&\s*\[\s*f32\s*\]/, "raw comparison sample ingress"],
+  [/\b(?:set|update|mutate|apply|reset|select|assign)[A-Za-z0-9_]*(?:route|routing|default|assignment|target|bus|mix)[A-Za-z0-9_]*\b|\broute[A-Za-z0-9_]*\b|\/api\//i, "route or default mutation from comparison code"],
+];
+const DESKTOP_COMPARISON_ALLOWED_CALLS = new Set([
+  "cfg", "fn", "if", "match", "while", "for", "Some", "Ok", "Err",
+  "format", "matches", "vec", "assert_eq", "new", "default", "from_millis",
+  "into", "clone", "borrow", "borrow_mut", "shutdown", "get", "set",
+  "checked_add", "upgrade", "unwrap_or_default", "try_send", "as_weak", "start",
+  "take_latest_snapshot", "try_terminal_event",
+  "comparison_timer_label", "comparison_state_label", "next_comparison_sequence",
+  "apply_snapshot_reason", "note_durable_status", "comparison_escape_should_cancel", "assert",
+]);
+
+function isBuildOrReleaseDefinition(name) {
+  return name.startsWith(".github/")
+    || name.startsWith(".cargo/")
+    || name.startsWith("packaging/")
+    || (/^scripts\/.*\.(?:sh|bash|zsh|fish|ps1|cmd|bat|mjs|cjs|js)$/i.test(name)
+      && !/\.test\.mjs$/i.test(name)
+      && name !== "scripts/validate-native-safety.mjs")
+    || /^(?:Makefile|Justfile|Taskfile\.ya?ml|package\.json|Cargo\.toml)$/i.test(name);
+}
 
 function normalizeIdentifier(value) {
   return value.toLowerCase().replaceAll("-", "_");
@@ -121,16 +152,58 @@ function dependencyNames(body) {
     .filter(Boolean);
 }
 
+function tomlAssignment(body, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return body.match(new RegExp(`^\\s*${escaped}\\s*=\\s*(.+?)\\s*$`, "m"))?.[1] ?? "";
+}
+
+function cfgFeatureSections(source, feature) {
+  const code = rustCodeOnly(source);
+  const escaped = feature.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const attribute = new RegExp(`#\\s*!?\\s*\\[\\s*cfg\\s*\\(\\s*feature\\s*=\\s*"${escaped}"\\s*\\)\\s*\\]`, "g");
+  const sections = [];
+  for (const match of source.matchAll(attribute)) {
+    let cursor = match.index + match[0].length;
+    while (/\s/.test(code[cursor] ?? "")) cursor += 1;
+    const brace = code.indexOf("{", cursor);
+    const semicolon = code.indexOf(";", cursor);
+    let end;
+    if (semicolon >= 0 && (brace < 0 || semicolon < brace)) {
+      end = semicolon + 1;
+    } else if (brace >= 0) {
+      let depth = 0;
+      end = code.length;
+      for (let index = brace; index < code.length; index += 1) {
+        if (code[index] === "{") depth += 1;
+        else if (code[index] === "}" && --depth === 0) {
+          end = index + 1;
+          break;
+        }
+      }
+    } else {
+      end = code.length;
+    }
+    sections.push({ start: match.index, end, code: code.slice(match.index, end), raw: source.slice(match.index, end) });
+  }
+  return { code, sections };
+}
+
+function codeOutsideSections(code, sections) {
+  const chars = [...code];
+  for (const { start, end } of sections) chars.fill(" ", start, end);
+  return chars.join("");
+}
+
 // Safety checks inspect code tokens, not prose. This deliberately removes
 // comments and string/character literals so documentation and mutation-test
 // explanations may name forbidden integrations without creating false alarms.
 function rustCodeOnly(source) {
   return source
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/\/\/[^\n]*/g, " ")
-    .replace(/(?<![A-Za-z0-9_])r(#{0,16})"[\s\S]*?"\1/g, " ")
-    .replace(/"(?:\\.|[^"\\])*"/g, " ")
-    .replace(/'(?:\\.|[^'\\])'/g, " ");
+    .replace(/\/\*[\s\S]*?\*\//g, (match) => " ".repeat(match.length))
+    .replace(/\/\/[^\n]*/g, (match) => " ".repeat(match.length))
+    .replace(/(?<![A-Za-z0-9_])r(#{0,16})"[\s\S]*?"\1/g, (match) => " ".repeat(match.length))
+    .replace(/"(?:\\.|[^"\\])*"/g, (match) => " ".repeat(match.length))
+    .replace(/'(?:\\.|[^'\\])'/g, (match) => " ".repeat(match.length));
 }
 
 function rustNamedFunctionSection(source, name) {
@@ -218,9 +291,83 @@ export function validateNativeSafety(files) {
     }
   }
   check(runtimeDependencies.includes("zeroize"), "comparison policy core must retain non-elidable sample scrubbing");
+
+  const desktopManifestName = "crates/studiobridge-desktop/Cargo.toml";
+  const desktopManifest = read(desktopManifestName);
+  const desktopFeatures = tomlSection(desktopManifest, "features");
+  const desktopDependencies = tomlSection(desktopManifest, "dependencies");
+  const comparisonFeatureConfigured = desktopManifest.includes(SIMULATED_COMPARISON_FEATURE)
+    || desktopManifest.includes("studiobridge-comparison");
+  if (comparisonFeatureConfigured) {
+    const defaults = tomlAssignment(desktopFeatures, "default").replace(/\s/g, "");
+    const extendedFeature = tomlAssignment(desktopFeatures, EXTENDED_WORKSPACES_FEATURE).replace(/\s/g, "");
+    const simulatedFeature = tomlAssignment(desktopFeatures, SIMULATED_COMPARISON_FEATURE).replace(/\s/g, "");
+    const dependency = tomlAssignment(desktopDependencies, "studiobridge-comparison");
+    const featureNames = desktopFeatures
+      .split(/\r?\n/)
+      .map((line) => line.replace(/#.*/, "").match(/^\s*([A-Za-z0-9_-]+)\s*=/)?.[1])
+      .filter(Boolean);
+    check(defaults === "[]", "desktop default feature set must remain empty");
+    check(extendedFeature === "[]", "desktop extended-workspaces feature must not activate dependencies");
+    check(simulatedFeature === '["extended-workspaces","dep:studiobridge-comparison"]', "desktop simulated-comparison feature must depend exactly on extended-workspaces and the optional comparison core");
+    check(featureNames.length === 3
+      && featureNames.includes("default")
+      && featureNames.includes(EXTENDED_WORKSPACES_FEATURE)
+      && featureNames.includes(SIMULATED_COMPARISON_FEATURE), "desktop feature table may contain only default, extended-workspaces, and simulated-comparison");
+    check((desktopFeatures.match(/dep:studiobridge-comparison/g) ?? []).length === 1, "only simulated-comparison may activate the desktop comparison dependency");
+    check(/^\{[\s\S]*\}$/.test(dependency), "desktop comparison dependency must use an explicit optional inline table");
+    check(/\bpath\s*=\s*"\.\.\/studiobridge-comparison"/.test(dependency), "desktop comparison dependency must use only the local reviewed policy core");
+    check(/\boptional\s*=\s*true\b/.test(dependency), "desktop comparison dependency must remain optional");
+    const dependencyKeys = [...dependency.matchAll(/\b([A-Za-z][A-Za-z0-9_-]*)\s*=/g)].map((match) => match[1]);
+    check(dependencyKeys.length === 2 && dependencyKeys.includes("path") && dependencyKeys.includes("optional"), "desktop comparison dependency may contain only path and optional metadata");
+    for (const section of tomlDependencySections(desktopManifest)) {
+      if (section.name !== "dependencies") {
+        check(!dependencyNames(section.body).includes("studiobridge-comparison"), "desktop comparison dependency must not be target-specific, build-time, or development-only");
+      }
+    }
+  }
   for (const [name, source] of Object.entries(files)) {
     if (name !== "Cargo.toml" && name.endsWith("Cargo.toml") && !name.startsWith("crates/studiobridge-comparison/")) {
-      check(!source.includes("studiobridge-comparison"), `${name} wires the comparison core into production before destination-generation policy review`);
+      if (name !== desktopManifestName) {
+        check(!source.includes("studiobridge-comparison"), `${name} wires the comparison core outside the reviewed simulated desktop feature`);
+      }
+    }
+  }
+
+  const desktopRustSources = Object.entries(files).filter(([name]) =>
+    name.startsWith("crates/studiobridge-desktop/src/") && name.endsWith(".rs")
+  );
+  const desktopComparisonReferences = /\b(?:studiobridge_comparison|ComparisonWorker|FakeAudioDriver)\b/;
+  let gatedComparisonCode = "";
+  let gatedComparisonRaw = "";
+  for (const [name, source] of desktopRustSources) {
+    const { code, sections } = cfgFeatureSections(source, SIMULATED_COMPARISON_FEATURE);
+    const outside = codeOutsideSections(code, sections);
+    check(!desktopComparisonReferences.test(outside), `${name} uses or constructs comparison objects outside the simulated-comparison cfg gate`);
+    for (const section of sections) {
+      gatedComparisonCode += `\n${section.code}`;
+      gatedComparisonRaw += `\n${section.raw}`;
+    }
+  }
+  if (comparisonFeatureConfigured) {
+    check(desktopRustSources.length > 0 && desktopComparisonReferences.test(gatedComparisonCode), "desktop simulated-comparison feature must contain a cfg-gated simulated worker integration");
+    check(/["'][^"'\r\n]*Simulated comparison[^"'\r\n]*["']/.test(gatedComparisonRaw), "desktop comparison UI must visibly retain the Simulated comparison label from feature-gated code");
+  }
+  for (const [pattern, description] of DESKTOP_COMPARISON_FORBIDDEN_CODE) {
+    check(!pattern.test(gatedComparisonCode), `desktop simulated comparison contains forbidden ${description}`);
+  }
+  const gatedComparisonFunctions = new Set(allMatches(gatedComparisonCode, /\bfn\s+([A-Za-z_][A-Za-z0-9_]*)/g));
+  const gatedComparisonCalls = new Set(allMatches(gatedComparisonCode, /\b([A-Za-z_][A-Za-z0-9_]*)\s*!?\s*\(/g));
+  for (const call of gatedComparisonCalls) {
+    const allowed = DESKTOP_COMPARISON_ALLOWED_CALLS.has(call)
+      || gatedComparisonFunctions.has(call)
+      || /^(?:set|on)_comparison_[A-Za-z0-9_]+$/.test(call);
+    check(allowed, `desktop simulated comparison calls non-allowlisted helper ${call}`);
+  }
+  for (const [name, source] of Object.entries(files)) {
+    if (isBuildOrReleaseDefinition(name)
+      && /(?:--features(?:=|\s+)[^\r\n]*\b(?:extended-workspaces|simulated-comparison)\b|--all-features\b)/.test(source)) {
+      check(false, `${name} enables a non-default desktop feature in a packaging or release build`);
     }
   }
 
@@ -262,6 +409,19 @@ export function validateNativeSafety(files) {
   check(/mode\s*:\s*ComparisonMode\s*::\s*Simulated/.test(snapshotSection), "comparison snapshots must remain explicitly simulated");
   check(/availability_label\s*:\s*"Simulated comparison"/.test(read("crates/studiobridge-comparison/src/worker.rs")), "comparison snapshots must retain the Simulated comparison label");
 
+  const simulatedTickSection = rustNamedFunctionSection(comparisonWorker, "simulated_audio_tick");
+  check(/fn\s+simulated_audio_tick\s*\(\s*&mut\s+self\s*\)/.test(simulatedTickSection), "simulated audio progression must not accept external samples or frame input");
+  const silenceInitializers = simulatedTickSection.match(/let\s+(?:mut\s+)?silence\s*=/g) ?? [];
+  const fixedSilenceInitializers = simulatedTickSection.match(/let\s+(?:mut\s+)?silence\s*=\s*\[\s*0\.0\s*;\s*SIMULATED_FRAMES_PER_TICK\s*\]/g) ?? [];
+  check(silenceInitializers.length === 2 && fixedSilenceInitializers.length === silenceInitializers.length, "simulated audio progression must generate only fixed internal silence");
+  check(/self\.accept_capture\s*\(\s*&silence\s*\)/.test(simulatedTickSection), "simulated capture must consume only its fixed internal silence");
+  const spawnInnerSection = rustNamedFunctionSection(comparisonWorker, "spawn_inner");
+  check(!/\bf32\b/.test(spawnInnerSection), "comparison worker internal constructor must not accept or preload raw samples");
+  check(/test_capture_frames\s*:\s*Option\s*<\s*usize\s*>/.test(spawnInnerSection), "comparison worker test preload must remain metadata-only frame count");
+  const spawnSimulatedSection = rustNamedFunctionSection(comparisonWorker, "spawn_simulated");
+  check(/spawn_inner\s*\(\s*driver\s*,\s*endpoint_generation\s*,\s*None\s*,\s*None\s*,\s*None\s*\)/.test(spawnSimulatedSection), "public simulated worker construction must not preload frames or test hooks");
+  check(!/\bcore\.accept_capture\s*\(/.test(productionWorker), "production comparison worker must not expose a raw capture preload path");
+
   const processSection = rustNamedFunctionSection(comparisonWorker, "process");
   const playbackAuthorization = processSection.indexOf("authorize_playback");
   const authorizationRejection = processSection.indexOf("return false", playbackAuthorization);
@@ -280,7 +440,7 @@ export function validateNativeSafety(files) {
   check(/self\.terminal\.send\s*\(\s*TerminalEvent\s*::\s*Snapshot/.test(semanticPublisher), "comparison semantic snapshots must use the lossless terminal queue");
   check(/latest_timer\.publish\s*\(/.test(timerPublisher), "comparison timer snapshots must use only the coalescing mailbox");
   check(!/TerminalEvent\s*::\s*Snapshot/.test(timerPublisher), "comparison timer snapshots must not enter or overwrite the semantic queue");
-  check(/if\s+changed\s*\{\s*self\.publish_semantic_snapshot\s*\(\s*\)\s*;\s*\}/.test(processSection), "comparison worker must publish authoritative snapshots after fail-closed transitions");
+  check(/if\s+changed\s*\|\|\s*confirmation_resolved\s*\{\s*self\.publish_semantic_snapshot\s*\(\s*\)\s*;\s*\}/.test(processSection), "comparison worker must publish authoritative snapshots after fail-closed transitions and confirmation cancellation");
   const captureSection = rustNamedFunctionSection(comparisonWorker, "accept_capture");
   const captureAccept = captureSection.indexOf("engine.accept_capture");
   const capturePublish = captureSection.indexOf("publish_semantic_snapshot", captureAccept);
@@ -347,6 +507,42 @@ export function validateNativeSafety(files) {
   const slint = read("crates/studiobridge-desktop/ui/app-window.slint");
   const desktopMain = read("crates/studiobridge-desktop/src/main.rs");
   const client = read("crates/studiobridge-desktop/src/client.rs");
+  const railLine = (label) => slint
+    .split(/\r?\n/)
+    .find((line) => line.includes("RailButton") && line.includes(`label: "${label}"`)) ?? "";
+  const extendedWorkspaceDefaults = allMatches(
+    slint,
+    /in property <bool> extended-workspaces-enabled:\s*(true|false);/g,
+  );
+  check(extendedWorkspaceDefaults.length >= 1
+    && extendedWorkspaceDefaults.every((value) => value === "false"), "default UI must keep extended workspaces disabled");
+  for (const label of ["STUDIO", "MIC", "LIGHTING", "DEVICE"]) {
+    const line = railLine(label);
+    check(Boolean(line), `default UI is missing the ${label} rail affordance`);
+    check(line.includes("interactive: root.extended-workspaces-enabled;"), `${label} rail must be noninteractive unless extended-workspaces is enabled`);
+  }
+  const mixerRail = railLine("MIXER");
+  const settingsRail = railLine("SETTINGS");
+  check(Boolean(mixerRail) && !mixerRail.includes("interactive:"), "Mixer rail must remain interactive in the default UI");
+  check(Boolean(settingsRail)
+    && !settingsRail.includes("interactive:")
+    && settingsRail.includes("root.active-page = 4"), "Settings rail must remain interactive in the default UI");
+  const railComponent = slint.slice(
+    slint.indexOf("component RailButton"),
+    slint.indexOf("component ComparisonButton"),
+  );
+  check(railComponent.includes("enabled: root.interactive;")
+    && railComponent.includes("accessible-enabled: root.interactive;")
+    && railComponent.includes("TouchArea { enabled: root.interactive;"), "disabled workspace rails must also be keyboard-, pointer-, and accessibility-disabled");
+  check(/if root\.extended-workspaces-enabled:\s*Rectangle\s*\{[\s\S]*?BEACN Studio 1/.test(slint), "Studio profile section must remain gated by extended-workspaces");
+
+  const workspaceSelector = rustNamedFunctionSection(desktopMain, "product_workspace_page").replace(/\s+/g, " ");
+  check(workspaceSelector.includes('cfg!(feature = "extended-workspaces") || requested_page == 4')
+    && workspaceSelector.includes("else { 0 }"), "default startup/navigation must clamp non-Mixer, non-Settings workspaces to Mixer");
+  check(desktopMain.includes('window.set_extended_workspaces_enabled(cfg!(feature = "extended-workspaces"));'), "desktop must publish the exact extended-workspaces feature state to the UI");
+  check(desktopMain.includes("window.set_active_page(product_workspace_page(0));"), "desktop must start through the Mixer-only workspace clamp");
+  check(desktopMain.includes("window.set_active_page(product_workspace_page(1));"), "safe-mode navigation must use the Mixer-only workspace clamp");
+  check(/#\[cfg\(feature = "extended-workspaces"\)\]\s*load_dsp\(\s*window\.as_weak\(\)/.test(desktopMain), "startup DSP loading must remain gated by extended-workspaces");
   const callbackNames = allMatches(slint, /\bcallback\s+([A-Za-z0-9_-]+)/g);
   const handlerNames = allMatches(desktopMain, /\b[A-Za-z_][A-Za-z0-9_]*\.on_([A-Za-z0-9_]+)/g);
   const clientMethods = allMatches(client, /\bpub\s+(?:async\s+)?fn\s+([A-Za-z0-9_]+)/g);
@@ -355,6 +551,9 @@ export function validateNativeSafety(files) {
       const reason = forbiddenSurfaceReason(name);
       check(!reason, `${kind} ${name} exposes excluded ${reason}`);
     }
+  }
+  for (const callback of callbackNames.filter((name) => /comparison/i.test(name))) {
+    check(!/(?:route|routing|default|assignment|target|bus)/i.test(callback), `comparison callback ${callback} must not mutate routes or defaults`);
   }
 
   const clientEndpoints = new Set(allMatches(client, /["`]((?:\{\})?\/api\/[A-Za-z0-9_\-/{ }]+)["`]/g).map((value) => value.replace(/^\{\}/, "")));
@@ -396,7 +595,9 @@ export function validateNativeSafety(files) {
 export function readNativeSafetySources(root) {
   const names = new Set(REQUIRED_FILES);
   const collect = (directory, include) => {
-    for (const entry of fs.readdirSync(path.join(root, directory), { withFileTypes: true })) {
+    const absolute = path.join(root, directory);
+    if (!fs.existsSync(absolute)) return;
+    for (const entry of fs.readdirSync(absolute, { withFileTypes: true })) {
       const relative = path.posix.join(directory.replaceAll("\\", "/"), entry.name);
       if (entry.isDirectory()) collect(relative, include);
       else if (include(relative)) names.add(relative);
@@ -404,6 +605,14 @@ export function readNativeSafetySources(root) {
   };
   collect("crates", (name) => name.endsWith("/Cargo.toml"));
   collect("crates/studiobridge-comparison", (name) => name.endsWith(".rs"));
+  collect("crates/studiobridge-desktop/src", (name) => name.endsWith(".rs"));
+  collect(".github", () => true);
+  collect(".cargo", () => true);
+  collect("packaging", () => true);
+  collect("scripts", (name) => /\.(?:sh|bash|zsh|fish|ps1|cmd|bat|mjs|cjs|js)$/i.test(name) && !/\.test\.mjs$/i.test(name));
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (entry.isFile() && /^(?:Makefile|Justfile|Taskfile\.ya?ml|package\.json)$/i.test(entry.name)) names.add(entry.name);
+  }
   return Object.fromEntries([...names].map((name) => [name, fs.readFileSync(path.join(root, name), "utf8")]));
 }
 

@@ -9,22 +9,35 @@ than replacing or forgetting its saved master volume, and mixer profiles
 restore both values.
 
 The Assignments panel keeps three device concepts separate. Recording and
-playback defaults read PipeWeaver's current `defaults_id` state and send the
-typed `SetDefaultInput` or `SetDefaultOutput` command. PipeWeaver has one Linux
-default per direction, so BEACN's Default and Default Communication selectors
-mirror that same real default. Target-strip device selectors list usable
-physical PipeWire target nodes and attach one to an individual mixer target.
+playback each expose distinct Default and Default Communication rows. The rows
+must remain separate in UI and state even though PipeWeaver currently has only
+one Linux default per direction. Until a distinct communications-default
+command exists, that row is explicitly disabled or described as mirrored; it
+must not look like an independent selector that secretly invokes the ordinary
+default callback. Ordinary defaults read PipeWeaver's current `defaults_id`
+state and send the typed `SetDefaultInput` or `SetDefaultOutput` command.
+Target device selectors list usable physical PipeWire nodes and attach them to
+an individual mixer target.
+
+The current desktop model still exposes one legacy physical-output selector per
+target. The next target-slot milestone replaces that ambiguity with two
+independently tracked Personal Mix slots and one Audience Mix slot. Each
+Personal selector must omit the output selected in the other slot, while
+Audience filters against both active Personal attachments. These are target
+attachments, not Linux playback-default selection, and this paragraph describes
+the required next design rather than landed UI behavior.
 The four fixed outgoing Studio Link selectors instead choose which mixer target
 feeds each discovered BEACN `Line4` through `Line1` playback endpoint. The
 Personal Mix device hotkey cycles the default-playback candidate list; none of
 these paths touch BEACN USB controls.
 
-Selecting a replacement output validates the node first, attaches it before
-removing stale attachments, and therefore leaves the existing path intact if
-the new attach fails. `Unassigned` deliberately removes the target's current
-physical attachments. Mixer profiles persist and restore these per-target
-assignments when the saved physical descriptor is available; a missing device
-is never guessed.
+The target-slot implementation must track attachment roles rather than treating
+all physical outputs as replaceable. Selecting a replacement validates and
+attaches first, then removes only the descriptor tracked for that slot;
+`Unassigned` removes only that slot. Profiles must restore stable descriptors,
+never guess a missing device, and preserve Link, Voice Chat copy, and unmanaged
+attachments. The current generic target-device path does not yet provide those
+slot guarantees and must not be described as the final implementation.
 
 Outgoing Link replacement also validates a usable BEACN-labelled endpoint,
 attaches it to the new target before detaching it from the previous target, and
@@ -56,6 +69,43 @@ This path is PipeWire routing plus the already validated Studio Link transport.
 It does not enable BEACN gain, phantom power, firmware, factory reset, lighting,
 or storage writes. The target master volume and source inclusion remain visible
 in StudioBridge so a proximity-chat return can be checked at a glance.
+
+The routing-row disclosure named Copy Chat Mic Output To is a separate optional
+physical-output attachment for the Voice Chat Mic target. It is not shorthand
+for changing the source-to-Voice-Chat routing matrix. `Nothing` detaches only
+this copy attachment.
+
+The core, PipeWeaver, and daemon transaction for that role is implemented.
+Requests must include `device_node_id`; explicit JSON `null` means Nothing. The
+service accepts only Voice Chat Mic and a uniquely resolved usable non-Link
+physical node. It records the exact prior attachment multiset, attaches a new
+choice first, verifies the expected full multiset, removes only the previously
+tracked copy descriptor, and verifies the final multiset before committing
+durable copy-role metadata and evidence. Any failure rolls physical and live
+role state back to the exact prior multiset. Legacy profiles with no copy
+metadata preserve the live copy; explicit Nothing removes only the tracked copy.
+
+Copy changes and profile activation share the daemon's mixer-commit coordinator,
+so persistence failure is compensated and restart state can be seeded from the
+last verified durable metadata. This protects Link returns and unmanaged
+attachments without silently changing routing-matrix inclusion.
+
+The native desktop client and Slint UI do not yet expose this backend. The
+measured two-level Copy Chat Mic Output To cascade, selector callbacks, request
+method, pending/error state, and authoritative refresh remain the next UI work.
+The drawn chevron alone is not a functional copy selector.
+
+PipeWeaver removal is index-based: it snapshots attachments, resolves the
+tracked descriptor to exactly one index, then issues the remove command. An
+external actor could still reorder or change attachments between that snapshot
+and command. The daemon's shared coordinator, strict preconditions, multiset
+readback, and rollback fail closed for in-process changes but cannot eliminate
+that external race; hardware-in-loop Linux validation remains required.
+
+The active UI-parity priority is Mixer. Mixer and Settings are available by
+default. Studio, Mic, Lighting, and Device remain default-disabled behind the
+extended-workspace gate. This documentation does not claim final workspace-wide
+or safety validation.
 
 ## Validation
 

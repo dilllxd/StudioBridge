@@ -5573,6 +5573,7 @@ dependencies = [
  "serde_json",
  "slint",
  "slint-build",
+ "studiobridge-comparison",
  "studiobridge-core",
  "tokio",
  "tungstenite",

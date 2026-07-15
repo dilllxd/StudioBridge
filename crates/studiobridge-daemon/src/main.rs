@@ -1,7 +1,7 @@
 use anyhow::Context;
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{State, rejection::JsonRejection},
     http::{HeaderValue, Method, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -12,13 +12,15 @@ use std::{collections::HashSet, net::SocketAddr, path::PathBuf, sync::Arc, time:
 use studiobridge_beacn::{BeacnStudioBackend, DspWriteGate};
 use studiobridge_core::{
     AppSnapshot, BridgeError, CreateMixerSourceRequest, DspWriteModule, MicrophoneDspUpdate,
-    MixerBackend, MixerProfileRequest, MixerProfileSummary, MixerProfilesResponse, MixerSnapshot,
-    MockMixerBackend, MockStudioBackend, RemoveMixerSourceRequest, ReorderMixerSourceRequest,
-    SetDefaultDeviceRequest, SetLinkAssignmentRequest, SetLinkOutputAssignmentRequest,
-    SetMicrophoneRequest, SetMixerApplicationRequest, SetMixerSourceColourRequest,
-    SetMixerSourceNameRequest, SetMuteRequest, SetRouteRequest, SetSourceDeviceRequest,
-    SetTargetDeviceRequest, SetTargetMuteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest,
-    SetVolumeRequest, StudioBackend, StudioBridgeService,
+    MixerBackend, MixerCopyOutputAssignment, MixerCopyOutputCommitEvidence,
+    MixerCopyOutputWriteResult, MixerProfileRequest, MixerProfileSummary, MixerProfilesResponse,
+    MixerSnapshot, MockMixerBackend, MockStudioBackend, RemoveMixerSourceRequest,
+    ReorderMixerSourceRequest, SetDefaultDeviceRequest, SetLinkAssignmentRequest,
+    SetLinkOutputAssignmentRequest, SetMicrophoneRequest, SetMixerApplicationRequest,
+    SetMixerCopyOutputRequest, SetMixerSourceColourRequest, SetMixerSourceNameRequest,
+    SetMuteRequest, SetRouteRequest, SetSourceDeviceRequest, SetTargetDeviceRequest,
+    SetTargetMuteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest, SetVolumeRequest,
+    StudioBackend, StudioBridgeService,
 };
 use studiobridge_pipeweaver::PipeweaverBackend;
 use tokio::sync::RwLock;
@@ -114,6 +116,30 @@ struct AppState {
     static_dsp_writes: HashSet<DspWriteModule>,
     dsp_write_gate: DspWriteGate,
     profiles: ProfileStore,
+    mixer_commit: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl AppState {
+    async fn run_mixer_commit<T, F, Fut>(&self, operation: F) -> Result<T, BridgeError>
+    where
+        T: Send + 'static,
+        F: FnOnce(AppState) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<T, BridgeError>> + Send + 'static,
+    {
+        // A canceled waiter leaves the queue. Once the shared coordinator is
+        // acquired, the detached-capable task keeps every daemon-visible Mixer
+        // mutation ordered through its final commit or rollback. Service calls
+        // acquire their separate internal gate only after this coordinator, so
+        // there is no reverse lock order.
+        let commit = self.mixer_commit.clone().lock_owned().await;
+        let state = self.clone();
+        tokio::spawn(async move {
+            let _commit = commit;
+            operation(state).await
+        })
+        .await
+        .map_err(|error| BridgeError::Backend(format!("mixer commit task failed: {error}")))?
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +152,33 @@ struct SavedMixerProfile {
 struct ProfileFile {
     active: Option<String>,
     profiles: Vec<SavedMixerProfile>,
+    #[serde(default)]
+    copy_outputs: Vec<MixerCopyOutputAssignment>,
+    #[serde(default)]
+    copy_output_evidence: Option<MixerCopyOutputCommitEvidence>,
+}
+
+#[derive(Debug)]
+struct SetCopyOutputRequest {
+    device_node_id: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSetCopyOutputRequest {
+    device_node_id: serde_json::Value,
+}
+
+impl<'de> Deserialize<'de> for SetCopyOutputRequest {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawSetCopyOutputRequest::deserialize(deserializer)?;
+        let device_node_id =
+            serde_json::from_value(raw.device_node_id).map_err(serde::de::Error::custom)?;
+        Ok(Self { device_node_id })
+    }
 }
 
 #[cfg(test)]
@@ -173,14 +226,6 @@ impl ProfilePersistenceControl {
 
     fn before_persist(&self) -> Result<(), BridgeError> {
         if self
-            .fail_next
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
-        {
-            return Err(BridgeError::Backend(
-                "injected profile persistence failure".into(),
-            ));
-        }
-        if self
             .pause_next
             .swap(false, std::sync::atomic::Ordering::SeqCst)
         {
@@ -193,6 +238,14 @@ impl ProfilePersistenceControl {
                     .wait(released)
                     .expect("persistence release condition");
             }
+        }
+        if self
+            .fail_next
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(BridgeError::Backend(
+                "injected profile persistence failure".into(),
+            ));
         }
         Ok(())
     }
@@ -232,6 +285,27 @@ impl ProfileStore {
                 })
                 .collect(),
         }
+    }
+
+    async fn copy_outputs(&self) -> Vec<MixerCopyOutputAssignment> {
+        self.state.read().await.copy_outputs.clone()
+    }
+
+    async fn copy_output_evidence(&self) -> Option<MixerCopyOutputCommitEvidence> {
+        self.state.read().await.copy_output_evidence.clone()
+    }
+
+    async fn set_copy_outputs(
+        &self,
+        copy_outputs: Vec<MixerCopyOutputAssignment>,
+        copy_output_evidence: MixerCopyOutputCommitEvidence,
+    ) -> Result<(), BridgeError> {
+        self.transact(move |next| {
+            next.copy_outputs = copy_outputs;
+            next.copy_output_evidence = Some(copy_output_evidence);
+            Ok(())
+        })
+        .await
     }
 
     async fn get(&self, name: &str) -> Option<MixerSnapshot> {
@@ -307,6 +381,7 @@ impl ProfileStore {
         .await
     }
 
+    #[cfg(test)]
     async fn set_active(&self, name: &str) -> Result<(), BridgeError> {
         let name = name.to_owned();
         self.transact(move |next| {
@@ -316,6 +391,27 @@ impl ProfileStore {
                 )));
             }
             next.active = Some(name);
+            Ok(())
+        })
+        .await
+    }
+
+    async fn set_active_with_copy_outputs(
+        &self,
+        name: &str,
+        copy_outputs: Vec<MixerCopyOutputAssignment>,
+        copy_output_evidence: Option<MixerCopyOutputCommitEvidence>,
+    ) -> Result<(), BridgeError> {
+        let name = name.to_owned();
+        self.transact(move |next| {
+            if !next.profiles.iter().any(|profile| profile.name == name) {
+                return Err(BridgeError::InvalidValue(format!(
+                    "unknown mixer profile: {name}"
+                )));
+            }
+            next.active = Some(name);
+            next.copy_outputs = copy_outputs;
+            next.copy_output_evidence = copy_output_evidence;
             Ok(())
         })
         .await
@@ -623,7 +719,13 @@ async fn main() -> anyhow::Result<()> {
         MixerMode::Mock => Arc::new(MockMixerBackend::default()),
         MixerMode::Pipeweaver => Arc::new(PipeweaverBackend::new(&args.pipeweaver_url)),
     };
-    let service = StudioBridgeService::new(studio, mixer);
+    let profiles = ProfileStore::load();
+    let service = StudioBridgeService::new_with_copy_output_state(
+        studio,
+        mixer,
+        profiles.copy_outputs().await,
+        profiles.copy_output_evidence().await,
+    )?;
     let state = AppState {
         service,
         runtime: RuntimeInfo {
@@ -647,7 +749,8 @@ async fn main() -> anyhow::Result<()> {
         },
         static_dsp_writes: enabled_dsp_writes,
         dsp_write_gate,
-        profiles: ProfileStore::load(),
+        profiles,
+        mixer_commit: Arc::new(tokio::sync::Mutex::new(())),
     };
 
     let app = Router::new()
@@ -665,6 +768,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/mixer/target-volume", post(set_target_volume))
         .route("/api/mixer/target-mute", post(set_target_mute))
         .route("/api/mixer/target-device", post(set_target_device))
+        .route("/api/mixer/copy-output", post(set_copy_output))
         .route("/api/mixer/source-device", post(set_source_device))
         .route(
             "/api/mixer/link-output-assignment",
@@ -844,164 +948,293 @@ async fn set_volume(
     State(state): State<AppState>,
     Json(request): Json<SetVolumeRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state
-        .service
-        .set_volume(&request.channel_id, request.mix, request.volume)
-        .await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_volume(&request.channel_id, request.mix, request.volume)
+            .await
+    })
+    .await
 }
 
 async fn set_target_volume(
     State(state): State<AppState>,
     Json(request): Json<SetTargetVolumeRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state
-        .service
-        .set_target_volume(&request.target_id, request.volume)
-        .await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_target_volume(&request.target_id, request.volume)
+            .await
+    })
+    .await
 }
 
 async fn set_target_mute(
     State(state): State<AppState>,
     Json(request): Json<SetTargetMuteRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state
-        .service
-        .set_target_mute(&request.target_id, request.muted)
-        .await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_target_mute(&request.target_id, request.muted)
+            .await
+    })
+    .await
 }
 
 async fn set_target_device(
     State(state): State<AppState>,
     Json(request): Json<SetTargetDeviceRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_target_device(&request.target_id, request.device_node_id)
+            .await
+    })
+    .await
+}
+
+async fn set_copy_output(
+    State(state): State<AppState>,
+    request: Result<Json<SetCopyOutputRequest>, JsonRejection>,
+) -> Result<Json<MixerCopyOutputWriteResult>, ApiError> {
+    let Json(request) = request.map_err(|error| {
+        ApiError(BridgeError::InvalidValue(format!(
+            "invalid copy-output request: {error}"
+        )))
+    })?;
+    Ok(Json(
+        set_copy_output_transaction(state, request.device_node_id).await?,
+    ))
+}
+
+async fn set_copy_output_transaction(
+    state: AppState,
+    device_node_id: Option<u32>,
+) -> Result<MixerCopyOutputWriteResult, BridgeError> {
     state
-        .service
-        .set_target_device(&request.target_id, request.device_node_id)
-        .await?;
-    Ok(ok())
+        .run_mixer_commit(move |state| async move {
+        let before = state.service.snapshot().await?.mixer;
+        let previous_node_id = tracked_copy_output_node_id(&before)?;
+        let applied = state
+            .service
+            .set_mixer_copy_output(SetMixerCopyOutputRequest {
+                target_id: "voice-chat-mic".into(),
+                device_node_id,
+            })
+            .await?;
+        if let Err(persistence_error) = state
+            .profiles
+            .set_copy_outputs(
+                applied.snapshot.copy_outputs.clone(),
+                applied.commit_evidence.clone(),
+            )
+            .await
+        {
+            return match state
+                .service
+                .set_mixer_copy_output(SetMixerCopyOutputRequest {
+                    target_id: "voice-chat-mic".into(),
+                    device_node_id: previous_node_id,
+                })
+                .await
+            {
+                Ok(_) => Err(BridgeError::Backend(format!(
+                    "copy-output persistence failed; the previous physical and live role state was restored: {persistence_error}"
+                ))),
+                Err(rollback_error) => Err(BridgeError::Backend(format!(
+                    "copy-output persistence failed and rollback could not restore the previous physical and live role state; persistence error: {persistence_error}; rollback error: {rollback_error}"
+                ))),
+            };
+        }
+        Ok(applied)
+        })
+        .await
+}
+
+fn tracked_copy_output_node_id(snapshot: &MixerSnapshot) -> Result<Option<u32>, BridgeError> {
+    let matching = snapshot
+        .copy_outputs
+        .iter()
+        .filter(|assignment| assignment.target_id == "voice-chat-mic")
+        .collect::<Vec<_>>();
+    if matching.len() != 1 {
+        return Err(BridgeError::InvalidValue(format!(
+            "live copy-output metadata must contain exactly one Voice Chat Mic assignment; found {}",
+            matching.len()
+        )));
+    }
+    let Some(descriptor) = matching[0].output.as_ref() else {
+        return Ok(None);
+    };
+    let outputs = snapshot
+        .physical_outputs
+        .iter()
+        .filter(|output| physical_descriptors_match(&output.descriptor, descriptor))
+        .collect::<Vec<_>>();
+    if outputs.len() != 1 {
+        return Err(BridgeError::InvalidValue(format!(
+            "tracked copy output must resolve to exactly one physical node; found {}",
+            outputs.len()
+        )));
+    }
+    Ok(Some(outputs[0].node_id))
+}
+
+fn physical_descriptors_match(
+    left: &studiobridge_core::MixerPhysicalDeviceDescriptor,
+    right: &studiobridge_core::MixerPhysicalDeviceDescriptor,
+) -> bool {
+    match (&left.name, &right.name) {
+        (Some(left), Some(right)) => left == right,
+        _ => left.description.is_some() && left.description == right.description,
+    }
 }
 
 async fn set_source_device(
     State(state): State<AppState>,
     Json(request): Json<SetSourceDeviceRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state
-        .service
-        .set_source_device(&request.channel_id, request.device_node_id)
-        .await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_source_device(&request.channel_id, request.device_node_id)
+            .await
+    })
+    .await
 }
 
 async fn set_link_output_assignment(
     State(state): State<AppState>,
     Json(request): Json<SetLinkOutputAssignmentRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state
-        .service
-        .set_link_output_assignment(request.output_node_id, request.target_id.as_deref())
-        .await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_link_output_assignment(request.output_node_id, request.target_id.as_deref())
+            .await
+    })
+    .await
 }
 
 async fn set_default_input(
     State(state): State<AppState>,
     Json(request): Json<SetDefaultDeviceRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state.service.set_default_input(&request.device_id).await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state.service.set_default_input(&request.device_id).await
+    })
+    .await
 }
 
 async fn set_default_output(
     State(state): State<AppState>,
     Json(request): Json<SetDefaultDeviceRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state.service.set_default_output(&request.device_id).await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state.service.set_default_output(&request.device_id).await
+    })
+    .await
 }
 
 async fn set_volume_linked(
     State(state): State<AppState>,
     Json(request): Json<SetVolumeLinkedRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state
-        .service
-        .set_volume_linked(&request.channel_id, request.linked)
-        .await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_volume_linked(&request.channel_id, request.linked)
+            .await
+    })
+    .await
 }
 
 async fn set_mute(
     State(state): State<AppState>,
     Json(request): Json<SetMuteRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state
-        .service
-        .set_mute(&request.channel_id, request.state)
-        .await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_mute(&request.channel_id, request.state)
+            .await
+    })
+    .await
 }
 
 async fn set_route(
     State(state): State<AppState>,
     Json(request): Json<SetRouteRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state
-        .service
-        .set_route(&request.source_id, &request.target_id, request.enabled)
-        .await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_route(&request.source_id, &request.target_id, request.enabled)
+            .await
+    })
+    .await
 }
 
 async fn create_mixer_source(
     State(state): State<AppState>,
     Json(request): Json<CreateMixerSourceRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state.service.create_source(&request.name).await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state.service.create_source(&request.name).await
+    })
+    .await
 }
 
 async fn set_mixer_source_name(
     State(state): State<AppState>,
     Json(request): Json<SetMixerSourceNameRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state
-        .service
-        .set_source_name(&request.source_id, &request.name)
-        .await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_source_name(&request.source_id, &request.name)
+            .await
+    })
+    .await
 }
 
 async fn set_mixer_source_colour(
     State(state): State<AppState>,
     Json(request): Json<SetMixerSourceColourRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state
-        .service
-        .set_source_colour(&request.source_id, &request.colour)
-        .await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_source_colour(&request.source_id, &request.colour)
+            .await
+    })
+    .await
 }
 
 async fn remove_mixer_source(
     State(state): State<AppState>,
     Json(request): Json<RemoveMixerSourceRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state.service.remove_source(&request.source_id).await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state.service.remove_source(&request.source_id).await
+    })
+    .await
 }
 
 async fn reorder_mixer_source(
     State(state): State<AppState>,
     Json(request): Json<ReorderMixerSourceRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state
-        .service
-        .set_source_order(&request.source_id, request.position)
-        .await?;
-    Ok(ok())
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_source_order(&request.source_id, request.position)
+            .await
+    })
+    .await
 }
 
 async fn list_mixer_profiles(State(state): State<AppState>) -> Json<MixerProfilesResponse> {
@@ -1036,15 +1269,40 @@ async fn load_mixer_profile(
     State(state): State<AppState>,
     Json(request): Json<MixerProfileRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    let mixer = state.profiles.get(&request.name).await.ok_or_else(|| {
-        ApiError(BridgeError::InvalidValue(format!(
-            "unknown mixer profile: {}",
-            request.name
-        )))
-    })?;
-    state.service.apply_mixer_profile(&mixer).await?;
-    state.profiles.set_active(&request.name).await?;
+    load_mixer_profile_transaction(state, request.name).await?;
     Ok(ok())
+}
+
+async fn load_mixer_profile_transaction(state: AppState, name: String) -> Result<(), BridgeError> {
+    state
+        .run_mixer_commit(move |state| async move {
+        let desired = state.profiles.get(&name).await.ok_or_else(|| {
+            BridgeError::InvalidValue(format!("unknown mixer profile: {name}"))
+        })?;
+        let before = state.service.snapshot().await?.mixer;
+        state.service.apply_mixer_profile(&desired).await?;
+        let applied = state.service.snapshot().await?.mixer;
+        if let Err(persistence_error) = state
+            .profiles
+            .set_active_with_copy_outputs(
+                &name,
+                applied.copy_outputs.clone(),
+                state.service.copy_output_commit_evidence().await,
+            )
+            .await
+        {
+            return match state.service.apply_mixer_profile(&before).await {
+                Ok(()) => Err(BridgeError::Backend(format!(
+                    "profile activation persistence failed; the previous mixer and live copy role state was restored: {persistence_error}"
+                ))),
+                Err(rollback_error) => Err(BridgeError::Backend(format!(
+                    "profile activation persistence failed and rollback could not restore the previous mixer and live copy role state; persistence error: {persistence_error}; rollback error: {rollback_error}"
+                ))),
+            };
+        }
+        Ok(())
+        })
+        .await
 }
 
 async fn delete_mixer_profile(
@@ -1059,14 +1317,25 @@ async fn set_mixer_application(
     State(state): State<AppState>,
     Json(request): Json<SetMixerApplicationRequest>,
 ) -> Result<Json<ApiMessage>, ApiError> {
-    state
-        .service
-        .set_application_route(
-            &request.process,
-            &request.name,
-            request.channel_id.as_deref(),
-        )
-        .await?;
+    commit_message(state, move |state| async move {
+        state
+            .service
+            .set_application_route(
+                &request.process,
+                &request.name,
+                request.channel_id.as_deref(),
+            )
+            .await
+    })
+    .await
+}
+
+async fn commit_message<F, Fut>(state: AppState, operation: F) -> Result<Json<ApiMessage>, ApiError>
+where
+    F: FnOnce(AppState) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = Result<(), BridgeError>> + Send + 'static,
+{
+    state.run_mixer_commit(operation).await?;
     Ok(ok())
 }
 
@@ -1109,6 +1378,438 @@ mod tests {
 
     fn read_persisted_profiles(store: &ProfileStore) -> ProfileFile {
         serde_json::from_slice(&std::fs::read(&store.path).unwrap()).unwrap()
+    }
+
+    fn test_app_state(service: StudioBridgeService, profiles: ProfileStore) -> AppState {
+        AppState {
+            service,
+            runtime: RuntimeInfo {
+                studio_mode: "mock",
+                mixer_mode: "mock",
+                hardware_writes_enabled: false,
+                link_control_enabled: false,
+                dsp_write_modules: Vec::new(),
+                dsp_write_active_module: None,
+                dsp_write_lease_seconds: None,
+            },
+            static_dsp_writes: HashSet::new(),
+            dsp_write_gate: DspWriteGate::default(),
+            profiles,
+            mixer_commit: Arc::new(tokio::sync::Mutex::new(())),
+        }
+    }
+
+    #[test]
+    fn legacy_profile_files_default_live_copy_metadata_without_changing_profiles() {
+        let file: ProfileFile = serde_json::from_value(serde_json::json!({
+            "active": null,
+            "profiles": []
+        }))
+        .unwrap();
+        assert!(file.copy_outputs.is_empty());
+        assert!(file.copy_output_evidence.is_none());
+        assert!(file.profiles.is_empty());
+        assert!(serde_json::from_value::<SetCopyOutputRequest>(serde_json::json!({})).is_err());
+        assert!(
+            serde_json::from_value::<SetCopyOutputRequest>(serde_json::json!({
+                "device_node_id": null
+            }))
+            .unwrap()
+            .device_node_id
+            .is_none()
+        );
+        assert!(
+            serde_json::from_value::<SetCopyOutputRequest>(serde_json::json!({
+                "target_id": "headphones",
+                "device_node_id": null
+            }))
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn copy_output_endpoint_persists_verified_role_and_seeds_restart() {
+        let root = temporary_test_path("copy-output-restart");
+        let (store, _) = test_profile_store(&root);
+        let mixer = Arc::new(MockMixerBackend::default());
+        let service = StudioBridgeService::new_with_copy_outputs(
+            Arc::new(MockStudioBackend::default()),
+            mixer.clone(),
+            store.copy_outputs().await,
+        )
+        .unwrap();
+        let state = test_app_state(service, store.clone());
+
+        let Json(applied) = set_copy_output(
+            State(state.clone()),
+            Ok(Json(SetCopyOutputRequest {
+                device_node_id: Some(103),
+            })),
+        )
+        .await
+        .unwrap();
+        assert!(applied.verified);
+        assert_eq!(applied.assignment, applied.snapshot.copy_outputs[0]);
+        let durable = read_persisted_profiles(&store);
+        assert_eq!(durable.copy_outputs, applied.snapshot.copy_outputs);
+        assert_eq!(durable.copy_output_evidence, Some(applied.commit_evidence));
+        assert!(durable.profiles.is_empty());
+
+        let restarted = StudioBridgeService::new_with_copy_output_state(
+            Arc::new(MockStudioBackend::default()),
+            mixer,
+            durable.copy_outputs,
+            durable.copy_output_evidence,
+        )
+        .unwrap();
+        restarted
+            .set_mixer_copy_output(SetMixerCopyOutputRequest {
+                target_id: "voice-chat-mic".into(),
+                device_node_id: None,
+            })
+            .await
+            .unwrap();
+        assert!(
+            restarted.snapshot().await.unwrap().mixer.copy_outputs[0]
+                .output
+                .is_none()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn tampered_profile_file_link_and_unverified_unmanaged_roles_never_detach() {
+        let root = temporary_test_path("tampered-copy-role");
+        let (store, _) = test_profile_store(&root);
+        let mixer = Arc::new(MockMixerBackend::default());
+        let backend_snapshot = mixer.snapshot().await.unwrap();
+        let link = backend_snapshot
+            .physical_outputs
+            .iter()
+            .find(|output| output.node_id == 102)
+            .unwrap()
+            .descriptor
+            .clone();
+        let assignment = MixerCopyOutputAssignment {
+            target_id: "voice-chat-mic".into(),
+            output: Some(link),
+        };
+        let evidence = MixerCopyOutputCommitEvidence {
+            version: 1,
+            assignment: assignment.clone(),
+            voice_chat_attachments: backend_snapshot
+                .targets
+                .iter()
+                .find(|target| target.id == "voice-chat-mic")
+                .unwrap()
+                .attached_devices
+                .clone(),
+        };
+        {
+            let mut file = store.state.write().await;
+            file.copy_outputs = vec![assignment.clone()];
+            file.copy_output_evidence = Some(evidence.clone());
+        }
+        let service = StudioBridgeService::new_with_copy_output_state(
+            Arc::new(MockStudioBackend::default()),
+            mixer.clone(),
+            vec![assignment],
+            Some(evidence),
+        )
+        .unwrap();
+        let state = test_app_state(service, store);
+        let before = mixer.snapshot().await.unwrap();
+        let error = set_copy_output_transaction(state, None).await.unwrap_err();
+        assert!(error.to_string().contains("Link-reserved"));
+        assert_eq!(mixer.snapshot().await.unwrap(), before);
+
+        let (store, _) = test_profile_store(&root.join("unmanaged"));
+        let mixer = Arc::new(MockMixerBackend::default());
+        mixer
+            .attach_target_output("voice-chat-mic", 103)
+            .await
+            .unwrap();
+        let backend_snapshot = mixer.snapshot().await.unwrap();
+        let unrelated = backend_snapshot
+            .physical_outputs
+            .iter()
+            .find(|output| output.node_id == 103)
+            .unwrap()
+            .descriptor
+            .clone();
+        let assignment = MixerCopyOutputAssignment {
+            target_id: "voice-chat-mic".into(),
+            output: Some(unrelated),
+        };
+        store.state.write().await.copy_outputs = vec![assignment.clone()];
+        let service = StudioBridgeService::new_with_copy_outputs(
+            Arc::new(MockStudioBackend::default()),
+            mixer.clone(),
+            vec![assignment],
+        )
+        .unwrap();
+        let state = test_app_state(service, store);
+        let before = mixer.snapshot().await.unwrap();
+        let error = set_copy_output_transaction(state, None).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no committed attachment evidence")
+        );
+        assert_eq!(mixer.snapshot().await.unwrap(), before);
+        if root.exists() {
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn copy_output_persistence_failure_compensates_physical_and_live_role() {
+        let root = temporary_test_path("copy-output-persist-failure");
+        let (store, control) = test_profile_store(&root);
+        let mixer = Arc::new(MockMixerBackend::default());
+        let service = StudioBridgeService::new(Arc::new(MockStudioBackend::default()), mixer);
+        let state = test_app_state(service, store.clone());
+        let before = state.service.snapshot().await.unwrap().mixer;
+        control.fail_once();
+
+        let error = set_copy_output_transaction(state.clone(), Some(103))
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("previous physical and live role state was restored")
+        );
+        assert_eq!(state.service.snapshot().await.unwrap().mixer, before);
+        assert!(store.copy_outputs().await.is_empty());
+        assert!(!store.path.exists());
+        if root.exists() {
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn copy_output_reports_persistence_and_compensation_failure() {
+        let root = temporary_test_path("copy-output-rollback-failure");
+        let (store, control) = test_profile_store(&root);
+        let mixer = Arc::new(MockMixerBackend::default());
+        let service =
+            StudioBridgeService::new(Arc::new(MockStudioBackend::default()), mixer.clone());
+        let state = test_app_state(service, store);
+        control.pause_once();
+        control.fail_once();
+        let change = tokio::spawn({
+            let state = state.clone();
+            async move { set_copy_output_transaction(state, Some(103)).await }
+        });
+        control.wait_until_paused().await;
+        mixer
+            .set_target_device("voice-chat-mic", None)
+            .await
+            .unwrap();
+        control.release();
+
+        let error = change.await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("persistence failed"));
+        assert!(error.to_string().contains("rollback could not restore"));
+        assert!(error.to_string().contains("rollback error"));
+        if root.exists() {
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn copy_and_profile_copy_role_commits_are_strictly_ordered() {
+        let root = temporary_test_path("copy-profile-order");
+        let (store, control) = test_profile_store(&root);
+        let mixer = Arc::new(MockMixerBackend::default());
+        let service = StudioBridgeService::new(Arc::new(MockStudioBackend::default()), mixer);
+        let explicit_nothing = service.snapshot().await.unwrap().mixer;
+        store
+            .save("Explicit Nothing".into(), explicit_nothing)
+            .await
+            .unwrap();
+        let state = test_app_state(service, store.clone());
+        control.pause_once();
+        let copy = tokio::spawn({
+            let state = state.clone();
+            async move { set_copy_output_transaction(state, Some(103)).await }
+        });
+        control.wait_until_paused().await;
+
+        let profile = tokio::spawn({
+            let state = state.clone();
+            async move { load_mixer_profile_transaction(state, "Explicit Nothing".into()).await }
+        });
+        tokio::task::yield_now().await;
+        assert!(
+            !profile.is_finished(),
+            "profile bypassed live copy commit coordinator"
+        );
+        control.release();
+        copy.await.unwrap().unwrap();
+        profile.await.unwrap().unwrap();
+
+        let final_snapshot = state.service.snapshot().await.unwrap().mixer;
+        assert!(final_snapshot.copy_outputs[0].output.is_none());
+        let durable = read_persisted_profiles(&store);
+        assert!(durable.copy_outputs[0].output.is_none());
+        assert_eq!(durable.active.as_deref(), Some("Explicit Nothing"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn canceled_copy_waiter_never_applies_after_the_active_commit() {
+        let root = temporary_test_path("copy-copy-cancellation");
+        let (store, control) = test_profile_store(&root);
+        let service = StudioBridgeService::new(
+            Arc::new(MockStudioBackend::default()),
+            Arc::new(MockMixerBackend::default()),
+        );
+        let state = test_app_state(service, store.clone());
+        control.pause_once();
+        let first = tokio::spawn({
+            let state = state.clone();
+            async move { set_copy_output_transaction(state, Some(103)).await }
+        });
+        control.wait_until_paused().await;
+
+        let canceled = tokio::time::timeout(
+            Duration::from_millis(30),
+            set_copy_output_transaction(state.clone(), Some(101)),
+        )
+        .await;
+        assert!(canceled.is_err());
+        control.release();
+        first.await.unwrap().unwrap();
+        tokio::task::yield_now().await;
+
+        let snapshot = state.service.snapshot().await.unwrap().mixer;
+        let selected = snapshot.copy_outputs[0].output.as_ref().unwrap();
+        assert_eq!(tracked_copy_output_node_id(&snapshot).unwrap(), Some(103));
+        assert_eq!(
+            read_persisted_profiles(&store).copy_outputs[0]
+                .output
+                .as_ref(),
+            Some(selected)
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn profile_persistence_failure_rolls_back_before_direct_mutation_runs() {
+        let root = temporary_test_path("profile-direct-order");
+        let (store, control) = test_profile_store(&root);
+        let service = StudioBridgeService::new(
+            Arc::new(MockStudioBackend::default()),
+            Arc::new(MockMixerBackend::default()),
+        );
+        let mut desired = service.snapshot().await.unwrap().mixer;
+        desired
+            .channels
+            .iter_mut()
+            .find(|channel| channel.id == "chat")
+            .unwrap()
+            .personal_volume = 19;
+        store.save("Rollback".into(), desired).await.unwrap();
+        let state = test_app_state(service, store);
+        control.pause_once();
+        control.fail_once();
+        let profile = tokio::spawn({
+            let state = state.clone();
+            async move { load_mixer_profile_transaction(state, "Rollback".into()).await }
+        });
+        control.wait_until_paused().await;
+        let direct = tokio::spawn({
+            let state = state.clone();
+            async move {
+                set_volume(
+                    State(state),
+                    Json(SetVolumeRequest {
+                        channel_id: "chat".into(),
+                        mix: studiobridge_core::MixBus::Personal,
+                        volume: 61,
+                    }),
+                )
+                .await
+            }
+        });
+        tokio::task::yield_now().await;
+        assert!(
+            !direct.is_finished(),
+            "direct mutation bypassed profile commit rollback"
+        );
+        control.release();
+        assert!(
+            profile
+                .await
+                .unwrap()
+                .unwrap_err()
+                .to_string()
+                .contains("restored")
+        );
+        let _ = direct.await.unwrap().unwrap();
+        let snapshot = state.service.snapshot().await.unwrap().mixer;
+        assert_eq!(
+            snapshot
+                .channels
+                .iter()
+                .find(|channel| channel.id == "chat")
+                .unwrap()
+                .personal_volume,
+            61
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn canceled_direct_waiter_is_removed_from_shared_mixer_commit_queue() {
+        let root = temporary_test_path("profile-direct-cancel");
+        let (store, control) = test_profile_store(&root);
+        let service = StudioBridgeService::new(
+            Arc::new(MockStudioBackend::default()),
+            Arc::new(MockMixerBackend::default()),
+        );
+        let desired = service.snapshot().await.unwrap().mixer;
+        store.save("Pause".into(), desired).await.unwrap();
+        let state = test_app_state(service, store);
+        control.pause_once();
+        let profile = tokio::spawn({
+            let state = state.clone();
+            async move { load_mixer_profile_transaction(state, "Pause".into()).await }
+        });
+        control.wait_until_paused().await;
+        let canceled = tokio::time::timeout(
+            Duration::from_millis(30),
+            set_volume(
+                State(state.clone()),
+                Json(SetVolumeRequest {
+                    channel_id: "chat".into(),
+                    mix: studiobridge_core::MixBus::Personal,
+                    volume: 61,
+                }),
+            ),
+        )
+        .await;
+        assert!(canceled.is_err());
+        control.release();
+        profile.await.unwrap().unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(
+            state
+                .service
+                .snapshot()
+                .await
+                .unwrap()
+                .mixer
+                .channels
+                .iter()
+                .find(|channel| channel.id == "chat")
+                .unwrap()
+                .personal_volume,
+            72
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

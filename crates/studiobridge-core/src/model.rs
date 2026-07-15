@@ -192,6 +192,21 @@ pub struct MixerLinkOutputAssignment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MixerCopyOutputAssignment {
+    pub target_id: String,
+    pub output: Option<MixerPhysicalDeviceDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MixerCopyOutputCommitEvidence {
+    /// Schema version for accidental corruption/staleness detection. This is
+    /// commit evidence, not a cryptographic authentication mechanism.
+    pub version: u8,
+    pub assignment: MixerCopyOutputAssignment,
+    pub voice_chat_attachments: Vec<MixerPhysicalDeviceDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MixerSnapshot {
     pub status: BackendStatus,
     pub error: Option<String>,
@@ -214,6 +229,10 @@ pub struct MixerSnapshot {
     pub physical_inputs: Vec<MixerPhysicalDeviceChoice>,
     #[serde(default)]
     pub link_outputs: Vec<MixerLinkOutputAssignment>,
+    /// Empty means a legacy snapshot which does not manage copy-output state.
+    /// A target entry whose output is `None` explicitly selects Nothing.
+    #[serde(default)]
+    pub copy_outputs: Vec<MixerCopyOutputAssignment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -268,6 +287,20 @@ pub struct SetTargetDeviceRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetMixerCopyOutputRequest {
+    pub target_id: String,
+    pub device_node_id: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MixerCopyOutputWriteResult {
+    pub assignment: MixerCopyOutputAssignment,
+    pub commit_evidence: MixerCopyOutputCommitEvidence,
+    pub verified: bool,
+    pub snapshot: MixerSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetSourceDeviceRequest {
     pub channel_id: String,
     pub device_node_id: Option<u32>,
@@ -306,6 +339,23 @@ mod tests {
         };
         assert_eq!(beacn_link_output_slot("", &unrelated), None);
         assert_eq!(beacn_link_output_slot("", &headphones), None);
+    }
+
+    #[test]
+    fn legacy_copy_output_absence_is_distinct_from_explicit_nothing() {
+        let legacy: Vec<MixerCopyOutputAssignment> = Vec::new();
+        let explicit = vec![MixerCopyOutputAssignment {
+            target_id: "voice-chat-mic".into(),
+            output: None,
+        }];
+        assert!(legacy.is_empty());
+        assert_eq!(
+            explicit,
+            vec![MixerCopyOutputAssignment {
+                target_id: "voice-chat-mic".into(),
+                output: None,
+            }]
+        );
     }
 }
 

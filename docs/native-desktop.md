@@ -48,9 +48,15 @@ The design follows concepts documented in the current BEACN application rather
 than copying its source or visual assets:
 
 - a visible device and module column;
-- a stable measured 1404-by-810 Windows default frame that does not collapse
-  when switching between Mixer, Studio, device, and application settings,
-  remains user-resizable, and returns to that default on a clean restart;
+- a verified persisted restored/minimum Windows outer frame of 946 by 810, with
+  an approximately 946-by-778 usable client below the native title bar. This is
+  not evidence of the canonical first-launch default; intermediate/default
+  sizing remains unresolved;
+- a deliberately chosen StudioBridge working default of a 1402-by-778 Slint
+  client (about 1404-by-810 outer on Windows). This is a practical application
+  default, not a claimed measurement of BEACN's canonical default;
+- a measured maximized endpoint of 1920 by 1032, where navigation grows from
+  about 55 to 91 pixels and the open profile rail from about 220 to 369 pixels;
 - a persistent five-button device navigation hierarchy plus application
   settings at the foot of the rail, with visible focus and Return/Space
   activation;
@@ -60,6 +66,10 @@ than copying its source or visual assets:
 - a source-first mixer whose Personal and Audience faders expose named slider
   ranges, values, one-percent keyboard steps, assistive-technology value
   actions, visible focus, and keyboard-accessible mute and volume-link controls;
+- responsive source strips that use approximately 126-pixel cards with
+  137-pixel cadence and horizontal scrolling at the restored minimum, then grow
+  to approximately 163-pixel cards with 178-pixel cadence so seven sources plus
+  Add fit at the maximized/open-drawer endpoint;
 - draggable and keyboard-accessible source-strip grips backed by the native
   PipeWeaver order command, with saved profiles restoring the captured order;
 - measured source-header Delete Knob popups with native outside-click and
@@ -70,13 +80,17 @@ than copying its source or visual assets:
   names before they reach the daemon, creating available strips directly, and
   supporting native outside/Escape dismissal plus keyboard activation;
 - a persistent per-source mute action menu matching BEACN's measured
-  112-by-60 popup, three 20-pixel rows, checked selection, outside/Escape
+  approximately 116-by-58 content, three compact rows, checked selection,
+  outside/Escape
   dismissal, and keyboard activation for Mute to All, Mute to Audience, and
   Mute to Self while retaining the internal Personal target;
 - a prominent Main Out section;
 - BEACN-aligned Personal and Audience master-device cards backed by independent
-  PipeWeaver target masters and per-target physical-output attachment, separate
-  from the Linux default-playback selector;
+  PipeWeaver target masters and physical-output attachments. The current client
+  still exposes one legacy selector per target. The next target-slot milestone
+  is two independently filtered Personal slots and one Audience slot, separate
+  from Linux default-playback selection and without destructive replacement of
+  unrelated attachments;
 - a shared BEACN-style device and assignment selector with the measured
   170-by-27 master field, 24-pixel alternative rows, content-width popup,
   native outside/Escape dismissal, and mouse plus arrow-key activation;
@@ -88,22 +102,28 @@ than copying its source or visual assets:
   attaches a StudioBridge target to that usable PipeWire endpoint, preserves the
   target's other outputs, attaches before detaching the previous target, and
   exposes Unassigned as a deliberate detach state;
-- target-strip output selectors that continue to attach Personal, Audience,
-  Voice Chat Mic, VOD Track, and future mix buses to arbitrary usable PipeWire
-  outputs;
+- target-strip output selectors that attach Personal, Audience, VOD Track, and
+  future mix buses to usable PipeWire outputs. The guarded Voice Chat Mic copy
+  transaction is implemented through core, PipeWeaver, and daemon layers, but
+  its measured Copy Chat Mic Output To cascade still lacks desktop-client and
+  Slint wiring; it never rewrites source inclusion routes;
 - functional keyboard-accessible target-master volume sliders and mute controls
   for Personal, Audience, Voice Chat Mic, VOD Track, and future PipeWeaver
   outputs, backed by PipeWeaver's exact target commands and restored by mixer
   profiles;
-- measured 126/135-pixel Assignments and Routing Table tabs with native tab
-  accessibility and keyboard activation;
-- a measured routing matrix with 112-pixel destinations, 90-pixel source
-  columns, 34-pixel row cadence, drawn teal/red state indicators, and accessible
-  keyboard toggles backed by exact PipeWeaver route commands;
+- responsive Assignments and Routing Table tabs measured at approximately
+  124/137 pixels at the restored minimum and 161/178 maximized/open, with native
+  tab accessibility and keyboard activation;
+- a responsive routing matrix: approximately 85/68-pixel target/source columns
+  at the restored minimum with profiles open, 110/89 when closed, and 146/117
+  when maximized/open. It stays centered, retains teal/red state indicators,
+  and uses accessible toggles backed by exact PipeWeaver route commands;
 - PipeWeaver-backed Linux default recording and playback device selectors;
-- BEACN's separate Default and Default Communication rows, both backed by the
-  single corresponding PipeWire default because PipeWeaver exposes no distinct
-  Linux communications-default command;
+- BEACN's separate Default and Default Communication rows. They must be modeled
+  as separate UI/state fields; where PipeWeaver exposes no distinct Linux
+  communications-default command, the communications row is explicitly
+  disabled or identified as mirrored instead of pretending two independent
+  selectors write the same callback;
 - a device-information card with the measured Legal and Regulatory modal,
   keyboard dismissal, and permanently read-only USB2 driverless-mode state;
 - a BEACN-style profile rail with instant numbered creation plus hover Save,
@@ -140,8 +160,9 @@ than copying its source or visual assets:
   processor selectors, modes, dials, sliders, and threshold steppers expose
   descriptive names plus native range/value/action semantics;
 - secondary microphone processors grouped by module;
-- a measured 897/150 microphone editor/output-column split, 864-by-256 graph,
-  exact 30-pixel processor tab strip, live Mic source meter, read-back gain and
+- deferred microphone evidence including a 522/150 editor/output-column split
+  at the restored minimum/open-drawer endpoint, a 30-pixel processor tab strip,
+  live Mic source meter, read-back gain and
   phantom state, module-backed On switches for Noise Suppression, Expander,
   Compressor, and Headphones, plus exact read-only Mic Output Gain and USB2
   driverless-mode state;
@@ -157,6 +178,45 @@ than copying its source or visual assets:
 
 StudioBridge uses its own name, icon, colors, layout code, terminology where
 needed for Linux, and all-original assets.
+
+The current UI-parity priority is Mixer. Mixer and Settings are enabled by
+default. Studio, Mic, Lighting, and Device are behind the default-false
+`extended-workspaces-enabled` gate while their behavior remains incomplete or
+guarded. This does not claim final workspace-wide or safety validation.
+
+The landed Mixer geometry uses a clamped width factor
+`t = (client_width - 944) / 976`. Navigation is `55 + 36t`, the open profile
+drawer is `220 + 149t`, source strips are `127 + 36t` with `10 + 5t` gaps,
+and Personal/Audience cards are `316/318 + 199t` plus an 80-pixel
+minimum-width closed-drawer reflow. Assignment panels use a separate clamped
+workspace factor and grow from 225/225/219 to 252/251/249 pixels. Routing label
+and source columns grow from 85/68 to 146/117 pixels, gain the measured closed
+drawer reflow, and the computed table remains centered. These formulas are
+source-complete; settled runtime visual, overflow, and pointer-hit validation
+at the three window states remains work.
+
+The Voice Chat copy backend is also source-complete. Its API requires the
+`device_node_id` field; an explicit JSON `null` selects Nothing. The service
+accepts only Voice Chat Mic and a unique usable non-Link physical node, attaches
+the replacement first, verifies the complete attachment multiset, removes only
+the previously tracked copy role, verifies again, and commits durable metadata
+and evidence only after physical readback. Failure restores the exact prior
+multiset. A shared daemon commit coordinator serializes this transaction with
+profile activation, including persistence compensation and restart seeding.
+Legacy profiles without copy metadata preserve live copy state; explicit
+Nothing removes only the tracked copy.
+
+PipeWeaver resolves a descriptor to exactly one attachment index before issuing
+its index-based remove command. In-process serialization, fail-closed
+preconditions, final readback, and rollback reduce risk, but an external actor
+could still reorder attachments between that snapshot and removal. That race is
+a hardware-in-loop/Linux validation limitation, not a solved invariant. The
+next desktop work is the missing copy cascade/client wiring and the explicit
+target-slot model; the current legacy per-target selector is not that model.
+
+The currently verified scoped backend run reports 67 passing tests. Desktop
+validation checkpoints report 54, 54, and 58 passing tests. These counts do not
+claim a final workspace-wide or safety-verification run.
 
 ## Safety model
 
@@ -230,13 +290,15 @@ bash scripts/package-linux.sh --format tar --skip-build
 
 ## Migration status
 
-The native milestone now provides the original StudioBridge icon, native window
+The current native milestone provides the original StudioBridge icon, native window
 and tray, launch-in-background and single-instance behavior, real daemon health,
 source discovery, independent Personal/Audience faders, 60 Hz interpolated live
 meters, arbitrary PipeWeaver output buses (including Voice Chat Mic and VOD
 Track), functional Linux default-device selectors and a cycling global hotkey,
 a BEACN-style native key-mapping workflow, a BEACN-familiar assignment/routing
-workspace, native drag/drop application assignment, and an attended guarded
-editor for all six validated microphone DSP modules. Final distribution
-validation remains in progress. The web assets continue to build and are served
-by the daemon until native parity and packaging complete physical validation.
+workspace and native drag/drop application assignment. Mixer and Settings are
+the default-visible surfaces; the guarded extended workspaces remain present
+behind their default-false gate and are not declared complete. Copy-output UI,
+explicit target slots, final distribution validation, and physical Linux
+validation remain in progress. The web assets continue to build and are served
+by the daemon during migration.

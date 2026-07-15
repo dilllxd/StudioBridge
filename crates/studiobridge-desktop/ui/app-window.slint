@@ -92,45 +92,89 @@ component RailButton inherits Rectangle {
     in property <string> glyph;
     in property <string> label;
     in property <bool> active;
+    in property <bool> interactive: true;
     callback clicked;
     height: 58px;
-    border-radius: 29px;
-    background: active ? Theme.teal : rail-focus.has-focus ? #2f3033 : #202023;
+    border-radius: min(root.width, root.height) / 2;
+    background: active ? Theme.teal : !root.interactive ? #19191b : rail-focus.has-focus ? #2f3033 : #202023;
     border-width: 1px;
-    border-color: active ? #78e5df : rail-focus.has-focus ? Theme.teal : #29292d;
+    border-color: active ? #78e5df : !root.interactive ? #222225 : rail-focus.has-focus ? Theme.teal : #29292d;
+    opacity: root.interactive || root.active ? 1 : 0.42;
     if root.label == "MIXER": HorizontalLayout {
-        x: 14px; y: 12px; width: 30px; height: 34px; spacing: 5px;
+        x: (parent.width - 30px) / 2; y: 12px; width: 30px; height: 34px; spacing: 5px;
         Rectangle { width: 4px; background: root.active ? #ffffff : Theme.quiet; border-radius: 2px; Rectangle { x: -3px; y: 7px; width: 10px; height: 5px; background: root.active ? #ffffff : Theme.quiet; border-radius: 2px; } }
         Rectangle { width: 4px; background: root.active ? #ffffff : Theme.quiet; border-radius: 2px; Rectangle { x: -3px; y: 19px; width: 10px; height: 5px; background: root.active ? #ffffff : Theme.quiet; border-radius: 2px; } }
         Rectangle { width: 4px; background: root.active ? #ffffff : Theme.quiet; border-radius: 2px; Rectangle { x: -3px; y: 11px; width: 10px; height: 5px; background: root.active ? #ffffff : Theme.quiet; border-radius: 2px; } }
     }
     if root.label == "STUDIO": Rectangle {
-        x: 13px; y: 17px; width: 32px; height: 24px; border-radius: 4px; border-width: 2px; border-color: root.active ? #ffffff : Theme.quiet; background: transparent;
+        x: (parent.width - 32px) / 2; y: 17px; width: 32px; height: 24px; border-radius: 4px; border-width: 2px; border-color: root.active ? #ffffff : Theme.quiet; background: transparent;
         Rectangle { x: 4px; y: -6px; width: 24px; height: 7px; border-radius: 3px; border-width: 2px; border-color: root.active ? #ffffff : Theme.quiet; background: transparent; }
     }
     if root.label == "MIC": Rectangle {
-        x: 14px; y: 10px; width: 30px; height: 30px; border-radius: 15px; border-width: 2px; border-color: root.active ? #ffffff : Theme.quiet; background: transparent;
+        x: (parent.width - 30px) / 2; y: 10px; width: 30px; height: 30px; border-radius: 15px; border-width: 2px; border-color: root.active ? #ffffff : Theme.quiet; background: transparent;
         Rectangle { x: 10px; y: 5px; width: 10px; height: 16px; border-radius: 5px; border-width: 2px; border-color: root.active ? #ffffff : Theme.quiet; background: transparent; }
         Rectangle { x: 14px; y: 22px; width: 2px; height: 8px; background: root.active ? #ffffff : Theme.quiet; }
     }
     if root.label == "LIGHTING": Rectangle {
-        x: 18px; y: 10px; width: 22px; height: 34px; border-radius: 4px; border-width: 2px; border-color: root.active ? #ffffff : Theme.quiet; background: transparent;
+        x: (parent.width - 22px) / 2; y: 10px; width: 22px; height: 34px; border-radius: 4px; border-width: 2px; border-color: root.active ? #ffffff : Theme.quiet; background: transparent;
         Rectangle { x: 5px; y: 5px; width: 12px; height: 12px; border-radius: 6px; background: root.active ? #ffffff : Theme.quiet; }
         Rectangle { x: 5px; y: 23px; width: 12px; height: 3px; background: root.active ? #ffffff : Theme.quiet; }
     }
     if root.label == "DEVICE" || root.label == "SETTINGS": Text { text: "⚙"; color: root.active ? #ffffff : Theme.quiet; font-size: 27px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
     rail-focus := FocusScope {
+        enabled: root.interactive;
         width: parent.width; height: parent.height;
         accessible-role: button;
         accessible-label: root.label + (root.active ? ", selected" : "");
+        accessible-enabled: root.interactive;
         key-pressed(event) => {
-            if event.text == Key.Return || event.text == Key.Space {
+            if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
                 root.clicked();
                 return accept;
             }
             return reject;
         }
-        TouchArea { clicked => { rail-focus.focus(); root.clicked(); } }
+        TouchArea { enabled: root.interactive; clicked => { rail-focus.focus(); root.clicked(); } }
+    }
+}
+
+component ComparisonButton inherits Rectangle {
+    in property <string> glyph;
+    in property <string> control-label;
+    in property <bool> interactive;
+    in property <bool> active;
+    callback clicked;
+    background: !root.interactive ? #1c1c1f : root.active ? #174b4a : comparison-focus.has-focus ? #343438 : #29292d;
+    border-width: 1px;
+    border-color: root.active || comparison-focus.has-focus ? Theme.teal : Theme.border;
+    border-radius: 2px;
+    Text {
+        text: root.glyph;
+        color: root.active ? Theme.teal : root.interactive ? Theme.text : #67676b;
+        font-size: 10px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    comparison-focus := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        accessible-role: button;
+        accessible-label: root.control-label;
+        accessible-enabled: root.interactive;
+        key-pressed(event) => {
+            if root.interactive && (event.text == Key.Return || event.text == Key.Space) {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+        TouchArea {
+            enabled: root.interactive;
+            clicked => {
+                comparison-focus.focus();
+                root.clicked();
+            }
+        }
     }
 }
 
@@ -618,6 +662,8 @@ component SourceStrip inherits Rectangle {
     in property <length> application-drag-x: 0px;
     in property <length> application-drag-y: 0px;
     in property <[string]> input-device-names;
+    in property <length> strip-width: 127px;
+    in property <length> strip-cadence: 137px;
     property <bool> application-hovered: root.interactive && root.application-dragging
         && root.application-drag-x >= root.absolute-position.x
         && root.application-drag-x < root.absolute-position.x + root.width
@@ -636,7 +682,7 @@ component SourceStrip inherits Rectangle {
     callback link-changed(bool);
     callback delete-source;
     callback input-device-selected(int);
-    width: 127px;
+    width: root.strip-width;
     height: 398px;
     border-radius: 2px;
     border-width: 1px;
@@ -679,7 +725,7 @@ component SourceStrip inherits Rectangle {
                                 root.drag-distance = self.mouse-x - self.pressed-x;
                             } else if event.kind == PointerEventKind.up && root.dragging {
                                 root.drag-distance = self.mouse-x - self.pressed-x;
-                                let delta = round(root.drag-distance / 137px);
+                                let delta = round(root.drag-distance / root.strip-cadence);
                                 root.dragging = false;
                                 root.drag-distance = 0px;
                                 if delta != 0 {
@@ -926,8 +972,9 @@ component ContextTab inherits Rectangle {
 component RoutingToggle inherits Rectangle {
     in property <RouteModel> route;
     in property <bool> interactive: true;
+    in property <length> cell-width: 90px;
     callback toggled;
-    width: 90px;
+    width: root.cell-width;
     height: 34px;
     background: transparent;
     cell := Rectangle {
@@ -968,12 +1015,13 @@ component TargetStrip inherits Rectangle {
     in property <bool> interactive: true;
     in property <[string]> output-device-names;
     in property <int> output-device-index: -1;
+    in property <length> card-width: 396px;
     callback volume-changed(float);
     callback mute-clicked;
     callback output-device-selected(int);
     // BEACN keeps the default Personal/Audience device cards compact instead
     // of stretching them across the entire mixer canvas.
-    width: root.target.mix == "Personal" ? 396px : 398px;
+    width: root.card-width;
     border-radius: 2px;
     border-width: 1px;
     border-color: Theme.border;
@@ -1868,6 +1916,7 @@ component ProfileRail inherits Rectangle {
     in property <bool> connected;
     in property <bool> hardware-safe;
     in property <bool> link-active;
+    in property <bool> extended-workspaces-enabled: false;
     in property <[ProfileModel]> mixer-profiles;
     in property <bool> studio-profiles-expanded: true;
     in property <bool> mixer-profiles-expanded: true;
@@ -1892,7 +1941,7 @@ component ProfileRail inherits Rectangle {
         Text { text: "PROFILES"; color: Theme.text; font-size: 14px; font-weight: 800; }
         Rectangle { height: 1px; background: Theme.border; }
 
-        Rectangle {
+        if root.extended-workspaces-enabled: Rectangle {
             height: root.studio-profiles-expanded ? 102px : 24px;
             background: transparent;
             VerticalLayout {
@@ -2002,14 +2051,15 @@ component AddSourceRow inherits Rectangle {
 export component MainWindow inherits Window {
     title: "StudioBridge";
     icon: @image-url("../assets/studiobridge.svg");
-    // BEACN's measured outer default and minimum are 946x810 on Windows. Native window
-    // decoration adds 2px horizontally and 32px vertically to this client.
-    preferred-width: 944px;
+    // StudioBridge uses a 1402x778 client as its chosen working default (~1404x810
+    // outer on Windows). This is not a verified canonical BEACN default. The
+    // measured compatible minimum remains a 944x778 client.
+    preferred-width: 1402px;
     preferred-height: 778px;
     min-width: 944px;
     min-height: 778px;
     background: Theme.background;
-    init => { root.width = 944px; root.height = 778px; }
+    init => { root.width = 1402px; root.height = 778px; }
 
     in property <[SourceModel]> sources;
     in property <[RouteModel]> routes;
@@ -2020,6 +2070,7 @@ export component MainWindow inherits Window {
     in property <[EqBandModel]> eq-bands;
     in property <[ProfileModel]> mixer-profiles;
     in property <[HotkeyModel]> hotkeys;
+    in property <bool> extended-workspaces-enabled: false;
     property <float> microphone-meter: root.sources.length > 0 ? root.sources[0].meter : 0;
     in property <[string]> mixer-channel-names;
     in property <[string]> link-channel-names;
@@ -2102,6 +2153,19 @@ export component MainWindow inherits Window {
     in property <bool> headphone-channels-linked: false;
     in property <string> headphone-output-mode: "line_level";
     in property <float> mic-output-gain-db: 0;
+    in property <bool> comparison-simulated: false;
+    in property <string> comparison-mode-label: "Comparison unavailable";
+    in property <string> comparison-state-label: "Unavailable";
+    in property <string> comparison-reason: "Live-chain audio path has not been validated";
+    in property <string> comparison-timer-label: "10.0s / 10.0s";
+    in property <string> comparison-record-label: "Record comparison";
+    in property <string> comparison-play-label: "Play comparison loop";
+    in property <bool> comparison-record-enabled: false;
+    in property <bool> comparison-play-enabled: false;
+    in property <bool> comparison-confirmation-pending: false;
+    in property <bool> comparison-record-active: false;
+    in property <bool> comparison-play-active: false;
+    in property <bool> comparison-cancel-active: false;
     in property <bool> headphone-subwoofer-enabled: false;
     in-out property <float> headphone-subwoofer-amount: 0;
     in-out property <float> lighting-speed: 0;
@@ -2121,6 +2185,28 @@ export component MainWindow inherits Window {
     in-out property <bool> studio-profiles-expanded: true;
     in-out property <bool> mixer-profiles-expanded: true;
     in-out property <bool> profiles-drawer-open: true;
+    property <length> mixer-layout-width: 1402px;
+    changed width => { root.mixer-layout-width = root.width; }
+    // 946x810 outer (~944x778 Slint client) is the verified restored minimum;
+    // 1920x1032 is the verified maximized endpoint. The canonical default and
+    // intermediate official geometry remain intentionally unresolved.
+    out property <float> mixer-responsive-factor: clamp((root.mixer-layout-width - 944px) / 976px, 0, 1);
+    out property <float> mixer-drawer-reflow-factor: root.profiles-drawer-open ? 0 : 1 - root.mixer-responsive-factor;
+    out property <length> mixer-nav-width: 55px + 36px * root.mixer-responsive-factor;
+    out property <length> mixer-profile-drawer-width: 220px + 149px * root.mixer-responsive-factor;
+    out property <length> mixer-workspace-width: root.mixer-layout-width - root.mixer-nav-width - (root.profiles-drawer-open ? root.mixer-profile-drawer-width : 0px);
+    out property <length> mixer-source-strip-width: 127px + 36px * root.mixer-responsive-factor;
+    out property <length> mixer-source-strip-gap: 10px + 5px * root.mixer-responsive-factor;
+    out property <length> mixer-source-strip-cadence: root.mixer-source-strip-width + root.mixer-source-strip-gap;
+    out property <length> mixer-personal-target-width: 316px + 199px * root.mixer-responsive-factor + 80px * root.mixer-drawer-reflow-factor;
+    out property <length> mixer-audience-target-width: 318px + 199px * root.mixer-responsive-factor + 80px * root.mixer-drawer-reflow-factor;
+    out property <float> mixer-assignment-factor: clamp((root.mixer-workspace-width - 669px) / 83px, 0, 1);
+    out property <length> mixer-recording-panel-width: 225px + 27px * root.mixer-assignment-factor;
+    out property <length> mixer-link-panel-width: 225px + 26px * root.mixer-assignment-factor;
+    out property <length> mixer-applications-panel-width: 219px + 30px * root.mixer-assignment-factor;
+    out property <length> mixer-routing-label-width: 85px + 61px * root.mixer-responsive-factor + 25px * root.mixer-drawer-reflow-factor;
+    out property <length> mixer-routing-source-width: 68px + 49px * root.mixer-responsive-factor + 21px * root.mixer-drawer-reflow-factor;
+    out property <length> mixer-routing-table-width: root.mixer-routing-label-width + root.mixer-routing-source-width * root.sources.length;
     out property <length> settings-content-width: 440px;
     out property <length> settings-left-padding: 29px;
     in-out property <bool> legal-dialog-open: false;
@@ -2184,6 +2270,10 @@ export component MainWindow inherits Window {
     callback disarm-dsp;
     callback apply-dsp(float, float, float, float, float);
     callback revert-dsp;
+    callback comparison-record;
+    callback comparison-play;
+    callback comparison-cancel;
+    callback comparison-workspace-exited() -> bool;
     callback save-preferences(bool, bool, bool, bool, bool, bool, bool);
     callback save-profile-expansion(bool, bool);
     callback save-profile-drawer(bool);
@@ -2212,20 +2302,20 @@ export component MainWindow inherits Window {
             spacing: 0px;
             vertical-stretch: 1;
             Rectangle {
-            width: 55px;
+            width: root.mixer-nav-width;
             background: #171719;
             border-width: 1px;
             border-color: Theme.border;
             VerticalLayout {
                 padding: 7px;
                 spacing: 5px;
-                RailButton { glyph: "☷"; label: "MIXER"; active: root.active-page == 0; clicked => { root.active-page = 0; } }
-                RailButton { glyph: "▣"; label: "STUDIO"; active: root.active-page >= 1 && root.active-page <= 3; clicked => { root.active-page = 1; root.dsp-selected-module = "mic_setup"; } }
-                RailButton { glyph: "◉"; label: "MIC"; active: root.active-page == 1; clicked => { root.active-page = 1; root.dsp-selected-module = "mic_setup"; } }
-                RailButton { glyph: "✦"; label: "LIGHTING"; active: root.active-page == 2; clicked => { root.active-page = 2; } }
-                RailButton { glyph: "⚙"; label: "DEVICE"; active: root.active-page == 3; clicked => { root.active-page = 3; } }
+                RailButton { glyph: "☷"; label: "MIXER"; active: root.active-page == 0; clicked => { if root.active-page != 1 || !root.comparison-simulated || root.comparison-workspace-exited() { root.active-page = 0; } } }
+                RailButton { glyph: "▣"; label: "STUDIO"; active: root.active-page >= 1 && root.active-page <= 3; interactive: root.extended-workspaces-enabled; clicked => { root.active-page = 1; root.dsp-selected-module = "mic_setup"; } }
+                RailButton { glyph: "◉"; label: "MIC"; active: root.active-page == 1; interactive: root.extended-workspaces-enabled; clicked => { root.active-page = 1; root.dsp-selected-module = "mic_setup"; } }
+                RailButton { glyph: "✦"; label: "LIGHTING"; active: root.active-page == 2; interactive: root.extended-workspaces-enabled; clicked => { if root.active-page != 1 || !root.comparison-simulated || root.comparison-workspace-exited() { root.active-page = 2; } } }
+                RailButton { glyph: "⚙"; label: "DEVICE"; active: root.active-page == 3; interactive: root.extended-workspaces-enabled; clicked => { if root.active-page != 1 || !root.comparison-simulated || root.comparison-workspace-exited() { root.active-page = 3; } } }
                 Rectangle { vertical-stretch: 1; }
-                RailButton { glyph: "⚙"; label: "SETTINGS"; active: root.active-page == 4; clicked => { root.active-page = 4; } }
+                RailButton { glyph: "⚙"; label: "SETTINGS"; active: root.active-page == 4; clicked => { if root.active-page != 1 || !root.comparison-simulated || root.comparison-workspace-exited() { root.active-page = 4; } } }
             }
         }
 
@@ -2239,7 +2329,10 @@ export component MainWindow inherits Window {
                 vertical-stretch: 1;
                 VerticalLayout {
                 width: parent.width; height: parent.height;
-                padding: 8px;
+                padding-top: 8px;
+                padding-bottom: 8px;
+                padding-left: 0px;
+                padding-right: 0px;
                 spacing: 5px;
                 Rectangle {
                     height: 400px;
@@ -2247,13 +2340,16 @@ export component MainWindow inherits Window {
                     horizontal-stretch: 1;
                     background: transparent;
                     source-scroll := ScrollView {
-                        width: parent.width;
+                        x: 8px;
+                        width: parent.width - 16px;
                         height: parent.height;
                         HorizontalLayout {
-                            spacing: 10px;
+                            spacing: root.mixer-source-strip-gap;
                             for source[index] in root.sources: SourceStrip {
                                 source: source;
                                 source-index: index;
+                                strip-width: root.mixer-source-strip-width;
+                                strip-cadence: root.mixer-source-strip-cadence;
                                 interactive: root.daemon-connected;
                                 input-device-names: root.physical-input-names;
                                 application-dragging: root.application-pointer-dragging;
@@ -2285,7 +2381,7 @@ export component MainWindow inherits Window {
                                 }
                             }
                             Rectangle {
-                                width: 127px; height: 398px;
+                                width: root.mixer-source-strip-width; height: 398px;
                                 background: root.daemon-connected && (add-source-touch.has-hover || add-source-focus.has-focus) ? #202529 : #19191c;
                                 border-width: 1px;
                                 border-color: add-source-focus.has-focus ? Theme.teal : Theme.border;
@@ -2348,6 +2444,8 @@ export component MainWindow inherits Window {
                     background: Theme.panel;
                     clip: true;
                     HorizontalLayout {
+                        padding-left: 8px;
+                        padding-right: 8px;
                         spacing: 0px;
                         ScrollView {
                             // The native BEACN viewport ends after Personal and
@@ -2355,16 +2453,19 @@ export component MainWindow inherits Window {
                             // by scrolling this device region horizontally.
                             horizontal-stretch: 1;
                             height: parent.height;
-                            viewport-width: root.targets.length * 403px + 12px;
+                            viewport-width: (root.targets.length > 0 ? root.mixer-personal-target-width : 0px)
+                                + max(root.targets.length - 1, 0) * root.mixer-audience-target-width
+                                + max(root.targets.length - 1, 0) * 5px + 12px;
                             viewport-height: parent.height;
                             mouse-drag-pan-enabled: true;
-                            horizontal-scrollbar-policy: ScrollBarPolicy.always-on;
+                            horizontal-scrollbar-policy: ScrollBarPolicy.as-needed;
                             vertical-scrollbar-policy: ScrollBarPolicy.always-off;
                             HorizontalLayout {
                                 padding: 6px;
                                 spacing: 5px;
                                 for target in root.targets: TargetStrip {
                                     target: target;
+                                    card-width: target.mix == "Personal" ? root.mixer-personal-target-width : root.mixer-audience-target-width;
                                     interactive: root.daemon-connected;
                                     output-device-names: root.physical-output-names;
                                     output-device-index: target.output-device-index;
@@ -2386,17 +2487,17 @@ export component MainWindow inherits Window {
                     background: #0f1517;
                     HorizontalLayout {
                         spacing: 0px;
-                        ContextTab { tab-width: 126px; label: "ASSIGNMENTS"; active: root.mixer-context-page == 0; clicked => { root.mixer-context-page = 0; } }
-                        ContextTab { tab-width: 135px; label: "ROUTING TABLE"; active: root.mixer-context-page == 1; clicked => { root.mixer-context-page = 1; } }
+                        ContextTab { tab-width: 124px + 37px * root.mixer-responsive-factor; label: "ASSIGNMENTS"; active: root.mixer-context-page == 0; clicked => { root.mixer-context-page = 0; } }
+                        ContextTab { tab-width: 137px + 41px * root.mixer-responsive-factor; label: "ROUTING TABLE"; active: root.mixer-context-page == 1; clicked => { root.mixer-context-page = 1; } }
                         Rectangle { horizontal-stretch: 1; }
                     }
                 }
 
                 if root.mixer-context-page == 0: HorizontalLayout {
-                    spacing: 3px;
+                    spacing: 0px;
                     vertical-stretch: 1;
                     Rectangle {
-                        width: 218px;
+                        width: root.mixer-recording-panel-width;
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
                             padding: 8px; spacing: 2px;
@@ -2415,7 +2516,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     Rectangle {
-                        width: 218px;
+                        width: root.mixer-link-panel-width;
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
                             padding: 8px; spacing: 2px;
@@ -2442,8 +2543,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     Rectangle {
-                        width: 218px;
-                        horizontal-stretch: 1;
+                        width: root.mixer-applications-panel-width;
                         border-width: 1px; border-color: Theme.border; background: Theme.panel;
                         VerticalLayout {
                             padding: 9px; spacing: 2px;
@@ -2481,7 +2581,7 @@ export component MainWindow inherits Window {
                                                 && pointer-x < source-scroll.absolute-position.x + source-scroll.width
                                                 && pointer-y >= source-scroll.absolute-position.y
                                                 && pointer-y < source-scroll.absolute-position.y + source-scroll.height {
-                                                let source-position = floor((pointer-x - source-scroll.absolute-position.x - source-scroll.viewport-x) / 137px);
+                                                let source-position = floor((pointer-x - source-scroll.absolute-position.x - source-scroll.viewport-x) / root.mixer-source-strip-cadence);
                                                 if source-position >= 0 && source-position < root.sources.length {
                                                     let link-channel = root.link-channel-for-source(root.sources[source-position].name);
                                                     if link-channel >= 0 {
@@ -2529,7 +2629,7 @@ export component MainWindow inherits Window {
                                                 && pointer-x < source-scroll.absolute-position.x + source-scroll.width
                                                 && pointer-y >= source-scroll.absolute-position.y
                                                 && pointer-y < source-scroll.absolute-position.y + source-scroll.height {
-                                                let source-position = floor((pointer-x - source-scroll.absolute-position.x - source-scroll.viewport-x) / 137px);
+                                                let source-position = floor((pointer-x - source-scroll.absolute-position.x - source-scroll.viewport-x) / root.mixer-source-strip-cadence);
                                                 if source-position >= 0 && source-position < root.sources.length {
                                                     root.assign-linux-application(app.process, app.name, source-position + 1);
                                                     root.last-application-drag = app.name + " assigned to " + root.sources[source-position].name;
@@ -2555,25 +2655,26 @@ export component MainWindow inherits Window {
                 if root.mixer-context-page == 1: ScrollView {
                     vertical-stretch: 1;
                     GridLayout {
-                        x: 179px;
+                        x: max(0px, (parent.width - root.mixer-routing-table-width) / 2);
                         y: 8px;
                         spacing: 0px;
                         for route in root.routes: RoutingToggle {
                             row: route.row + 1;
                             col: route.column + 1;
                             route: route;
+                            cell-width: root.mixer-routing-source-width;
                             interactive: root.daemon-connected;
                             toggled => { root.set-route(route.source-id, route.target-id, !route.enabled); }
                         }
                         for route in root.routes: Rectangle {
                             visible: route.row == 0;
-                            row: 0; col: route.column + 1; width: 90px; height: 34px; background: #1c1c1f;
+                            row: 0; col: route.column + 1; width: root.mixer-routing-source-width; height: 34px; background: #1c1c1f;
                             border-width: 1px; border-color: #2e2e32;
                             Text { text: route.source-id == "microphone" ? "Mic Relay" : route.source-name; color: Theme.text; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
                         }
                         for route in root.routes: Rectangle {
                             visible: route.column == 0;
-                            row: route.row + 1; col: 0; width: 112px; height: 34px; background: transparent;
+                            row: route.row + 1; col: 0; width: root.mixer-routing-label-width; height: 34px; background: transparent;
                             Rectangle {
                                 y: 5px; width: parent.width; height: 28px;
                                 background: #1c1c1f; border-width: 1px; border-color: #2e2e32;
@@ -2586,7 +2687,13 @@ export component MainWindow inherits Window {
             }
 
             if root.active-page == 1: FocusScope {
-                enabled: root.daemon-connected;
+                key-pressed(event) => {
+                    if event.text == Key.Escape && root.comparison-cancel-active {
+                        root.comparison-cancel();
+                        return accept;
+                    }
+                    return reject;
+                }
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
                 HorizontalLayout {
@@ -3091,10 +3198,20 @@ export component MainWindow inherits Window {
                         }
                         Text { height: 24px; text: round(root.mic-output-gain-db * 10) / 10 + "dB · READ ONLY"; color: Theme.amber; font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
                         Rectangle {
+                            height: 26px; background: #1b1b1e; border-width: 1px; border-color: Theme.border;
+                            Text { x: 5px; y: 2px; width: parent.width - 10px; height: 11px; text: root.comparison-mode-label; color: root.comparison-simulated ? Theme.teal : Theme.amber; font-size: 8px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+                            Text { x: 5px; y: 13px; width: parent.width - 10px; height: 10px; text: root.comparison-confirmation-pending ? "Press Play again to confirm" : root.comparison-reason != "" ? root.comparison-reason : root.comparison-state-label; color: Theme.quiet; font-size: 7px; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+                            status-accessibility := FocusScope {
+                                width: parent.width; height: parent.height;
+                                accessible-role: text;
+                                accessible-label: root.comparison-mode-label + ", " + root.comparison-state-label + (root.comparison-reason != "" ? ", " + root.comparison-reason : "");
+                            }
+                        }
+                        Rectangle {
                             height: 30px; background: #242427; border-width: 1px; border-color: Theme.border;
-                            Text { x: 5px; width: 78px; text: "10.0s / 10.0s"; color: Theme.text; font-size: 9px; vertical-alignment: center; }
-                            Text { x: 86px; width: 24px; text: "●"; color: Theme.red; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
-                            Text { x: 112px; width: 28px; text: "▶"; color: #48c65d; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+                            Text { x: 5px; width: 78px; text: root.comparison-timer-label; color: Theme.text; font-size: 9px; vertical-alignment: center; }
+                            ComparisonButton { x: 84px; y: 3px; width: 26px; height: 24px; glyph: "●"; control-label: root.comparison-record-label; interactive: root.comparison-record-enabled; active: root.comparison-record-active; clicked => { root.comparison-record(); } }
+                            ComparisonButton { x: 112px; y: 3px; width: 28px; height: 24px; glyph: "▶"; control-label: root.comparison-play-label; interactive: root.comparison-play-enabled; active: root.comparison-play-active; clicked => { root.comparison-play(); } }
                         }
                     }
                 }
@@ -3291,9 +3408,11 @@ export component MainWindow inherits Window {
         }
 
             if root.profiles-drawer-open: ProfileRail {
+                width: root.mixer-profile-drawer-width;
                 connected: root.daemon-connected;
                 hardware-safe: root.hardware-safe;
                 link-active: root.link-active;
+                extended-workspaces-enabled: root.extended-workspaces-enabled;
                 mixer-profiles: root.mixer-profiles;
                 studio-profiles-expanded: root.studio-profiles-expanded;
                 mixer-profiles-expanded: root.mixer-profiles-expanded;
@@ -3319,18 +3438,18 @@ export component MainWindow inherits Window {
     }
     if !root.daemon-connected && root.active-page <= 1: TouchArea {
         z: 89;
-        x: 55px;
+        x: root.mixer-nav-width;
         y: 28px;
-        width: parent.width - 55px - (root.profiles-drawer-open ? 220px : 0px);
+        width: root.mixer-workspace-width;
         height: parent.height - 52px;
         mouse-cursor: not-allowed;
     }
     if !root.daemon-connected: Rectangle {
         visible: root.active-page <= 1;
         z: 90;
-        x: 67px;
+        x: root.mixer-nav-width + 12px;
         y: 42px;
-        width: min(610px, parent.width - 108px);
+        width: min(610px, root.mixer-workspace-width - 24px);
         height: 104px;
         border-radius: 5px;
         border-width: 1px;

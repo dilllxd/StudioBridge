@@ -1,6 +1,8 @@
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState, hotkey::HotKey};
 use serde::{Deserialize, Serialize};
 use slint::{Color, Model, ModelRc, SharedString, VecModel, Weak};
+#[cfg(feature = "simulated-comparison")]
+use std::cell::Cell;
 #[cfg(target_os = "linux")]
 use std::sync::atomic::AtomicU64;
 use std::{
@@ -34,6 +36,14 @@ use std::{
         net::{UnixListener, UnixStream},
     },
     path::PathBuf,
+};
+#[cfg(feature = "simulated-comparison")]
+use studiobridge_comparison::{
+    Command as ComparisonCommand, CommandKind as ComparisonCommandKind, CommandSender,
+    ComparisonWorker, Destination, DestinationAcknowledgement, DestinationKind,
+    DestinationSnapshot, DiagnosticKind as ComparisonDiagnosticKind, FakeAudioDriver,
+    PublicState as ComparisonState, SendCommandError, Snapshot as ComparisonSnapshot,
+    TerminalEvent as ComparisonEvent,
 };
 use studiobridge_core::{
     AppSnapshot, DspMode, DspWriteModule, EqualizerBandType, EqualizerProfile, HeadphoneOutputMode,
@@ -1042,6 +1052,405 @@ const fn should_preserve_drawer_window_size(maximized: bool, fullscreen: bool) -
     !maximized && !fullscreen
 }
 
+const fn product_workspace_page(requested_page: i32) -> i32 {
+    if cfg!(feature = "extended-workspaces") || requested_page == 4 {
+        requested_page
+    } else {
+        0
+    }
+}
+
+#[cfg(feature = "simulated-comparison")]
+struct SimulatedComparisonRuntime {
+    worker: Rc<RefCell<ComparisonWorker>>,
+    _poll_timer: slint::Timer,
+}
+
+#[cfg(feature = "simulated-comparison")]
+impl SimulatedComparisonRuntime {
+    fn shutdown(&self) {
+        let _ = self
+            .worker
+            .borrow_mut()
+            .shutdown(u64::MAX, Duration::from_millis(250));
+    }
+}
+
+#[cfg(feature = "simulated-comparison")]
+fn next_comparison_sequence(sequence: &Cell<u64>) -> Option<u64> {
+    let current = sequence.get();
+    sequence.set(current.checked_add(1)?);
+    Some(current)
+}
+
+#[cfg(feature = "simulated-comparison")]
+#[derive(Default)]
+struct ComparisonUiState {
+    last_revision: Option<u64>,
+    durable_status: Option<(u64, String)>,
+}
+
+#[cfg(feature = "simulated-comparison")]
+impl ComparisonUiState {
+    fn note_durable_status(&mut self, revision: u64, reason: String) -> bool {
+        if self
+            .last_revision
+            .is_some_and(|last_revision| revision < last_revision)
+        {
+            return false;
+        }
+        self.durable_status = Some((revision, reason));
+        true
+    }
+
+    fn apply_snapshot_reason(&mut self, revision: u64, fallback: Option<String>) -> Option<String> {
+        if self
+            .last_revision
+            .is_some_and(|last_revision| revision < last_revision)
+        {
+            return None;
+        }
+        if self
+            .durable_status
+            .as_ref()
+            .is_some_and(|(status_revision, _)| revision > *status_revision)
+        {
+            self.durable_status = None;
+        }
+        self.last_revision = Some(revision);
+        Some(
+            self.durable_status
+                .as_ref()
+                .map(|(_, reason)| reason.clone())
+                .or(fallback)
+                .unwrap_or_default(),
+        )
+    }
+}
+
+#[cfg(feature = "simulated-comparison")]
+fn comparison_escape_should_cancel(state: &ComparisonState, confirmation_pending: bool) -> bool {
+    confirmation_pending
+        || matches!(
+            state,
+            ComparisonState::Recording { .. }
+                | ComparisonState::RecordingPaused { .. }
+                | ComparisonState::Playing { .. }
+        )
+}
+
+#[cfg(feature = "simulated-comparison")]
+fn set_comparison_durable_status(
+    window: &Weak<MainWindow>,
+    ui_state: &RefCell<ComparisonUiState>,
+    revision: u64,
+    reason: impl Into<String>,
+) {
+    let mut state = ui_state.borrow_mut();
+    let reason = reason.into();
+    if !state.note_durable_status(revision, reason.clone()) {
+        return;
+    }
+    drop(state);
+    if let Some(window) = window.upgrade() {
+        window.set_comparison_reason(reason.into());
+    }
+}
+
+#[cfg(feature = "simulated-comparison")]
+fn comparison_timer_label(state: &ComparisonState, timer_tenths: u32) -> String {
+    match state {
+        ComparisonState::Recording { .. } | ComparisonState::RecordingPaused { .. } => {
+            format!("{:.1}s / 10.0s", timer_tenths as f32 / 10.0)
+        }
+        ComparisonState::Playing { .. } => {
+            format!("{:.1}s / 10.0s", timer_tenths as f32 / 10.0)
+        }
+        _ => "10.0s / 10.0s".into(),
+    }
+}
+
+#[cfg(feature = "simulated-comparison")]
+fn comparison_state_label(state: &ComparisonState) -> &'static str {
+    match state {
+        ComparisonState::Unavailable { .. } => "Unavailable",
+        ComparisonState::Empty => "Ready to record",
+        ComparisonState::Ready { .. } => "Clip ready",
+        ComparisonState::Recording { .. } => "Recording simulated silence",
+        ComparisonState::RecordingPaused { .. } => "Recording paused",
+        ComparisonState::Playing { .. } => "Playing simulated loop",
+        ComparisonState::Shutdown => "Shut down",
+    }
+}
+
+#[cfg(feature = "simulated-comparison")]
+fn apply_comparison_snapshot(
+    window: &MainWindow,
+    snapshot: &ComparisonSnapshot,
+    ui_state: &RefCell<ComparisonUiState>,
+) -> bool {
+    let Some(reason) = ui_state
+        .borrow_mut()
+        .apply_snapshot_reason(snapshot.revision, snapshot.reason.clone())
+    else {
+        return false;
+    };
+    window.set_comparison_simulated(true);
+    window.set_comparison_mode_label(snapshot.availability_label.into());
+    window.set_comparison_state_label(comparison_state_label(&snapshot.state).into());
+    window.set_comparison_reason(reason.into());
+    window.set_comparison_timer_label(
+        comparison_timer_label(&snapshot.state, snapshot.timer_tenths).into(),
+    );
+    window.set_comparison_record_label(snapshot.controls.record_label.into());
+    window.set_comparison_play_label(snapshot.controls.play_label.into());
+    window.set_comparison_record_enabled(snapshot.controls.record_enabled);
+    window.set_comparison_play_enabled(snapshot.controls.play_enabled);
+    window.set_comparison_confirmation_pending(snapshot.confirmation_pending);
+    window.set_comparison_record_active(matches!(
+        snapshot.state,
+        ComparisonState::Recording { .. } | ComparisonState::RecordingPaused { .. }
+    ));
+    window.set_comparison_play_active(matches!(snapshot.state, ComparisonState::Playing { .. }));
+    window.set_comparison_cancel_active(comparison_escape_should_cancel(
+        &snapshot.state,
+        snapshot.confirmation_pending,
+    ));
+    true
+}
+
+#[cfg(feature = "simulated-comparison")]
+fn send_comparison_command(
+    window: &Weak<MainWindow>,
+    sender: &CommandSender,
+    sequence: &Cell<u64>,
+    ui_state: &RefCell<ComparisonUiState>,
+    kind: ComparisonCommandKind,
+) -> bool {
+    let current_revision = ui_state.borrow().last_revision.unwrap_or(0);
+    let Some(sequence) = next_comparison_sequence(sequence) else {
+        set_comparison_durable_status(
+            window,
+            ui_state,
+            current_revision,
+            "Comparison command sequence exhausted",
+        );
+        if let Some(window) = window.upgrade() {
+            window.set_comparison_record_enabled(false);
+            window.set_comparison_play_enabled(false);
+        }
+        return false;
+    };
+    match sender.try_send(ComparisonCommand { sequence, kind }) {
+        Ok(()) => true,
+        Err(SendCommandError::Busy) => {
+            set_comparison_durable_status(
+                window,
+                ui_state,
+                current_revision,
+                "Comparison is busy; try again",
+            );
+            false
+        }
+        Err(SendCommandError::Disconnected) => {
+            set_comparison_durable_status(
+                window,
+                ui_state,
+                current_revision,
+                "Simulated comparison worker disconnected",
+            );
+            if let Some(window) = window.upgrade() {
+                window.set_comparison_record_enabled(false);
+                window.set_comparison_play_enabled(false);
+            }
+            false
+        }
+    }
+}
+
+#[cfg(feature = "simulated-comparison")]
+fn install_simulated_comparison(window: &MainWindow) -> SimulatedComparisonRuntime {
+    window.set_comparison_simulated(true);
+    window.set_comparison_mode_label("Simulated comparison".into());
+    window.set_comparison_state_label("Starting simulation".into());
+    window.set_comparison_reason("No microphone or device audio is opened".into());
+
+    let worker = Rc::new(RefCell::new(ComparisonWorker::spawn_simulated(
+        FakeAudioDriver::default(),
+        1,
+    )));
+    let sender = worker.borrow().command_sender();
+    let sequence = Rc::new(Cell::new(1));
+    let ui_state = Rc::new(RefCell::new(ComparisonUiState::default()));
+    let pending_confirmation = Rc::new(RefCell::new(None::<DestinationAcknowledgement>));
+    let window_weak = window.as_weak();
+    let _ = send_comparison_command(
+        &window_weak,
+        &sender,
+        &sequence,
+        &ui_state,
+        ComparisonCommandKind::UpdateDestinations(DestinationSnapshot {
+            generation: 1,
+            endpoint_generation: 1,
+            complete: true,
+            destinations: vec![Destination {
+                id: "simulated-local-monitor".into(),
+                label: "Local simulated monitor".into(),
+                kind: DestinationKind::LocalMonitor,
+            }],
+        }),
+    );
+
+    let record_window = window.as_weak();
+    let record_sender = sender.clone();
+    let record_sequence = sequence.clone();
+    let record_ui_state = ui_state.clone();
+    window.on_comparison_record(move || {
+        if send_comparison_command(
+            &record_window,
+            &record_sender,
+            &record_sequence,
+            &record_ui_state,
+            ComparisonCommandKind::ToggleRecord,
+        ) {}
+    });
+
+    let play_window = window.as_weak();
+    let play_sender = sender.clone();
+    let play_sequence = sequence.clone();
+    let play_ui_state = ui_state.clone();
+    let play_confirmation = pending_confirmation.clone();
+    window.on_comparison_play(move || {
+        let acknowledgement = play_confirmation.borrow().clone();
+        if send_comparison_command(
+            &play_window,
+            &play_sender,
+            &play_sequence,
+            &play_ui_state,
+            ComparisonCommandKind::TogglePlay {
+                destination_acknowledgement: acknowledgement,
+            },
+        ) {}
+    });
+
+    let cancel_window = window.as_weak();
+    let cancel_sender = sender;
+    let cancel_sequence = sequence;
+    let cancel_ui_state = ui_state.clone();
+    window.on_comparison_cancel(move || {
+        if send_comparison_command(
+            &cancel_window,
+            &cancel_sender,
+            &cancel_sequence,
+            &cancel_ui_state,
+            ComparisonCommandKind::Cancel,
+        ) {}
+    });
+
+    let exit_window = window.as_weak();
+    let exit_worker = worker.clone();
+    let exit_confirmation = pending_confirmation.clone();
+    let exit_ui_state = ui_state.clone();
+    window.on_comparison_workspace_exited(move || {
+        if exit_worker
+            .borrow_mut()
+            .workspace_exit(Duration::from_millis(150))
+        {
+            *exit_confirmation.borrow_mut() = None;
+            if let Some(window) = exit_window.upgrade() {
+                window.set_comparison_confirmation_pending(false);
+                window.set_comparison_cancel_active(false);
+            }
+            true
+        } else {
+            let revision = exit_ui_state.borrow().last_revision.unwrap_or(0);
+            set_comparison_durable_status(
+                &exit_window,
+                &exit_ui_state,
+                revision,
+                "Could not safely stop comparison; remaining in Microphone",
+            );
+            false
+        }
+    });
+
+    let poll_worker = worker.clone();
+    let poll_window = window.as_weak();
+    let poll_confirmation = pending_confirmation;
+    let poll_ui_state = ui_state;
+    let poll_timer = slint::Timer::default();
+    poll_timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(50),
+        move || {
+            let Some(window) = poll_window.upgrade() else {
+                return;
+            };
+            if let Some(snapshot) = poll_worker.borrow().take_latest_snapshot()
+                && apply_comparison_snapshot(&window, &snapshot, &poll_ui_state)
+                && !snapshot.confirmation_pending
+            {
+                *poll_confirmation.borrow_mut() = None;
+            }
+            loop {
+                let event = poll_worker.borrow_mut().try_terminal_event();
+                match event {
+                    Some(ComparisonEvent::Snapshot(snapshot)) => {
+                        if apply_comparison_snapshot(&window, &snapshot, &poll_ui_state)
+                            && !snapshot.confirmation_pending
+                        {
+                            *poll_confirmation.borrow_mut() = None;
+                        }
+                    }
+                    Some(ComparisonEvent::DestinationConfirmationRequired {
+                        revision,
+                        confirmation_id,
+                        snapshot,
+                        ..
+                    }) => {
+                        *poll_confirmation.borrow_mut() = Some(DestinationAcknowledgement {
+                            confirmation_id,
+                            snapshot,
+                        });
+                        window.set_comparison_confirmation_pending(true);
+                        window.set_comparison_cancel_active(true);
+                        set_comparison_durable_status(
+                            &poll_window,
+                            &poll_ui_state,
+                            revision,
+                            "Non-local destinations detected; press Play again to confirm",
+                        );
+                    }
+                    Some(ComparisonEvent::Diagnostic { revision, kind }) => {
+                        let ComparisonDiagnosticKind::CommandRejected(reason) = kind;
+                        set_comparison_durable_status(
+                            &poll_window,
+                            &poll_ui_state,
+                            revision,
+                            reason,
+                        );
+                    }
+                    Some(ComparisonEvent::ShutdownComplete { revision }) => {
+                        poll_ui_state.borrow_mut().last_revision = Some(revision);
+                        window.set_comparison_state_label("Shut down".into());
+                        window.set_comparison_record_enabled(false);
+                        window.set_comparison_play_enabled(false);
+                        window.set_comparison_record_active(false);
+                        window.set_comparison_play_active(false);
+                        window.set_comparison_cancel_active(false);
+                    }
+                    None => break,
+                }
+            }
+        },
+    );
+
+    SimulatedComparisonRuntime {
+        worker,
+        _poll_timer: poll_timer,
+    }
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let preferences = load_preferences();
     let start_in_background = should_start_in_background(
@@ -1052,6 +1461,10 @@ fn main() -> Result<(), slint::PlatformError> {
         return Ok(());
     }
     let window = MainWindow::new()?;
+    window.set_extended_workspaces_enabled(cfg!(feature = "extended-workspaces"));
+    window.set_active_page(product_workspace_page(0));
+    #[cfg(feature = "simulated-comparison")]
+    let comparison_runtime = install_simulated_comparison(&window);
     let tray = StudioBridgeTray::new()?;
     let Some(_instance_guard) = claim_single_instance(window.as_weak(), start_in_background) else {
         return Ok(());
@@ -1070,10 +1483,10 @@ fn main() -> Result<(), slint::PlatformError> {
     window.set_profiles_drawer_open(preferences.profiles_drawer_open);
     if !preferences.profiles_drawer_open {
         // Applying a persisted collapsed layout changes Slint's preferred width
-        // before the first show; restore BEACN's measured default client size.
+        // before the first show; restore StudioBridge's chosen working client size.
         window
             .window()
-            .set_size(slint::LogicalSize::new(944.0, 778.0));
+            .set_size(slint::LogicalSize::new(1402.0, 778.0));
     }
     let hotkey_runtime = Rc::new(RefCell::new(HotkeyRuntime::new(
         &preferences,
@@ -2082,7 +2495,8 @@ fn main() -> Result<(), slint::PlatformError> {
     let safe_window = window.as_weak();
     tray.on_show_safe_mode(move || {
         if let Some(window) = safe_window.upgrade() {
-            window.set_active_page(1);
+            window.set_active_page(product_workspace_page(1));
+            #[cfg(feature = "extended-workspaces")]
             window.set_dsp_selected_module("mic_setup".into());
             let _ = window.show();
         }
@@ -2095,6 +2509,7 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     refresh_all(window.as_weak(), client.clone());
+    #[cfg(feature = "extended-workspaces")]
     load_dsp(
         window.as_weak(),
         client.clone(),
@@ -2109,7 +2524,10 @@ fn main() -> Result<(), slint::PlatformError> {
         window.show()?;
     }
     tray.show()?;
-    slint::run_event_loop()
+    let result = slint::run_event_loop();
+    #[cfg(feature = "simulated-comparison")]
+    comparison_runtime.shutdown();
+    result
 }
 
 #[cfg(unix)]
@@ -3661,6 +4079,8 @@ fn start_health_monitor(
     client: DaemonClient,
     session: Arc<Mutex<DspSession>>,
 ) {
+    #[cfg(not(feature = "extended-workspaces"))]
+    let _ = &session;
     thread::spawn(move || {
         loop {
             let Some(generation) = REFRESH_COORDINATOR.monitor_generation() else {
@@ -3674,6 +4094,7 @@ fn start_health_monitor(
                     let armed = active.is_some();
                     let update_window = window.clone();
                     let recovery_client = client.clone();
+                    #[cfg(feature = "extended-workspaces")]
                     let recovery_session = session.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         let Some(window) = update_window.upgrade() else {
@@ -3714,6 +4135,7 @@ fn start_health_monitor(
                         if recovered {
                             let recovery_window = window.as_weak();
                             refresh_all(recovery_window.clone(), recovery_client.clone());
+                            #[cfg(feature = "extended-workspaces")]
                             load_dsp(
                                 recovery_window,
                                 recovery_client,
@@ -3877,20 +4299,29 @@ mod desktop_tests {
         link_channel_label, merge_pending_refresh_status, mock_meter_level,
         monitor_connection_recovered, mutation_readback_is_authoritative, mutation_refresh_status,
         mute_state_with_target, normalize_captured_hotkey, normalize_mute_action,
-        preferred_default_readback, preferred_default_repair, profile_mutation_refresh_status,
-        remove_eq_band, selected_dsp_enabled, set_enhancement_preset, set_enhancement_value,
-        set_eq_band_type_value, set_eq_band_value, set_headphone_eq_band_value,
-        set_headphone_subwoofer_value, set_selected_dsp_enabled,
+        preferred_default_readback, preferred_default_repair, product_workspace_page,
+        profile_mutation_refresh_status, remove_eq_band, selected_dsp_enabled,
+        set_enhancement_preset, set_enhancement_value, set_eq_band_type_value, set_eq_band_value,
+        set_headphone_eq_band_value, set_headphone_subwoofer_value, set_selected_dsp_enabled,
         should_preserve_drawer_window_size, should_start_in_background, source_name_available,
         update_from_values,
     };
+    #[cfg(feature = "simulated-comparison")]
+    use super::{
+        ComparisonUiState, comparison_escape_should_cancel, comparison_state_label,
+        comparison_timer_label, next_comparison_sequence,
+    };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
+    #[cfg(feature = "simulated-comparison")]
+    use std::cell::Cell;
     use std::{
         sync::{Arc, mpsc},
         thread,
         time::Duration,
     };
+    #[cfg(feature = "simulated-comparison")]
+    use studiobridge_comparison::PublicState as ComparisonState;
     use studiobridge_core::{
         AppSnapshot, BackendStatus, DspMode, EqualizerBandState, EqualizerBandType,
         HeadphoneEqualizerState, HeadphoneOutputMode, HeadphoneState, LinkChannel,
@@ -3968,6 +4399,7 @@ mod desktop_tests {
                 physical_outputs: Vec::new(),
                 physical_inputs: Vec::new(),
                 link_outputs: Vec::new(),
+                copy_outputs: Vec::new(),
             },
         }
     }
@@ -4575,7 +5007,7 @@ mod desktop_tests {
     }
 
     #[test]
-    fn official_default_reflow_contract_preserves_defaults_and_reclaims_space() {
+    fn working_default_reflow_contract_preserves_minimum_and_reclaims_space() {
         let ui = include_str!("../ui/app-window.slint");
         let rust_source = include_str!("main.rs");
 
@@ -4591,12 +5023,16 @@ mod desktop_tests {
         assert!(ui.contains("width: min(488px, parent.width - 16px);"));
         assert!(ui.contains("x: parent.width - 148px; y: 95px;"));
 
-        assert!(ui.matches("width: 218px;").count() >= 3);
-        assert!(ui.contains("width: 220px;"));
+        assert!(ui.contains("mixer-nav-width: 55px + 36px * root.mixer-responsive-factor"));
+        assert!(ui.contains("changed width => { root.mixer-layout-width = root.width; }"));
+        assert!(
+            ui.contains("mixer-profile-drawer-width: 220px + 149px * root.mixer-responsive-factor")
+        );
         assert!(ui.contains("min-width: 944px;"));
         assert!(ui.contains("min-height: 778px;"));
-        assert!(ui.contains("init => { root.width = 944px; root.height = 778px; }"));
-        assert!(rust_source.contains("slint::LogicalSize::new(944.0, 778.0)"));
+        assert!(ui.contains("preferred-width: 1402px;"));
+        assert!(ui.contains("init => { root.width = 1402px; root.height = 778px; }"));
+        assert!(rust_source.contains("slint::LogicalSize::new(1402.0, 778.0)"));
         assert!(ui.contains("root.save-profile-drawer(!root.profiles-drawer-open);"));
         assert!(ui.contains("popup-width: 232px;"));
 
@@ -4658,17 +5094,17 @@ mod desktop_tests {
         assert!(ui.matches("interactive: false; checked: root.").count() >= 3);
         assert!(ui.contains("accessible-enabled: root.interactive;"));
         assert!(ui.contains("if !root.daemon-connected && root.active-page <= 1: TouchArea"));
-        assert!(
-            ui.contains("width: parent.width - 55px - (root.profiles-drawer-open ? 220px : 0px);")
-        );
+        assert!(ui.contains("width: root.mixer-workspace-width;"));
         assert!(ui.contains("interactive: root.connected;"));
         assert!(ui.contains("enabled: root.connected;"));
         assert!(ui.contains(
             "if root.active-page == 0: FocusScope {\n                enabled: root.daemon-connected;"
         ));
-        assert!(ui.contains(
+        assert!(ui.contains("if root.active-page == 1: FocusScope {"));
+        assert!(!ui.contains(
             "if root.active-page == 1: FocusScope {\n                enabled: root.daemon-connected;"
         ));
+        assert!(ui.contains("event.text == Key.Escape && root.comparison-cancel-active"));
         assert!(ui.contains("enabled: root.daemon-connected;\n                        clicked =>"));
         assert!(ui.contains("if root.daemon-connected {\n                                let name = root.pending-profile-save;"));
         assert!(
@@ -5048,5 +5484,178 @@ mod desktop_tests {
         assert!(source.contains("daemon_write_allowed(&window, \"DSP arm\")"));
         assert!(source.contains("daemon_write_allowed(&window, \"DSP change\")"));
         assert!(source.contains("DAEMON_READY.load(Ordering::SeqCst)\n                && preferences.automatic_default_reset"));
+    }
+
+    #[test]
+    fn comparison_feature_is_optional_and_normal_build_stays_unavailable() {
+        let manifest = include_str!("../Cargo.toml");
+        assert!(manifest.contains("extended-workspaces = []"));
+        assert!(manifest.contains(
+            "simulated-comparison = [\"extended-workspaces\", \"dep:studiobridge-comparison\"]"
+        ));
+        assert!(manifest.contains(
+            "studiobridge-comparison = { path = \"../studiobridge-comparison\", optional = true }"
+        ));
+        let source = include_str!("main.rs");
+        assert!(
+            source
+                .contains("#[cfg(feature = \"simulated-comparison\")]\n    let comparison_runtime")
+        );
+        let ui = include_str!("../ui/app-window.slint");
+        assert!(ui.contains("comparison-simulated: false"));
+        assert!(ui.contains("comparison-record-enabled: false"));
+        assert!(ui.contains("comparison-play-enabled: false"));
+    }
+
+    #[test]
+    fn product_workspace_policy_is_mixer_only_unless_explicitly_extended() {
+        if cfg!(feature = "extended-workspaces") {
+            assert_eq!(product_workspace_page(1), 1);
+            assert_eq!(product_workspace_page(4), 4);
+        } else {
+            assert_eq!(product_workspace_page(0), 0);
+            assert_eq!(product_workspace_page(1), 0);
+            assert_eq!(product_workspace_page(4), 4);
+        }
+
+        let ui = include_str!("../ui/app-window.slint");
+        assert!(ui.contains("extended-workspaces-enabled: false"));
+        assert_eq!(
+            ui.matches("interactive: root.extended-workspaces-enabled")
+                .count(),
+            4
+        );
+        assert!(ui.contains(
+            "RailButton { glyph: \"⚙\"; label: \"SETTINGS\"; active: root.active-page == 4; clicked =>"
+        ));
+        assert!(ui.contains("accessible-enabled: root.interactive"));
+        assert!(ui.contains(
+            "enabled: root.interactive;\n        width: parent.width; height: parent.height;"
+        ));
+        assert!(ui.contains("TouchArea { enabled: root.interactive;"));
+        assert!(ui.contains("if root.extended-workspaces-enabled: Rectangle {"));
+        assert!(ui.contains("extended-workspaces-enabled: root.extended-workspaces-enabled;"));
+        assert!(ui.contains("mixer-link-panel-width: 225px + 26px * root.mixer-assignment-factor"));
+        assert!(ui.contains("horizontal-scrollbar-policy: ScrollBarPolicy.as-needed;"));
+
+        let source = include_str!("main.rs");
+        assert!(source.contains(
+            "window.set_extended_workspaces_enabled(cfg!(feature = \"extended-workspaces\"))"
+        ));
+        assert!(source.contains("#[cfg(feature = \"extended-workspaces\")]\n    load_dsp("));
+    }
+
+    #[test]
+    fn comparison_controls_are_real_accessible_buttons_with_cancel_paths() {
+        let ui = include_str!("../ui/app-window.slint");
+        assert!(ui.contains("component ComparisonButton inherits Rectangle"));
+        assert!(ui.contains("accessible-label: root.control-label"));
+        assert!(ui.contains("control-label: root.comparison-record-label"));
+        assert!(ui.contains("control-label: root.comparison-play-label"));
+        assert!(ui.contains("comparison-focus.focus()"));
+        assert!(ui.contains("event.text == Key.Return || event.text == Key.Space"));
+        assert!(ui.contains("root.comparison-cancel()"));
+        assert!(ui.contains("root.comparison-workspace-exited()"));
+        assert!(ui.contains("event.text == Key.Escape"));
+        assert!(ui.contains("event.text == Key.Escape && root.comparison-cancel-active"));
+        assert!(ui.contains("glyph: \"●\""));
+        assert!(ui.contains("glyph: \"▶\""));
+        assert!(!ui.contains(
+            "if root.active-page == 1: FocusScope {\n                enabled: root.daemon-connected"
+        ));
+        assert!(ui.contains("height: 30px; background: #242427"));
+    }
+
+    #[cfg(feature = "simulated-comparison")]
+    #[test]
+    fn comparison_timer_and_semantic_labels_are_deterministic() {
+        assert_eq!(
+            comparison_timer_label(
+                &ComparisonState::Recording {
+                    draft_frames: 48_000,
+                },
+                90,
+            ),
+            "9.0s / 10.0s"
+        );
+        assert_eq!(
+            comparison_timer_label(
+                &ComparisonState::Playing {
+                    frames: 48_000,
+                    elapsed_frames: 4_800,
+                },
+                1,
+            ),
+            "0.1s / 10.0s"
+        );
+        assert_eq!(
+            comparison_state_label(&ComparisonState::Empty),
+            "Ready to record"
+        );
+        assert_eq!(
+            comparison_state_label(&ComparisonState::RecordingPaused { draft_frames: 960 }),
+            "Recording paused"
+        );
+    }
+
+    #[cfg(feature = "simulated-comparison")]
+    #[test]
+    fn comparison_sequence_exhaustion_is_fail_closed() {
+        let sequence = Cell::new(u64::MAX);
+        assert_eq!(next_comparison_sequence(&sequence), None);
+        assert_eq!(sequence.get(), u64::MAX);
+    }
+
+    #[cfg(feature = "simulated-comparison")]
+    #[test]
+    fn comparison_ui_state_rejects_regression_and_keeps_diagnostics_durable() {
+        let mut state = ComparisonUiState::default();
+        assert_eq!(
+            state.apply_snapshot_reason(5, Some("snapshot".into())),
+            Some("snapshot".into())
+        );
+        assert!(state.note_durable_status(5, "busy".into()));
+        assert_eq!(
+            state.apply_snapshot_reason(5, Some("same revision".into())),
+            Some("busy".into())
+        );
+        assert_eq!(state.apply_snapshot_reason(4, Some("stale".into())), None);
+        assert!(!state.note_durable_status(4, "stale diagnostic".into()));
+        assert_eq!(
+            state.apply_snapshot_reason(6, Some("advanced".into())),
+            Some("advanced".into())
+        );
+    }
+
+    #[cfg(feature = "simulated-comparison")]
+    #[test]
+    fn comparison_escape_only_cancels_active_or_confirmation_states() {
+        assert!(!comparison_escape_should_cancel(
+            &ComparisonState::Empty,
+            false
+        ));
+        assert!(comparison_escape_should_cancel(
+            &ComparisonState::Empty,
+            true
+        ));
+        assert!(comparison_escape_should_cancel(
+            &ComparisonState::Recording { draft_frames: 1 },
+            false
+        ));
+        assert!(comparison_escape_should_cancel(
+            &ComparisonState::RecordingPaused { draft_frames: 1 },
+            false
+        ));
+        assert!(comparison_escape_should_cancel(
+            &ComparisonState::Playing {
+                frames: 1,
+                elapsed_frames: 0,
+            },
+            false
+        ));
+        assert!(!comparison_escape_should_cancel(
+            &ComparisonState::Ready { frames: 1 },
+            false
+        ));
     }
 }

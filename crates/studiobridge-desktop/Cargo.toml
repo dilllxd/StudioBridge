@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 build = "build.rs"
 
+[features]
+default = []
+extended-workspaces = []
+simulated-comparison = ["extended-workspaces", "dep:studiobridge-comparison"]
+
 [dependencies]
 global-hotkey = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
@@ -12,6 +17,7 @@ serde.workspace = true
 serde_json.workspace = true
 slint = { version = "1.17", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "renderer-software", "accessibility", "compat-1-2", "system-tray"] }
 studiobridge-core = { path = "../studiobridge-core" }
+studiobridge-comparison = { path = "../studiobridge-comparison", optional = true }
 tungstenite = "0.29"
 webbrowser = "1.2"
 

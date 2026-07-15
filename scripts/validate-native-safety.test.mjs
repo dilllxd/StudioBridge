@@ -14,6 +14,29 @@ function expectFailure(sources, fragment) {
   assert(result.failures.some((failure) => failure.includes(fragment)), `${fragment}\n${result.failures.join("\n")}`);
 }
 
+function withSimulatedDesktopFeature() {
+  const sources = validSources();
+  const manifest = "crates/studiobridge-desktop/Cargo.toml";
+  if (!sources[manifest].includes('[features]')) {
+    sources[manifest] = sources[manifest].replace("[dependencies]", '[features]\ndefault = []\nextended-workspaces = []\nsimulated-comparison = ["extended-workspaces", "dep:studiobridge-comparison"]\n\n[dependencies]');
+  }
+  if (!sources[manifest].includes('studiobridge-comparison = {')) {
+    sources[manifest] = sources[manifest].replace("[target.'cfg(target_os", 'studiobridge-comparison = { path = "../studiobridge-comparison", optional = true }\n\n[target.\'cfg(target_os');
+  }
+  if (!sources["crates/studiobridge-desktop/src/main.rs"].includes("ComparisonWorker")) {
+    sources["crates/studiobridge-desktop/src/main.rs"] += `
+      #[cfg(feature = "simulated-comparison")]
+      fn install_simulated_comparison() {
+        let _ = studiobridge_comparison::ComparisonWorker::spawn_simulated(
+          studiobridge_comparison::FakeAudioDriver::default(), 1
+        );
+        let _label = "Simulated comparison — no device audio";
+      }
+    `;
+  }
+  return sources;
+}
+
 test("accepts the repository's explicit native safety boundaries", () => {
   const result = validateNativeSafety(validSources());
   assert.deepEqual(result.failures, []);
@@ -215,10 +238,210 @@ test("allows comparison safety prose, fake drivers, and mutation-test strings", 
   assert.deepEqual(validateNativeSafety(sources).failures, []);
 });
 
-test("rejects comparison production consumption before destination policy review", () => {
+test("rejects comparison consumption outside the reviewed optional desktop feature", () => {
   const sources = validSources();
-  sources["crates/studiobridge-desktop/Cargo.toml"] += '\nstudiobridge-comparison = { path = "../studiobridge-comparison" }\n';
-  expectFailure(sources, "wires the comparison core into production before destination-generation policy review");
+  sources["crates/studiobridge-desktop/Cargo.toml"] = sources["crates/studiobridge-desktop/Cargo.toml"]
+    .replace('simulated-comparison = ["extended-workspaces", "dep:studiobridge-comparison"]', "simulated-comparison = []")
+    .replace(', optional = true', '');
+  expectFailure(sources, "must depend exactly on extended-workspaces and the optional comparison core");
+  expectFailure(sources, "must remain optional");
+});
+
+test("allows only the exact Mixer-default, extended, and simulated desktop feature contract", () => {
+  assert.deepEqual(validateNativeSafety(withSimulatedDesktopFeature()).failures, []);
+
+  const mutations = [
+    ['default = []', 'default = ["extended-workspaces"]', "default feature set must remain empty"],
+    ['extended-workspaces = []', 'extended-workspaces = ["dep:studiobridge-comparison"]', "extended-workspaces feature must not activate dependencies"],
+    [', optional = true', '', "must remain optional"],
+    ['["extended-workspaces", "dep:studiobridge-comparison"]', '["dep:studiobridge-comparison"]', "must depend exactly on extended-workspaces"],
+    ['optional = true', 'optional = true, features = ["production"]', "only path and optional metadata"],
+  ];
+  for (const [before, after, expected] of mutations) {
+    const sources = withSimulatedDesktopFeature();
+    const name = "crates/studiobridge-desktop/Cargo.toml";
+    sources[name] = sources[name].replace(before, after);
+    expectFailure(sources, expected);
+  }
+
+  const alias = withSimulatedDesktopFeature();
+  alias["crates/studiobridge-desktop/Cargo.toml"] = alias["crates/studiobridge-desktop/Cargo.toml"].replace(
+    'simulated-comparison = ["extended-workspaces", "dep:studiobridge-comparison"]',
+    'simulated-comparison = ["extended-workspaces", "dep:studiobridge-comparison"]\nproduction = []',
+  );
+  expectFailure(alias, "feature table may contain only");
+});
+
+test("rejects default UI workspace rails that escape Mixer-only mode", () => {
+  const uiName = "crates/studiobridge-desktop/ui/app-window.slint";
+
+  const defaultExtended = validSources();
+  defaultExtended[uiName] = defaultExtended[uiName].replace(
+    "in property <bool> extended-workspaces-enabled: false;",
+    "in property <bool> extended-workspaces-enabled: true;",
+  );
+  expectFailure(defaultExtended, "default UI must keep extended workspaces disabled");
+
+  for (const label of ["STUDIO", "MIC", "LIGHTING", "DEVICE"]) {
+    const sources = validSources();
+    const line = sources[uiName]
+      .split(/\r?\n/)
+      .find((candidate) => candidate.includes("RailButton") && candidate.includes(`label: "${label}"`));
+    assert(line, `missing ${label} mutation fixture`);
+    sources[uiName] = sources[uiName].replace(
+      line,
+      line.replace("interactive: root.extended-workspaces-enabled;", "interactive: true;"),
+    );
+    expectFailure(sources, `${label} rail must be noninteractive unless extended-workspaces is enabled`);
+  }
+
+  const settings = validSources();
+  const settingsLine = settings[uiName]
+    .split(/\r?\n/)
+    .find((candidate) => candidate.includes("RailButton") && candidate.includes('label: "SETTINGS"'));
+  assert(settingsLine, "missing Settings mutation fixture");
+  settings[uiName] = settings[uiName].replace(
+    settingsLine,
+    settingsLine.replace("active: root.active-page == 4;", "active: root.active-page == 4; interactive: false;"),
+  );
+  expectFailure(settings, "Settings rail must remain interactive in the default UI");
+});
+
+test("rejects accessibility or profile gating regressions in disabled workspaces", () => {
+  const uiName = "crates/studiobridge-desktop/ui/app-window.slint";
+  const accessibility = validSources();
+  accessibility[uiName] = accessibility[uiName].replace(
+    "accessible-enabled: root.interactive;",
+    "accessible-enabled: true;",
+  );
+  expectFailure(accessibility, "keyboard-, pointer-, and accessibility-disabled");
+
+  const profiles = validSources();
+  profiles[uiName] = profiles[uiName].replace(
+    "if root.extended-workspaces-enabled: Rectangle {",
+    "Rectangle {",
+  );
+  expectFailure(profiles, "Studio profile section must remain gated by extended-workspaces");
+});
+
+test("rejects ungated non-Mixer startup and DSP loading", () => {
+  const name = "crates/studiobridge-desktop/src/main.rs";
+
+  const selector = validSources();
+  selector[name] = selector[name].replace(
+    'if cfg!(feature = "extended-workspaces") || requested_page == 4 {',
+    "if true || requested_page == 4 {",
+  );
+  expectFailure(selector, "clamp non-Mixer, non-Settings workspaces to Mixer");
+
+  const startup = validSources();
+  startup[name] = startup[name].replace(
+    "window.set_active_page(product_workspace_page(0));",
+    "window.set_active_page(1);",
+  );
+  expectFailure(startup, "start through the Mixer-only workspace clamp");
+
+  const dsp = validSources();
+  dsp[name] = dsp[name].replace(
+    '#[cfg(feature = "extended-workspaces")]\n    load_dsp(\n        window.as_weak()',
+    "load_dsp(\n        window.as_weak()",
+  );
+  expectFailure(dsp, "startup DSP loading must remain gated by extended-workspaces");
+});
+
+test("rejects desktop comparison constructors and imports outside the feature cfg", () => {
+  for (const addition of [
+    "fn bypass() { let _ = ComparisonWorker::spawn_simulated(FakeAudioDriver::default(), 1); }",
+    "use studiobridge_comparison::ComparisonWorker;",
+    '#[cfg(feature = "other")] fn wrong_gate() { let _ = studiobridge_comparison::ComparisonWorker::spawn_simulated(studiobridge_comparison::FakeAudioDriver::default(), 1); }',
+    '#[cfg(any(feature = "simulated-comparison", target_os = "linux"))] fn alternative_gate() { let _ = studiobridge_comparison::ComparisonWorker::spawn_simulated(studiobridge_comparison::FakeAudioDriver::default(), 1); }',
+  ]) {
+    const sources = withSimulatedDesktopFeature();
+    sources["crates/studiobridge-desktop/src/main.rs"] += `\n${addition}\n`;
+    expectFailure(sources, "outside the simulated-comparison cfg gate");
+  }
+});
+
+test("rejects raw samples and real integration from cfg-gated desktop comparison code", () => {
+  const mutations = [
+    ["let samples: Vec<f32> = vec![];", "raw comparison sample ingress"],
+    ["let _ = std::fs::read(\"clip.raw\");", "filesystem, network, process"],
+    ["pipewire::init();", "real audio, device"],
+    ["let _: Option<DaemonClient> = None;", "real driver, audio, device"],
+    ["reqwest::blocking::get(\"https://example.invalid\");", "real audio, device"],
+    ["let _ = studiobridge_beacn::BeacnDevice::open();", "real audio, device"],
+    ["set_link_assignment();", "route or default mutation"],
+    ["set_default();", "route or default mutation"],
+    ["load_preferences();", "existing filesystem, network, device"],
+  ];
+  for (const [body, expected] of mutations) {
+    const sources = withSimulatedDesktopFeature();
+    sources["crates/studiobridge-desktop/src/main.rs"] += `
+      #[cfg(feature = "simulated-comparison")]
+      fn forbidden_comparison_integration() { ${body} }
+    `;
+    expectFailure(sources, expected);
+  }
+});
+
+test("rejects indirect integration helpers and renamed route or default setters", () => {
+  for (const [helperBody, helperCall] of [
+    ['let _ = std::fs::read("/tmp/audio");', "harmless_name"],
+    ["refresh_all(window.as_weak(), client.clone());", "innocent_bridge"],
+    ["set_link_assignment();", "metadata_helper"],
+  ]) {
+    const sources = withSimulatedDesktopFeature();
+    sources["crates/studiobridge-desktop/src/main.rs"] += `
+      fn ${helperCall}() { ${helperBody} }
+      #[cfg(feature = "simulated-comparison")]
+      fn comparison_indirect_bypass() { ${helperCall}(); }
+    `;
+    expectFailure(sources, `calls non-allowlisted helper ${helperCall}`);
+  }
+
+  for (const call of [
+    "window.set_default_mix(1)",
+    "window.update_personal_route(1)",
+    "window.reset_bus_target(1)",
+    "window.apply_routing_assignment(1)",
+  ]) {
+    const sources = withSimulatedDesktopFeature();
+    sources["crates/studiobridge-desktop/src/main.rs"] += `
+      #[cfg(feature = "simulated-comparison")]
+      fn comparison_route_bypass(window: &MainWindow) { ${call}; }
+    `;
+    expectFailure(sources, "route or default mutation from comparison code");
+  }
+});
+
+test("requires a visible Simulated comparison label and mutation-free comparison callbacks", () => {
+  const label = withSimulatedDesktopFeature();
+  for (const name of ["crates/studiobridge-desktop/src/main.rs", "crates/studiobridge-desktop/ui/app-window.slint"]) {
+    label[name] = label[name].replaceAll("Simulated comparison", "Audio comparison");
+  }
+  expectFailure(label, "must visibly retain the Simulated comparison label from feature-gated code");
+
+  const callback = withSimulatedDesktopFeature();
+  callback["crates/studiobridge-desktop/ui/app-window.slint"] += "\nexport component UnsafeComparison { callback comparison-set-default-route(); }\n";
+  expectFailure(callback, "must not mutate routes or defaults");
+});
+
+test("rejects packaging and release builds that enable any non-default desktop feature", () => {
+  for (const [name, addition] of [
+    ["scripts/package-linux.sh", "\ncargo build --release --features simulated-comparison\n"],
+    ["scripts/package-extended.sh", "\ncargo build --release --features extended-workspaces\n"],
+    ["packaging/arch/PKGBUILD", "\ncargo build --release --all-features\n"],
+    [".github/workflows/verify.yml", "\n# release build\n# cargo build --release --features simulated-comparison\n"],
+    ["scripts/release-linux.sh", "\ncargo build --release --features=simulated-comparison\n"],
+    ["scripts/build-release.ps1", "\ncargo build --release --all-features\n"],
+    ["scripts/publish.cmd", "\ncargo build --release --features simulated-comparison\n"],
+    [".cargo/config.toml", '\n[alias]\nrelease-build = "build --all-features"\n'],
+    ["package.json", '\n{"scripts":{"release":"cargo build --release --features simulated-comparison"}}\n'],
+  ]) {
+    const sources = withSimulatedDesktopFeature();
+    sources[name] = (sources[name] ?? "") + addition;
+    expectFailure(sources, "enables a non-default desktop feature in a packaging or release build");
+  }
 });
 
 test("rejects weakening comparison teardown, thread, or scrubbing boundaries", () => {
@@ -244,6 +467,23 @@ test("rejects public comparison sample ingress and non-Fake worker constructors"
   ]) {
     const sources = validSources();
     sources["crates/studiobridge-comparison/src/worker.rs"] = sources["crates/studiobridge-comparison/src/worker.rs"].replace("#[cfg(test)]", `${addition}\n#[cfg(test)]`);
+    expectFailure(sources, expected);
+  }
+});
+
+test("rejects raw or externally driven simulated worker progression", () => {
+  for (const [before, after, expected] of [
+    ["fn simulated_audio_tick(&mut self)", "fn simulated_audio_tick(&mut self, input: &[f32])", "must not accept external samples or frame input"],
+    ["let silence = [0.0; SIMULATED_FRAMES_PER_TICK];", "let silence = [0.5; SIMULATED_FRAMES_PER_TICK];", "must generate only fixed internal silence"],
+    ["self.accept_capture(&silence);", "self.accept_capture(input);", "must consume only its fixed internal silence"],
+    ["test_capture_frames: Option<usize>", "test_capture: Option<Box<[f32]>>", "must not accept or preload raw samples"],
+    ["Self::spawn_inner(driver, endpoint_generation, None, None, None)", "Self::spawn_inner(driver, endpoint_generation, None, None, Some(4800))", "must not preload frames or test hooks"],
+    ["core.simulated_audio_tick();", "core.accept_capture(&[0.0; 4800]);", "must not expose a raw capture preload path"],
+  ]) {
+    const sources = validSources();
+    const name = "crates/studiobridge-comparison/src/worker.rs";
+    assert(sources[name].includes(before), `mutation fixture missing: ${before}`);
+    sources[name] = sources[name].replace(before, after);
     expectFailure(sources, expected);
   }
 });
@@ -284,7 +524,7 @@ test("rejects teardown and semantic snapshot regressions", () => {
     ["self.thread\n            .take()", "self.thread\n            .as_mut()", "must take and join the worker thread"],
     ["handle.join().is_ok()", "true", "must take and join the worker thread"],
     ["self.terminal.send(TerminalEvent::Snapshot(self.snapshot()))", "self.latest_timer.publish(self.snapshot())", "semantic snapshots must use the lossless terminal queue"],
-    ["if changed {\n            self.publish_semantic_snapshot();", "if changed {", "must publish authoritative snapshots after fail-closed transitions"],
+    ["if changed || confirmation_resolved {\n            self.publish_semantic_snapshot();", "if changed {\n            self.publish_semantic_snapshot();", "must publish authoritative snapshots after fail-closed transitions and confirmation cancellation"],
     ["self.engine.accept_capture(token, input);", "self.engine.accept_capture(token, input); return;", "capture completion must publish its semantic transition"],
     ["self.engine.shutdown();", "self.engine.driver().active_stream_count();", "forced shutdown must scrub and deactivate"],
   ]) {

@@ -188,6 +188,102 @@ impl MixerBackend for PipeweaverBackend {
         Ok(())
     }
 
+    async fn attach_target_output(&self, target_id: &str, device_node_id: u32) -> BridgeResult<()> {
+        let status = self
+            .client
+            .lock()
+            .await
+            .get_status()
+            .await
+            .map_err(|error| BridgeError::BackendUnavailable(error.to_string()))?;
+        let snapshot = map_status(&status);
+        let target = snapshot
+            .targets
+            .iter()
+            .find(|target| target.id == target_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
+        let output = snapshot
+            .physical_outputs
+            .iter()
+            .find(|output| output.node_id == device_node_id)
+            .filter(|output| beacn_link_output_slot(&output.name, &output.descriptor).is_none())
+            .ok_or_else(|| {
+                BridgeError::InvalidValue(format!(
+                    "unknown, unusable, or Link-reserved physical output node: {device_node_id}"
+                ))
+            })?;
+        let count = target
+            .attached_devices
+            .iter()
+            .filter(|attached| physical_device_matches(attached, &output.descriptor))
+            .count();
+        if count != 0 {
+            return Err(BridgeError::InvalidValue(format!(
+                "target output is already attached or ambiguous: {target_id}; found {count} matches"
+            )));
+        }
+        self.send(APICommand::AttachPhysicalNodeByName(
+            target_id.to_owned(),
+            device_node_id,
+        ))
+        .await
+    }
+
+    async fn detach_target_output(
+        &self,
+        target_id: &str,
+        descriptor: &MixerPhysicalDeviceDescriptor,
+    ) -> BridgeResult<()> {
+        let status = self
+            .client
+            .lock()
+            .await
+            .get_status()
+            .await
+            .map_err(|error| BridgeError::BackendUnavailable(error.to_string()))?;
+        let snapshot = map_status(&status);
+        let target = snapshot
+            .targets
+            .iter()
+            .find(|target| target.id == target_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown target: {target_id}")))?;
+        let endpoints = snapshot
+            .physical_outputs
+            .iter()
+            .filter(|output| physical_device_matches(&output.descriptor, descriptor))
+            .filter(|output| beacn_link_output_slot(&output.name, &output.descriptor).is_none())
+            .count();
+        if endpoints != 1 {
+            return Err(BridgeError::InvalidValue(format!(
+                "target output descriptor must resolve to exactly one non-Link endpoint; found {endpoints}"
+            )));
+        }
+        let matching = target
+            .attached_devices
+            .iter()
+            .enumerate()
+            .filter_map(|(index, attached)| {
+                physical_device_matches(attached, descriptor).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if matching.len() != 1 {
+            return Err(BridgeError::InvalidValue(format!(
+                "target output descriptor must match exactly one attachment: {target_id}; found {}",
+                matching.len()
+            )));
+        }
+        // PipeWeaver removes by attachment index rather than stable descriptor.
+        // This preflight fails closed for missing/ambiguous descriptors, but an
+        // external writer could still reorder attachments between this status
+        // read and the command. That protocol-level index race remains an HIL
+        // validation boundary; do not guess another index or remove broadly.
+        self.send(APICommand::RemovePhysicalNodeByName(
+            target_id.to_owned(),
+            matching[0],
+        ))
+        .await
+    }
+
     async fn set_source_device(
         &self,
         channel_id: &str,
@@ -623,6 +719,7 @@ fn map_status(status: &DaemonStatus) -> MixerSnapshot {
         physical_outputs,
         physical_inputs,
         link_outputs,
+        copy_outputs: Vec::new(),
     }
 }
 
@@ -1486,6 +1583,153 @@ mod tests {
             ] if name == &selected_target
         ));
 
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn additive_target_attach_never_removes_existing_outputs() {
+        let (backend, fake, server) = fake_backend().await;
+        let target_id;
+        {
+            let mut status = fake.status.lock().await;
+            target_id = map_status(&status).targets[0].id.clone();
+            status.audio.devices[DeviceType::Target].push(
+                pipeweaver_ipc::commands::PhysicalDevice {
+                    node_id: 77,
+                    name: Some("alsa_output.capture-card".into()),
+                    description: Some("Capture Card".into()),
+                    is_usable: true,
+                    ..Default::default()
+                },
+            );
+        }
+
+        backend.attach_target_output(&target_id, 77).await.unwrap();
+        let requests = fake.requests.lock().await;
+        assert!(matches!(
+            requests.as_slice(),
+            [
+                DaemonRequest::GetStatus,
+                DaemonRequest::Pipewire(APICommand::AttachPhysicalNodeByName(name, 77))
+            ] if name == &target_id
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn exact_target_detach_removes_only_the_matching_attachment() {
+        let (backend, fake, server) = fake_backend().await;
+        let selected = pipeweaver_profile::PhysicalDeviceDescriptor {
+            name: Some("alsa_output.capture-card".into()),
+            description: Some("Capture Card".into()),
+        };
+        let target_id;
+        {
+            let mut status = fake.status.lock().await;
+            target_id = map_status(&status).targets[0].id.clone();
+            status.audio.profile.devices.targets.physical_devices[0].attached_devices = vec![
+                pipeweaver_profile::PhysicalDeviceDescriptor {
+                    name: Some("alsa_output.primary".into()),
+                    description: Some("Primary".into()),
+                },
+                selected.clone(),
+                pipeweaver_profile::PhysicalDeviceDescriptor {
+                    name: Some("alsa_output.unrelated".into()),
+                    description: Some("Unrelated".into()),
+                },
+            ];
+            status.audio.devices[DeviceType::Target].push(
+                pipeweaver_ipc::commands::PhysicalDevice {
+                    node_id: 77,
+                    name: selected.name.clone(),
+                    description: selected.description.clone(),
+                    is_usable: true,
+                    ..Default::default()
+                },
+            );
+        }
+        let descriptor = MixerPhysicalDeviceDescriptor {
+            name: selected.name,
+            description: selected.description,
+        };
+
+        backend
+            .detach_target_output(&target_id, &descriptor)
+            .await
+            .unwrap();
+        let requests = fake.requests.lock().await;
+        assert!(matches!(
+            requests.as_slice(),
+            [
+                DaemonRequest::GetStatus,
+                DaemonRequest::Pipewire(APICommand::RemovePhysicalNodeByName(name, 1))
+            ] if name == &target_id
+        ));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn exact_target_detach_fails_closed_for_missing_or_ambiguous_attachments() {
+        let (backend, fake, server) = fake_backend().await;
+        let descriptor = pipeweaver_profile::PhysicalDeviceDescriptor {
+            name: Some("alsa_output.capture-card".into()),
+            description: Some("Capture Card".into()),
+        };
+        let target_id;
+        {
+            let mut status = fake.status.lock().await;
+            target_id = map_status(&status).targets[0].id.clone();
+            status.audio.devices[DeviceType::Target].push(
+                pipeweaver_ipc::commands::PhysicalDevice {
+                    node_id: 77,
+                    name: descriptor.name.clone(),
+                    description: descriptor.description.clone(),
+                    is_usable: true,
+                    ..Default::default()
+                },
+            );
+            status.audio.profile.devices.targets.physical_devices[0]
+                .attached_devices
+                .clear();
+        }
+        let stable = MixerPhysicalDeviceDescriptor {
+            name: descriptor.name.clone(),
+            description: descriptor.description.clone(),
+        };
+        assert!(
+            backend
+                .detach_target_output(&target_id, &stable)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("exactly one attachment")
+        );
+        {
+            fake.status
+                .lock()
+                .await
+                .audio
+                .profile
+                .devices
+                .targets
+                .physical_devices[0]
+                .attached_devices = vec![descriptor.clone(), descriptor];
+        }
+        assert!(
+            backend
+                .detach_target_output(&target_id, &stable)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("found 2")
+        );
+        assert!(
+            fake.requests
+                .lock()
+                .await
+                .iter()
+                .all(|request| matches!(request, DaemonRequest::GetStatus))
+        );
         server.abort();
     }
 
