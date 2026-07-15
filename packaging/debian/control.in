@@ -4,7 +4,7 @@ Section: sound
 Priority: optional
 Architecture: @ARCH@
 Maintainer: StudioBridge contributors
-Depends: libfontconfig1, libusb-1.0-0, libwayland-client0 | libx11-6
+Depends: @DEPENDS@
 Description: Native Linux control surface for BEACN Studio
  StudioBridge integrates BEACN Studio USB1 with PipeWeaver and provides a
  native mixer, routing, application assignment, and guarded microphone DSP UI.

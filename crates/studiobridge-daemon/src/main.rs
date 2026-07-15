@@ -15,9 +15,10 @@ use studiobridge_core::{
     MixerBackend, MixerProfileRequest, MixerProfileSummary, MixerProfilesResponse, MixerSnapshot,
     MockMixerBackend, MockStudioBackend, RemoveMixerSourceRequest, ReorderMixerSourceRequest,
     SetDefaultDeviceRequest, SetLinkAssignmentRequest, SetLinkOutputAssignmentRequest,
-    SetMicrophoneRequest, SetMixerApplicationRequest, SetMuteRequest, SetRouteRequest,
-    SetSourceDeviceRequest, SetTargetDeviceRequest, SetTargetMuteRequest, SetTargetVolumeRequest,
-    SetVolumeLinkedRequest, SetVolumeRequest, StudioBackend, StudioBridgeService,
+    SetMicrophoneRequest, SetMixerApplicationRequest, SetMixerSourceColourRequest,
+    SetMixerSourceNameRequest, SetMuteRequest, SetRouteRequest, SetSourceDeviceRequest,
+    SetTargetDeviceRequest, SetTargetMuteRequest, SetTargetVolumeRequest, SetVolumeLinkedRequest,
+    SetVolumeRequest, StudioBackend, StudioBridgeService,
 };
 use studiobridge_pipeweaver::PipeweaverBackend;
 use tokio::sync::RwLock;
@@ -136,10 +137,7 @@ struct ProfileStore {
 impl ProfileStore {
     fn load() -> Self {
         let path = daemon_config_root().join("mixer-profiles.json");
-        let state = std::fs::read(&path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default();
+        let state = read_profile_file(&path).unwrap_or_default();
         Self {
             path,
             state: Arc::new(RwLock::new(state)),
@@ -173,41 +171,47 @@ impl ProfileStore {
     async fn save(&self, name: String, mixer: MixerSnapshot) -> Result<(), BridgeError> {
         validate_profile_name(&name)?;
         let mut state = self.state.write().await;
-        if let Some(profile) = state
+        let mut next = state.clone();
+        if let Some(profile) = next
             .profiles
             .iter_mut()
             .find(|profile| profile.name == name)
         {
             profile.mixer = mixer;
         } else {
-            state.profiles.push(SavedMixerProfile {
+            next.profiles.push(SavedMixerProfile {
                 name: name.clone(),
                 mixer,
             });
         }
-        state.active = Some(name);
-        self.persist(&state)
+        next.active = Some(name);
+        self.persist(&next)?;
+        *state = next;
+        Ok(())
     }
 
     async fn create(&self, mixer: MixerSnapshot) -> Result<String, BridgeError> {
         let mut state = self.state.write().await;
+        let mut next = state.clone();
         let name = next_profile_name(
             "New Profile",
-            state.profiles.iter().map(|profile| profile.name.as_str()),
+            next.profiles.iter().map(|profile| profile.name.as_str()),
             false,
         );
-        state.profiles.push(SavedMixerProfile {
+        next.profiles.push(SavedMixerProfile {
             name: name.clone(),
             mixer,
         });
-        state.active = Some(name.clone());
-        self.persist(&state)?;
+        next.active = Some(name.clone());
+        self.persist(&next)?;
+        *state = next;
         Ok(name)
     }
 
     async fn duplicate(&self, name: &str) -> Result<String, BridgeError> {
         let mut state = self.state.write().await;
-        let mixer = state
+        let mut next = state.clone();
+        let mixer = next
             .profiles
             .iter()
             .find(|profile| profile.name == name)
@@ -215,36 +219,48 @@ impl ProfileStore {
             .ok_or_else(|| BridgeError::InvalidValue(format!("unknown mixer profile: {name}")))?;
         let duplicate_name = next_profile_name(
             name,
-            state.profiles.iter().map(|profile| profile.name.as_str()),
+            next.profiles.iter().map(|profile| profile.name.as_str()),
             true,
         );
-        state.profiles.push(SavedMixerProfile {
+        next.profiles.push(SavedMixerProfile {
             name: duplicate_name.clone(),
             mixer,
         });
-        self.persist(&state)?;
+        self.persist(&next)?;
+        *state = next;
         Ok(duplicate_name)
     }
 
     async fn set_active(&self, name: &str) -> Result<(), BridgeError> {
         let mut state = self.state.write().await;
-        state.active = Some(name.to_owned());
-        self.persist(&state)
-    }
-
-    async fn delete(&self, name: &str) -> Result<(), BridgeError> {
-        let mut state = self.state.write().await;
-        let before = state.profiles.len();
-        state.profiles.retain(|profile| profile.name != name);
-        if state.profiles.len() == before {
+        if !state.profiles.iter().any(|profile| profile.name == name) {
             return Err(BridgeError::InvalidValue(format!(
                 "unknown mixer profile: {name}"
             )));
         }
-        if state.active.as_deref() == Some(name) {
-            state.active = None;
+        let mut next = state.clone();
+        next.active = Some(name.to_owned());
+        self.persist(&next)?;
+        *state = next;
+        Ok(())
+    }
+
+    async fn delete(&self, name: &str) -> Result<(), BridgeError> {
+        let mut state = self.state.write().await;
+        let mut next = state.clone();
+        let before = next.profiles.len();
+        next.profiles.retain(|profile| profile.name != name);
+        if next.profiles.len() == before {
+            return Err(BridgeError::InvalidValue(format!(
+                "unknown mixer profile: {name}"
+            )));
         }
-        self.persist(&state)
+        if next.active.as_deref() == Some(name) {
+            next.active = None;
+        }
+        self.persist(&next)?;
+        *state = next;
+        Ok(())
     }
 
     fn persist(&self, state: &ProfileFile) -> Result<(), BridgeError> {
@@ -254,7 +270,87 @@ impl ProfileStore {
         std::fs::create_dir_all(parent).map_err(|error| BridgeError::Backend(error.to_string()))?;
         let json = serde_json::to_vec_pretty(state)
             .map_err(|error| BridgeError::Backend(error.to_string()))?;
-        std::fs::write(&self.path, json).map_err(|error| BridgeError::Backend(error.to_string()))
+        let temp_path = self.path.with_extension(format!(
+            "json.tmp-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let write_result = (|| {
+            let mut temp = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temp_path)
+                .map_err(|error| BridgeError::Backend(error.to_string()))?;
+            std::io::Write::write_all(&mut temp, &json)
+                .map_err(|error| BridgeError::Backend(error.to_string()))?;
+            temp.sync_all()
+                .map_err(|error| BridgeError::Backend(error.to_string()))
+        })();
+        if let Err(error) = write_result {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(error);
+        }
+        replace_file(&temp_path, &self.path).inspect_err(|_| {
+            let _ = std::fs::remove_file(&temp_path);
+        })
+    }
+}
+
+fn profile_backup_path(path: &std::path::Path) -> PathBuf {
+    path.with_extension("json.backup")
+}
+
+fn read_profile_file(path: &std::path::Path) -> Option<ProfileFile> {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .or_else(|| {
+            let backup = profile_backup_path(path);
+            let state = std::fs::read(&backup)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice(&bytes).ok())?;
+            let _ = std::fs::rename(&backup, path);
+            Some(state)
+        })
+}
+
+fn replace_file(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> Result<(), BridgeError> {
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(source, destination)
+            .map_err(|error| BridgeError::Backend(error.to_string()))?;
+        if let Some(parent) = destination.parent() {
+            std::fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| BridgeError::Backend(error.to_string()))?;
+        }
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        if !destination.exists() {
+            return std::fs::rename(source, destination)
+                .map_err(|error| BridgeError::Backend(error.to_string()));
+        }
+        let backup = profile_backup_path(destination);
+        if backup.exists() {
+            std::fs::remove_file(&backup)
+                .map_err(|error| BridgeError::Backend(error.to_string()))?;
+        }
+        std::fs::rename(destination, &backup)
+            .map_err(|error| BridgeError::Backend(error.to_string()))?;
+        if let Err(error) = std::fs::rename(source, destination) {
+            let _ = std::fs::rename(&backup, destination);
+            return Err(BridgeError::Backend(error.to_string()));
+        }
+        let _ = std::fs::remove_file(backup);
+        Ok(())
     }
 }
 
@@ -466,6 +562,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/mixer/mute", post(set_mute))
         .route("/api/mixer/route", post(set_route))
         .route("/api/mixer/source", post(create_mixer_source))
+        .route("/api/mixer/source/name", post(set_mixer_source_name))
+        .route("/api/mixer/source/colour", post(set_mixer_source_colour))
         .route("/api/mixer/source/remove", post(remove_mixer_source))
         .route("/api/mixer/source/reorder", post(reorder_mixer_source))
         .route("/api/mixer/profiles", get(list_mixer_profiles))
@@ -751,6 +849,28 @@ async fn create_mixer_source(
     Ok(ok())
 }
 
+async fn set_mixer_source_name(
+    State(state): State<AppState>,
+    Json(request): Json<SetMixerSourceNameRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state
+        .service
+        .set_source_name(&request.source_id, &request.name)
+        .await?;
+    Ok(ok())
+}
+
+async fn set_mixer_source_colour(
+    State(state): State<AppState>,
+    Json(request): Json<SetMixerSourceColourRequest>,
+) -> Result<Json<ApiMessage>, ApiError> {
+    state
+        .service
+        .set_source_colour(&request.source_id, &request.colour)
+        .await?;
+    Ok(ok())
+}
+
 async fn remove_mixer_source(
     State(state): State<AppState>,
     Json(request): Json<RemoveMixerSourceRequest>,
@@ -846,6 +966,58 @@ fn ok() -> Json<ApiMessage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temporary_test_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "studiobridge-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[tokio::test]
+    async fn profile_store_persists_complete_snapshot_without_false_in_memory_success() {
+        let root = temporary_test_path("profile-store");
+        let store = ProfileStore {
+            path: root.join("mixer-profiles.json"),
+            state: Arc::new(RwLock::new(ProfileFile::default())),
+        };
+        let mixer = MockMixerBackend::default().snapshot().await.unwrap();
+        store
+            .save("Default Profile".into(), mixer.clone())
+            .await
+            .unwrap();
+
+        let persisted: ProfileFile =
+            serde_json::from_slice(&std::fs::read(&store.path).unwrap()).unwrap();
+        assert_eq!(persisted.active.as_deref(), Some("Default Profile"));
+        assert_eq!(persisted.profiles[0].mixer, mixer);
+
+        let backup = profile_backup_path(&store.path);
+        std::fs::rename(&store.path, &backup).unwrap();
+        let recovered = read_profile_file(&store.path).unwrap();
+        assert_eq!(recovered.active.as_deref(), Some("Default Profile"));
+        assert!(store.path.exists());
+        assert!(!backup.exists());
+
+        let blocked_parent = root.join("not-a-directory");
+        std::fs::write(&blocked_parent, b"file").unwrap();
+        let failing = ProfileStore {
+            path: blocked_parent.join("mixer-profiles.json"),
+            state: Arc::new(RwLock::new(ProfileFile::default())),
+        };
+        let error = failing
+            .save("Must Not Exist".into(), mixer)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, BridgeError::Backend(_)));
+        assert!(failing.list().await.profiles.is_empty());
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn runtime_health_exposes_the_hardware_write_gate() {

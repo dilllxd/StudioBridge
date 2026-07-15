@@ -8,12 +8,22 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Install native build dependencies
         run: |
@@ -28,7 +38,12 @@ jobs:
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
             libxcb-shape0-dev \
-            libxcb-xfixes0-dev
+            libxcb-xfixes0-dev \
+            libusb-1.0-0-dev \
+            appstream \
+            desktop-file-utils \
+            dpkg-dev \
+            shellcheck
 
       - name: Select stable Rust
         run: |
@@ -36,4 +51,40 @@ jobs:
           rustup default stable
 
       - name: Verify workspace and Linux package staging
+        env:
+          STUDIOBRIDGE_VERIFIED_ARTIFACT_DIR: ${{ github.workspace }}/verified-artifacts
         run: bash scripts/verify.sh
+
+      - name: Upload verified Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: studiobridge-linux-${{ github.sha }}
+          path: verified-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  packaging-static-windows:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Verify packaging definitions and LF shell syntax
+        shell: bash
+        run: |
+          node --test scripts/validate-packaging.test.mjs
+          node scripts/validate-packaging.mjs
+          bash -n \
+            scripts/install-linux.sh \
+            scripts/stage-package-root.sh \
+            scripts/package-linux.sh \
+            scripts/verify-package-layout.sh \
+            packaging/debian/postinst \
+            packaging/debian/postrm \
+            packaging/arch/studiobridge.install

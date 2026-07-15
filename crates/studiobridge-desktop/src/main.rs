@@ -2374,10 +2374,10 @@ fn channel_detail(channel: &MixerChannel) -> String {
     if channel.applications.is_empty() {
         match channel.source_kind {
             studiobridge_core::MixerSourceKind::Physical => "Physical input".into(),
-            studiobridge_core::MixerSourceKind::Virtual => "Waiting for an application".into(),
+            studiobridge_core::MixerSourceKind::Virtual => String::new(),
         }
     } else {
-        channel.applications.join(" · ")
+        channel.applications.join("\n")
     }
 }
 
@@ -3249,19 +3249,21 @@ fn start_meter_stream(window: Weak<MainWindow>, client: DaemonClient) {
 mod desktop_tests {
     use super::{
         AppPreferences, DspSelection, active_eq_profile, add_eq_band, adjust_eq_band_value,
-        application_chip_text_width, external_link_url, hotkey_key_name, link_channel_for_source,
-        link_channel_label, mock_meter_level, mute_state_with_target, normalize_captured_hotkey,
-        normalize_mute_action, preferred_default_repair, remove_eq_band, selected_dsp_enabled,
-        set_enhancement_preset, set_enhancement_value, set_eq_band_type_value, set_eq_band_value,
-        set_headphone_eq_band_value, set_headphone_subwoofer_value, set_selected_dsp_enabled,
-        should_start_in_background, source_name_available, update_from_values,
+        application_chip_text_width, channel_detail, external_link_url, hotkey_key_name,
+        link_channel_for_source, link_channel_label, mock_meter_level, mute_state_with_target,
+        normalize_captured_hotkey, normalize_mute_action, preferred_default_repair, remove_eq_band,
+        selected_dsp_enabled, set_enhancement_preset, set_enhancement_value,
+        set_eq_band_type_value, set_eq_band_value, set_headphone_eq_band_value,
+        set_headphone_subwoofer_value, set_selected_dsp_enabled, should_start_in_background,
+        source_name_available, update_from_values,
     };
     use global_hotkey::hotkey::HotKey;
     use slint::platform::Key;
     use studiobridge_core::{
         DspMode, EqualizerBandState, EqualizerBandType, HeadphoneEqualizerState,
         HeadphoneOutputMode, HeadphoneState, LinkChannel, MicrophoneDspSnapshot,
-        MicrophoneDspUpdate, MixerDeviceChoice, MuteState, StudioIdentity,
+        MicrophoneDspUpdate, MixerChannel, MixerDeviceChoice, MixerSourceKind, MuteState,
+        StudioIdentity,
     };
 
     fn dsp_snapshot() -> MicrophoneDspSnapshot {
@@ -3506,6 +3508,27 @@ mod desktop_tests {
             mute_state_with_target(MuteState::MutedAudience, "audience", false),
             MuteState::Unmuted
         );
+    }
+
+    #[test]
+    fn source_detail_matches_beacn_compact_application_rows() {
+        let mut channel = MixerChannel {
+            id: "chat".into(),
+            meter_id: "chat".into(),
+            name: "Chat".into(),
+            colour: "#42c9c6".into(),
+            personal_volume: 50,
+            audience_volume: 50,
+            mute_state: MuteState::Unmuted,
+            applications: Vec::new(),
+            source_kind: MixerSourceKind::Virtual,
+            volumes_linked: true,
+            attached_devices: Vec::new(),
+        };
+
+        assert_eq!(channel_detail(&channel), "");
+        channel.applications = vec!["Discord".into(), "Teams".into()];
+        assert_eq!(channel_detail(&channel), "Discord\nTeams");
     }
 
     #[test]

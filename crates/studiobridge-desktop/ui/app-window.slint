@@ -382,7 +382,9 @@ component MuteActionRow inherits Rectangle {
     in property <bool> selected;
     callback activated;
     height: 20px;
-    background: action-touch.has-hover ? #3a393e : transparent;
+    background: action-touch.has-hover || action-focus.has-focus ? #3a393e : transparent;
+    border-width: action-focus.has-focus ? 1px : 0px;
+    border-color: Theme.teal;
     action-focus := FocusScope {
         width: parent.width; height: parent.height;
         accessible-role: button;
@@ -523,7 +525,9 @@ component InputDeviceRow inherits Rectangle {
     in property <bool> selected;
     callback activated;
     height: 18px;
-    background: input-touch.has-hover ? #252529 : transparent;
+    background: input-touch.has-hover || input-focus.has-focus ? #252529 : transparent;
+    border-width: input-focus.has-focus ? 1px : 0px;
+    border-color: Theme.teal;
     Rectangle {
         x: 3px; y: 4px; width: 10px; height: 10px;
         border-radius: 5px;
@@ -574,6 +578,9 @@ component SourceStrip inherits Rectangle {
         && root.application-drag-x < root.absolute-position.x + root.width
         && root.application-drag-y >= root.absolute-position.y
         && root.application-drag-y < root.absolute-position.y + root.height;
+    property <string> personal-mute-label: root.source.name.to-lowercase() == "mic" ? "Mute to Chat" : "Mute to Self";
+    property <bool> interaction-focused: grip-focus.has-focus || header-menu-focus.has-focus
+        || link-focus.has-focus || mute-menu-focus.has-focus || mute-action-focus.has-focus;
     callback personal-changed(float);
     callback audience-changed(float);
     callback personal-mute;
@@ -584,11 +591,11 @@ component SourceStrip inherits Rectangle {
     callback link-changed(bool);
     callback delete-source;
     callback input-device-selected(int);
-    width: 133px;
+    width: 127px;
     height: 398px;
     border-radius: 2px;
     border-width: 1px;
-    border-color: root.dragging || root.application-hovered ? Theme.teal : Theme.border;
+    border-color: root.dragging || root.application-hovered || root.interaction-focused ? Theme.teal : Theme.border;
     background: Theme.panel;
     opacity: root.dragging ? 0.82 : 1.0;
     VerticalLayout {
@@ -596,6 +603,7 @@ component SourceStrip inherits Rectangle {
         spacing: 5px;
         Rectangle {
             height: 18px;
+            background: header-touch.has-hover || header-menu-focus.has-focus ? #2d2d31 : transparent;
             HorizontalLayout {
                 spacing: 3px;
                 grip-focus := FocusScope {
@@ -612,7 +620,7 @@ component SourceStrip inherits Rectangle {
                         }
                         return reject;
                     }
-                    Text { text: "⠿"; color: root.dragging ? Theme.teal : #5f5e64; font-size: 10px; vertical-alignment: center; }
+                    Text { text: "⠿"; color: root.dragging || grip-focus.has-focus || drag-touch.has-hover ? Theme.teal : #5f5e64; font-size: 10px; vertical-alignment: center; }
                     drag-touch := TouchArea {
                         mouse-cursor: MouseCursor.grab;
                         pointer-event(event) => {
@@ -651,10 +659,14 @@ component SourceStrip inherits Rectangle {
                     }
                     return reject;
                 }
-                TouchArea { clicked => { header-menu-focus.focus(); if channel-menu.is-open { channel-menu.close(); } else { channel-menu.show(); } } }
+                header-touch := TouchArea { clicked => { header-menu-focus.focus(); if channel-menu.is-open { channel-menu.close(); } else { channel-menu.show(); } } }
             }
         }
-        Rectangle { height: 3px; background: root.source.colour; }
+        Rectangle {
+            height: 3px;
+            background: transparent;
+            Rectangle { x: -7px; width: parent.width + 14px; height: parent.height; background: root.source.colour; }
+        }
         HorizontalLayout {
             height: 219px;
             spacing: 3px;
@@ -689,7 +701,7 @@ component SourceStrip inherits Rectangle {
                     border-radius: 3px;
                     border-width: 1px;
                     border-color: root.source.linked ? Theme.teal : Theme.border;
-                    background: root.source.linked ? #15302e : #101619;
+                    background: root.source.linked ? #15302e : link-touch.has-hover || link-focus.has-focus ? #26272a : #101619;
                     Text { text: root.source.linked ? "∞" : "--"; color: root.source.linked ? Theme.teal : Theme.quiet; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                     link-focus := FocusScope {
                         width: parent.width; height: parent.height;
@@ -702,7 +714,7 @@ component SourceStrip inherits Rectangle {
                             }
                             return reject;
                         }
-                        TouchArea { clicked => { link-focus.focus(); root.link-changed(!root.source.linked); } }
+                        link-touch := TouchArea { clicked => { link-focus.focus(); root.link-changed(!root.source.linked); } }
                     }
                 }
                 Rectangle { horizontal-stretch: 1; }
@@ -732,20 +744,25 @@ component SourceStrip inherits Rectangle {
                     }
                 }
             }
-            if !root.source.physical: Text { x: 7px; y: 6px; width: parent.width - 14px; text: root.source.detail; color: Theme.quiet; font-size: 8px; overflow: elide; }
+            if !root.source.physical: Text {
+                x: 7px; y: 6px; width: parent.width - 14px; height: parent.height - 12px;
+                text: root.source.detail; color: Theme.quiet; font-size: 8px;
+                wrap: word-wrap; overflow: elide;
+            }
         }
         Rectangle {
             height: 20px;
-            background: #202023;
+            background: mute-action-touch.has-hover || mute-action-focus.has-focus ? #29292d : #202023;
             border-width: 1px;
             border-color: #303034;
             Text {
                 width: parent.width - 20px;
-                text: root.source.mute-action == "all" ? "Mute to All" : root.source.mute-action == "personal" ? "Mute to Self" : "Mute to Audience";
+                text: root.source.mute-action == "all" ? "Mute to All" : root.source.mute-action == "personal" ? root.personal-mute-label : "Mute to Audience";
                 color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center;
             }
             Rectangle {
                 x: parent.width - 20px; width: 20px; height: parent.height;
+                background: mute-menu-touch.has-hover || mute-menu-focus.has-focus ? #343439 : transparent;
                 Rectangle { width: 1px; height: parent.height; background: #303034; }
                 Text { text: "v"; color: Theme.quiet; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; }
                 mute-menu-focus := FocusScope {
@@ -759,13 +776,13 @@ component SourceStrip inherits Rectangle {
                         }
                         return reject;
                     }
-                    TouchArea { clicked => { mute-menu-focus.focus(); if mute-menu.is-open { mute-menu.close(); } else { mute-menu.show(); } } }
+                    mute-menu-touch := TouchArea { clicked => { mute-menu-focus.focus(); if mute-menu.is-open { mute-menu.close(); } else { mute-menu.show(); } } }
                 }
             }
             mute-action-focus := FocusScope {
                 width: parent.width - 20px; height: parent.height;
                 accessible-role: button;
-                accessible-label: "Apply " + (root.source.mute-action == "all" ? "Mute to All" : root.source.mute-action == "personal" ? "Mute to Self" : "Mute to Audience") + " to " + root.source.name;
+                accessible-label: "Apply " + (root.source.mute-action == "all" ? "Mute to All" : root.source.mute-action == "personal" ? root.personal-mute-label : "Mute to Audience") + " to " + root.source.name;
                 key-pressed(event) => {
                     if event.text == Key.Return || event.text == Key.Space {
                         root.mute-action(root.source.mute-action);
@@ -773,7 +790,7 @@ component SourceStrip inherits Rectangle {
                     }
                     return reject;
                 }
-                TouchArea { clicked => { mute-action-focus.focus(); root.mute-action(root.source.mute-action); } }
+                mute-action-touch := TouchArea { clicked => { mute-action-focus.focus(); root.mute-action(root.source.mute-action); } }
             }
         }
     }
@@ -817,7 +834,7 @@ component SourceStrip inherits Rectangle {
                     activated => { mute-menu.close(); root.mute-action-selected("audience"); }
                 }
                 MuteActionRow {
-                    label: "Mute to Self"; selected: root.source.mute-action == "personal";
+                    label: root.personal-mute-label; selected: root.source.mute-action == "personal";
                     activated => { mute-menu.close(); root.mute-action-selected("personal"); }
                 }
             }
@@ -1861,7 +1878,9 @@ component AddSourceRow inherits Rectangle {
     in property <bool> available: true;
     callback selected(string);
     height: 18px;
-    background: root.available && touch.has-hover ? #3a393e : transparent;
+    background: root.available && (touch.has-hover || add-source-row-focus.has-focus) ? #3a393e : transparent;
+    border-width: add-source-row-focus.has-focus ? 1px : 0px;
+    border-color: Theme.teal;
     add-source-row-focus := FocusScope {
         width: parent.width; height: parent.height;
         enabled: root.available;
@@ -2124,7 +2143,7 @@ export component MainWindow inherits Window {
                         width: parent.width;
                         height: parent.height;
                         HorizontalLayout {
-                            spacing: 4px;
+                            spacing: 10px;
                             for source[index] in root.sources: SourceStrip {
                                 source: source;
                                 source-index: index;
@@ -2158,8 +2177,12 @@ export component MainWindow inherits Window {
                                 }
                             }
                             Rectangle {
-                                width: 133px; height: 398px; background: #19191c; border-width: 1px; border-color: Theme.border; border-radius: 2px;
-                                Text { text: "+"; color: Theme.quiet; font-size: 42px; font-weight: 200; horizontal-alignment: center; vertical-alignment: center; }
+                                width: 127px; height: 398px;
+                                background: add-source-touch.has-hover || add-source-focus.has-focus ? #202529 : #19191c;
+                                border-width: 1px;
+                                border-color: add-source-focus.has-focus ? Theme.teal : Theme.border;
+                                border-radius: 2px;
+                                Text { text: "+"; color: add-source-touch.has-hover || add-source-focus.has-focus ? Theme.teal : Theme.quiet; font-size: 42px; font-weight: 200; horizontal-alignment: center; vertical-alignment: center; }
                                 add-source-focus := FocusScope {
                                     width: parent.width; height: parent.height;
                                     accessible-role: button;
@@ -2171,7 +2194,7 @@ export component MainWindow inherits Window {
                                         }
                                         return reject;
                                     }
-                                    TouchArea {
+                                    add-source-touch := TouchArea {
                                         clicked => {
                                             add-source-focus.focus();
                                             if add-source-menu.is-open { add-source-menu.close(); } else { add-source-menu.show(); }

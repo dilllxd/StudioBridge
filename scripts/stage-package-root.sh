@@ -14,6 +14,10 @@ if [[ "$package_root" == / ]]; then
   printf 'Refusing to stage a package into /.\n' >&2
   exit 1
 fi
+if find "$package_root" -mindepth 1 -print -quit | grep -q .; then
+  printf 'Refusing to stage into a nonempty package root: %s\n' "$package_root" >&2
+  exit 1
+fi
 
 target_dir="${CARGO_TARGET_DIR:-$root/target}"
 if [[ "$target_dir" != /* ]]; then

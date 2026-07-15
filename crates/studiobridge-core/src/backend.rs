@@ -53,6 +53,8 @@ pub trait MixerBackend: Send + Sync {
     async fn set_mute(&self, channel_id: &str, state: MuteState) -> BridgeResult<()>;
     async fn set_route(&self, source_id: &str, target_id: &str, enabled: bool) -> BridgeResult<()>;
     async fn create_source(&self, name: &str) -> BridgeResult<()>;
+    async fn set_source_name(&self, source_id: &str, name: &str) -> BridgeResult<()>;
+    async fn set_source_colour(&self, source_id: &str, colour: &str) -> BridgeResult<()>;
     async fn remove_source(&self, source_id: &str) -> BridgeResult<()>;
     async fn set_source_order(&self, source_id: &str, position: usize) -> BridgeResult<()>;
     async fn set_application_route(
@@ -825,6 +827,48 @@ impl MixerBackend for MockMixerBackend {
         Ok(())
     }
 
+    async fn set_source_name(&self, source_id: &str, name: &str) -> BridgeResult<()> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 64 {
+            return Err(BridgeError::InvalidValue(
+                "source name must contain 1 to 64 characters".into(),
+            ));
+        }
+        let mut state = self.state.write().await;
+        if state
+            .channels
+            .iter()
+            .any(|channel| channel.id != source_id && channel.name.eq_ignore_ascii_case(name))
+        {
+            return Err(BridgeError::InvalidValue(format!(
+                "source already exists: {name}"
+            )));
+        }
+        let channel = state
+            .channels
+            .iter_mut()
+            .find(|channel| channel.id == source_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown channel: {source_id}")))?;
+        channel.name = name.into();
+        Ok(())
+    }
+
+    async fn set_source_colour(&self, source_id: &str, colour: &str) -> BridgeResult<()> {
+        if !valid_mixer_colour(colour) {
+            return Err(BridgeError::InvalidValue(
+                "source colour must be #RGB or #RRGGBB".into(),
+            ));
+        }
+        let mut state = self.state.write().await;
+        let channel = state
+            .channels
+            .iter_mut()
+            .find(|channel| channel.id == source_id)
+            .ok_or_else(|| BridgeError::InvalidValue(format!("unknown channel: {source_id}")))?;
+        channel.colour = colour.to_ascii_lowercase();
+        Ok(())
+    }
+
     async fn remove_source(&self, source_id: &str) -> BridgeResult<()> {
         let mut state = self.state.write().await;
         let before = state.channels.len();
@@ -893,6 +937,11 @@ impl MixerBackend for MockMixerBackend {
         }
         Ok(())
     }
+}
+
+fn valid_mixer_colour(colour: &str) -> bool {
+    let hex = colour.strip_prefix('#').unwrap_or(colour);
+    matches!(hex.len(), 3 | 6) && hex.chars().all(|character| character.is_ascii_hexdigit())
 }
 
 fn sync_mock_link_outputs(state: &mut MixerSnapshot) {

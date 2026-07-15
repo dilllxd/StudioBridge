@@ -9,6 +9,7 @@ depends=('fontconfig' 'libusb' 'wayland' 'libx11')
 makedepends=('rust>=1.92' 'npm' 'git')
 source=("git+$url.git#tag=v$pkgver")
 sha256sums=('SKIP')
+install=studiobridge.install
 _srcdir='StudioBridge'
 
 build() {

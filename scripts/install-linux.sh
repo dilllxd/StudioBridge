@@ -158,6 +158,6 @@ fi
 
 printf '\nStudioBridge installed in read-only hardware mode.\n'
 printf 'Launch StudioBridge from the application menu after BEACN Studio USB1 and PipeWeaver are running.\n'
-printf 'Run scripts/enable-desktop-autostart.sh to start the native app in the tray at login.\n'
+printf 'Enable Start at Login in StudioBridge settings, or run scripts/enable-desktop-autostart.sh from this source tree.\n'
 printf 'Run scripts/validate-readonly.sh before scripts/enable-link-host.sh.\n'
 printf 'Do not enable general hardware writes during this validation.\n'

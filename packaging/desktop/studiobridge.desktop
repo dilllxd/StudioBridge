@@ -3,6 +3,7 @@ Type=Application
 Name=StudioBridge
 Comment=Control BEACN Studio and streaming audio routing
 Exec=studiobridge-desktop
+TryExec=studiobridge-desktop
 Icon=studiobridge
 Terminal=false
 Categories=AudioVideo;Audio;

@@ -201,6 +201,15 @@ spec and Arch `PKGBUILD` live under `packaging/`. Every format installs the
 daemon, desktop client, web fallback, user systemd unit, desktop metadata, icon,
 and udev rule from the same staging script.
 
+The complete verifier packages real Linux release binaries into both the
+Debian and portable formats, extracts them, checks the exact fixed-file
+manifest and modes, validates desktop and AppStream metadata, derives Debian
+runtime dependencies from the ELF files, and rejects any baseline service that
+enables general hardware, Link-host, or DSP writes. Package hooks reload only
+udev metadata and never start a per-user service. RPM and Arch definitions use
+the same staging root, but final native builds still need Fedora and Arch
+builders before a release is published.
+
 Flatpak is not currently shipped. Direct USB access, a persistent host user
 service, PipeWeaver IPC, and udev installation conflict with Flatpak's sandbox
 and immutable packaging model. A future Flatpak should be client-only and talk

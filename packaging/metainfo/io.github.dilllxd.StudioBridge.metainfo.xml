@@ -5,6 +5,9 @@
   <summary>Native Linux control surface for BEACN Studio and PipeWeaver</summary>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
+  <developer id="io.github.dilllxd">
+    <name>StudioBridge contributors</name>
+  </developer>
   <description>
     <p>StudioBridge provides a native mixer, routing, application assignment, and guarded microphone DSP interface for a dual-PC BEACN Studio setup.</p>
     <p>General hardware writes remain disabled by default. Firmware updates, factory reset, and unrestricted storage writes are not supported.</p>

@@ -339,6 +339,18 @@ pub struct CreateMixerSourceRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetMixerSourceNameRequest {
+    pub source_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetMixerSourceColourRequest {
+    pub source_id: String,
+    pub colour: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoveMixerSourceRequest {
     pub source_id: String,
 }

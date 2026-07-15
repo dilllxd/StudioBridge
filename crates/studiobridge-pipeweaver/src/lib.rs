@@ -400,6 +400,31 @@ impl MixerBackend for PipeweaverBackend {
         .await
     }
 
+    async fn set_source_name(&self, source_id: &str, name: &str) -> BridgeResult<()> {
+        let name = name.trim();
+        if name.is_empty() || name.chars().count() > 64 {
+            return Err(BridgeError::InvalidValue(
+                "source name must contain 1 to 64 characters".into(),
+            ));
+        }
+        self.send(APICommand::RenameNodeByName(
+            source_id.to_owned(),
+            name.to_owned(),
+        ))
+        .await
+    }
+
+    async fn set_source_colour(&self, source_id: &str, colour: &str) -> BridgeResult<()> {
+        let colour = colour.parse().map_err(|_| {
+            BridgeError::InvalidValue("source colour must be #RGB or #RRGGBB".into())
+        })?;
+        self.send(APICommand::SetNodeColourByName(
+            source_id.to_owned(),
+            colour,
+        ))
+        .await
+    }
+
     async fn remove_source(&self, source_id: &str) -> BridgeResult<()> {
         self.send(APICommand::RemoveNodeByName(source_id.to_owned()))
             .await
@@ -965,6 +990,7 @@ mod tests {
     struct FakePipeweaver {
         requests: Arc<AsyncMutex<Vec<DaemonRequest>>>,
         status: Arc<AsyncMutex<DaemonStatus>>,
+        fail_next_pipewire: Arc<AsyncMutex<bool>>,
     }
 
     impl Default for FakePipeweaver {
@@ -974,6 +1000,7 @@ mod tests {
             Self {
                 requests: Arc::default(),
                 status: Arc::new(AsyncMutex::new(status)),
+                fail_next_pipewire: Arc::default(),
             }
         }
     }
@@ -985,6 +1012,10 @@ mod tests {
         state.requests.lock().await.push(request.clone());
         if matches!(request, DaemonRequest::GetStatus) {
             Json(DaemonResponse::Status(state.status.lock().await.clone()))
+        } else if std::mem::take(&mut *state.fail_next_pipewire.lock().await) {
+            Json(DaemonResponse::Pipewire(PWCommandResponse::Err(
+                "injected command failure".into(),
+            )))
         } else {
             Json(DaemonResponse::Pipewire(PWCommandResponse::Ok))
         }
@@ -1086,7 +1117,12 @@ mod tests {
             .await
             .unwrap();
         backend.create_source("Aux 1").await.unwrap();
-        backend.remove_source("Aux 1").await.unwrap();
+        backend.set_source_name("Aux 1", "Auxiliary").await.unwrap();
+        backend
+            .set_source_colour("Auxiliary", "#123456")
+            .await
+            .unwrap();
+        backend.remove_source("Auxiliary").await.unwrap();
 
         let requests = fake.requests.lock().await;
         assert!(matches!(requests.get(1), Some(DaemonRequest::Pipewire(
@@ -1131,8 +1167,14 @@ mod tests {
             APICommand::CreateNode(NodeType::VirtualSource, name)
         )) if name == "Aux 1"));
         assert!(matches!(requests.get(13), Some(DaemonRequest::Pipewire(
+            APICommand::RenameNodeByName(source, name)
+        )) if source == "Aux 1" && name == "Auxiliary"));
+        assert!(matches!(requests.get(14), Some(DaemonRequest::Pipewire(
+            APICommand::SetNodeColourByName(source, colour)
+        )) if source == "Auxiliary" && colour.red == 0x12 && colour.green == 0x34 && colour.blue == 0x56));
+        assert!(matches!(requests.get(15), Some(DaemonRequest::Pipewire(
             APICommand::RemoveNodeByName(name)
-        )) if name == "Aux 1"));
+        )) if name == "Auxiliary"));
 
         server.abort();
     }
@@ -1172,6 +1214,45 @@ mod tests {
             APICommand::RemovePhysicalNodeByName(name, 0)
         )) if name == "Headphones"));
         assert_eq!(requests.len(), 3);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn failed_target_attachment_never_detaches_the_previous_output() {
+        let (backend, fake, server) = fake_backend().await;
+        {
+            let mut status = fake.status.lock().await;
+            status.audio.profile.devices.targets.physical_devices[0].attached_devices =
+                vec![pipeweaver_profile::PhysicalDeviceDescriptor {
+                    name: Some("alsa_output.old".into()),
+                    description: Some("Old Output".into()),
+                }];
+            status.audio.devices[DeviceType::Target].push(
+                pipeweaver_ipc::commands::PhysicalDevice {
+                    node_id: 42,
+                    name: Some("alsa_output.new".into()),
+                    description: Some("New Output".into()),
+                    is_usable: true,
+                    ..Default::default()
+                },
+            );
+        }
+        *fake.fail_next_pipewire.lock().await = true;
+
+        let error = backend
+            .set_target_device("Headphones", Some(42))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("injected command failure"));
+        let requests = fake.requests.lock().await;
+        assert!(matches!(
+            requests.as_slice(),
+            [
+                DaemonRequest::GetStatus,
+                DaemonRequest::Pipewire(APICommand::AttachPhysicalNodeByName(name, 42))
+            ] if name == "Headphones"
+        ));
 
         server.abort();
     }
@@ -1235,6 +1316,45 @@ mod tests {
             APICommand::RemovePhysicalNodeByName(name, 0)
         )) if name == "Microphone"));
         assert_eq!(requests.len(), 3);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn failed_source_attachment_never_detaches_the_previous_input() {
+        let (backend, fake, server) = fake_backend().await;
+        {
+            let mut status = fake.status.lock().await;
+            status.audio.profile.devices.sources.physical_devices[0].attached_devices =
+                vec![pipeweaver_profile::PhysicalDeviceDescriptor {
+                    name: Some("alsa_input.old".into()),
+                    description: Some("Old Input".into()),
+                }];
+            status.audio.devices[DeviceType::Source].push(
+                pipeweaver_ipc::commands::PhysicalDevice {
+                    node_id: 84,
+                    name: Some("alsa_input.new".into()),
+                    description: Some("New Input".into()),
+                    is_usable: true,
+                    ..Default::default()
+                },
+            );
+        }
+        *fake.fail_next_pipewire.lock().await = true;
+
+        let error = backend
+            .set_source_device("Microphone", Some(84))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("injected command failure"));
+        let requests = fake.requests.lock().await;
+        assert!(matches!(
+            requests.as_slice(),
+            [
+                DaemonRequest::GetStatus,
+                DaemonRequest::Pipewire(APICommand::AttachPhysicalNodeByName(name, 84))
+            ] if name == "Microphone"
+        ));
 
         server.abort();
     }
@@ -1316,6 +1436,55 @@ mod tests {
             APICommand::RemovePhysicalNodeByName(name, 0)
         )) if name == "Headphones"));
         assert_eq!(requests.len(), 3);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn failed_link_attachment_never_detaches_the_previous_target() {
+        let (backend, fake, server) = fake_backend().await;
+        let descriptor = pipeweaver_profile::PhysicalDeviceDescriptor {
+            name: Some("alsa_output.usb-BEACN_Studio__Line4__sink".into()),
+            description: Some("BEACN Studio Line4".into()),
+        };
+        let selected_target;
+        {
+            let mut status = fake.status.lock().await;
+            status.audio.profile.devices.targets.physical_devices[0]
+                .attached_devices
+                .push(descriptor.clone());
+            status.audio.devices[DeviceType::Target].push(
+                pipeweaver_ipc::commands::PhysicalDevice {
+                    node_id: 77,
+                    name: descriptor.name.clone(),
+                    description: descriptor.description.clone(),
+                    is_usable: true,
+                    ..Default::default()
+                },
+            );
+            selected_target = map_status(&status)
+                .targets
+                .iter()
+                .find(|target| target.id != "Headphones")
+                .unwrap()
+                .id
+                .clone();
+        }
+        *fake.fail_next_pipewire.lock().await = true;
+
+        let error = backend
+            .set_link_output_assignment(77, Some(&selected_target))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("injected command failure"));
+        let requests = fake.requests.lock().await;
+        assert!(matches!(
+            requests.as_slice(),
+            [
+                DaemonRequest::GetStatus,
+                DaemonRequest::Pipewire(APICommand::AttachPhysicalNodeByName(name, 77))
+            ] if name == &selected_target
+        ));
 
         server.abort();
     }
